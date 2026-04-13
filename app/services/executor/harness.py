@@ -210,7 +210,16 @@ class AcpHarnessExecutor(ExecutorBase):
         cwd: str,
     ) -> ExecutionResult:
         cmd, *args = self.launch_cmd
-        async with acp.spawn_agent_process(client, cmd, *args, cwd=cwd) as (
+        # Raise the per-line StreamReader limit well above asyncio's 64 KiB
+        # default; Codex and similar harnesses emit large JSON-RPC frames
+        # (tool results, planning output) that routinely exceed it.
+        async with acp.spawn_agent_process(
+            client,
+            cmd,
+            *args,
+            cwd=cwd,
+            transport_kwargs={"limit": 8 * 1024 * 1024},
+        ) as (
             conn,
             _proc,
         ):
