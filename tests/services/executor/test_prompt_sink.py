@@ -54,17 +54,76 @@ class TestTerminalPromptSink:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """User must see a clear break between streamed agent output and
-        the turn-over prompt; otherwise the '> ' gets glued onto the last
-        agent token."""
+        the turn-over prompt; otherwise the prompt gets glued onto the last
+        agent token. The styled "you" rule lives on its own line after a
+        compensating newline.
+        """
         stream = io.StringIO()
         sink = TerminalPromptSink(out=stream)
         await sink.display("agent finished mid-sentence")
         monkeypatch.setattr(builtins, "input", lambda _prompt="": "ok")
         await sink.request_input("reply?")
         rendered = stream.getvalue()
-        # A blank line separates the streamed text from the prompt.
-        assert "agent finished mid-sentence\n\n" in rendered
+        # The streamed agent text gets its own newline before the rule.
+        assert "agent finished mid-sentence\n" in rendered
+        # The styled "you" rule renders, followed by the prompt label.
+        assert "you" in rendered
         assert "reply?" in rendered
+        # The rule is not glued to the streamed text — its first glyph
+        # (the 👤 emoji) is on a new line.
+        before_rule = rendered.split("👤")[0]
+        assert before_rule.endswith("\n")
+
+    async def test_request_input_echoes_piped_reply(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Piped stdin doesn't echo keystrokes — the sink must echo the
+        consumed line back so scripted transcripts read like a real
+        terminal session."""
+        import sys as _sys
+        stream = io.StringIO()
+        sink = TerminalPromptSink(out=stream)
+        monkeypatch.setattr(builtins, "input", lambda _prompt="": "scripted reply")
+        monkeypatch.setattr(_sys.stdin, "isatty", lambda: False)
+        await sink.request_input("reply?")
+        rendered = stream.getvalue()
+        assert "scripted reply" in rendered
+        assert "you" in rendered  # styled rule label
+
+    async def test_request_input_does_not_double_echo_on_tty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the user is actually typing, the terminal already echoes
+        keystrokes — we must not write the answer back ourselves."""
+        import sys as _sys
+        stream = io.StringIO()
+        sink = TerminalPromptSink(out=stream)
+        monkeypatch.setattr(builtins, "input", lambda _prompt="": "typed live")
+        monkeypatch.setattr(_sys.stdin, "isatty", lambda: True)
+        await sink.request_input("reply?")
+        # The TTY branch must NOT print the answer; only the prompt label.
+        assert "typed live" not in stream.getvalue()
+
+    async def test_start_agent_turn_renders_styled_rule(self) -> None:
+        """The agent-turn marker must be a horizontal rule with the
+        'agent' label so the user can see when the agent starts speaking."""
+        stream = io.StringIO()
+        sink = TerminalPromptSink(out=stream)
+        await sink.start_agent_turn()
+        rendered = stream.getvalue()
+        assert "agent" in rendered
+        # A rule renders box-drawing horizontal characters.
+        assert "─" in rendered
+
+    async def test_start_agent_turn_separates_from_previous_stream(self) -> None:
+        """A turn rule must start on its own line, not glued to the
+        previous chunk of streamed agent text."""
+        stream = io.StringIO()
+        sink = TerminalPromptSink(out=stream)
+        await sink.display("trailing token without newline")
+        await sink.start_agent_turn()
+        rendered = stream.getvalue()
+        assert "trailing token without newline\n" in rendered
 
     async def test_request_permission_returns_selected_option_id(
         self, monkeypatch: pytest.MonkeyPatch

@@ -345,6 +345,51 @@ async def test_on_task_event_callback_error_does_not_break_flow(store, capsys):
     assert "renderer exploded" in captured.err
 
 
+async def test_on_task_event_fires_for_skipped_task(store):
+    """A task skipped via a conditional dependency must still emit a
+    TaskEvent so renderers can show it (previously it disappeared)."""
+    conduit = _conduit(
+        [
+            {"name": "review", "description": "d", "task": "x",
+             "tool": "tool:bash", "depends_on": []},
+            {"name": "deploy", "description": "d", "task": "x",
+             "tool": "tool:bash",
+             "depends_on": ["review.output.match(APPROVE)"]},
+        ]
+    )
+    fake = FakeExecutor(outputs={"review": "REJECT"})
+    engine = Engine({"tool:bash": fake}, store)
+    events = []
+    await engine.run(conduit, {}, on_task_event=events.append)
+    by_task = {e.task: e for e in events}
+    assert "deploy" in by_task
+    assert by_task["deploy"].status == TaskStatus.skipped
+    assert by_task["deploy"].reason  # populated with skip reason
+
+
+async def test_on_task_event_fires_for_cancelled_task(store):
+    """When fail-fast cancels still-pending tasks, those tasks must
+    emit a TaskEvent so the user sees they were cancelled rather than
+    just silently missing from the live output.
+    """
+    conduit = _conduit(
+        [
+            {"name": "fail", "description": "d", "task": "x",
+             "tool": "tool:bash", "depends_on": []},
+            {"name": "after", "description": "d", "task": "x",
+             "tool": "tool:bash", "depends_on": ["fail"]},
+        ]
+    )
+    fake = FakeExecutor(fail={"fail"})
+    engine = Engine({"tool:bash": fake}, store)
+    events = []
+    with pytest.raises(RuntimeError):
+        await engine.run(conduit, {}, on_task_event=events.append)
+    by_task = {e.task: e for e in events}
+    assert "after" in by_task
+    assert by_task["after"].status == TaskStatus.cancelled
+
+
 async def test_on_task_event_fires_per_repeat_iteration(store):
     conduit = _conduit(
         [

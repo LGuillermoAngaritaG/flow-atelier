@@ -53,12 +53,16 @@ class RecordingSink:
     ) -> None:
         self.display_log: list[str] = []
         self.input_prompts: list[str] = []
+        self.agent_turn_starts: list[str] = []
         self._replies = list(replies or [])
         self.perm_log: list[str] = []
         self._perm_choice = perm_choice
 
     async def display(self, text: str) -> None:
         self.display_log.append(text)
+
+    async def start_agent_turn(self, label: str = "agent") -> None:
+        self.agent_turn_starts.append(label)
 
     async def request_input(self, prompt: str) -> str:
         self.input_prompts.append(prompt)
@@ -135,7 +139,10 @@ class TestNonInteractive:
         assert result.exit_code == 124
         assert "timeout" in result.stderr.lower()
 
-    async def test_streams_chunks_to_sink(self) -> None:
+    async def test_non_interactive_does_not_stream_to_sink(self) -> None:
+        """Non-interactive harness tasks must not double-render: chunks
+        are captured into the result but NOT mirrored to the sink (the
+        engine renders a final panel from result.output afterwards)."""
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -143,12 +150,80 @@ class TestNonInteractive:
             ),
             sink=sink,
         )
-        await executor.execute(_task("x"), "x", _ctx())
+        result = await executor.execute(_task("x"), "x", _ctx())
+        assert "AB" in result.output
+        assert sink.display_log == []
+
+
+class TestInteractiveStreaming:
+    async def test_interactive_streams_chunks_to_sink(self) -> None:
+        """Interactive mode keeps a live stream so the user can follow
+        the agent while deciding their next reply."""
+        sink = RecordingSink()
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {
+                    "turns": [
+                        {
+                            "chunks": ["A", "B", "[ATELIER_DONE]"],
+                            "stop": "end_turn",
+                        }
+                    ]
+                }
+            ),
+            sink=sink,
+        )
+        await executor.execute(_task("x", interactive=True), "x", _ctx())
         assert "A" in "".join(sink.display_log)
         assert "B" in "".join(sink.display_log)
 
 
 class TestInteractive:
+    async def test_interactive_calls_start_agent_turn_per_turn(self) -> None:
+        """The interactive loop must signal each agent turn to the sink so
+        the terminal UI can bracket it with a styled rule."""
+        sink = RecordingSink(replies=["my answer"])
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {
+                    "turns": [
+                        {"chunks": ["asking?"], "stop": "end_turn"},
+                        {"chunks": ["thanks [ATELIER_DONE]"], "stop": "end_turn"},
+                    ]
+                }
+            ),
+            sink=sink,
+        )
+        await executor.execute(
+            _task("go", interactive=True), "go", _ctx()
+        )
+        # Two agent turns ⇒ two calls.
+        assert len(sink.agent_turn_starts) == 2
+
+    async def test_marker_hidden_from_live_stream(self) -> None:
+        """The done marker must not be displayed to the user even in
+        interactive mode (live stream path)."""
+        sink = RecordingSink()
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {
+                    "turns": [
+                        {
+                            "chunks": ["here is the answer ", "[ATELIER_DONE]"],
+                            "stop": "end_turn",
+                        }
+                    ]
+                }
+            ),
+            sink=sink,
+        )
+        await executor.execute(
+            _task("x", interactive=True), "x", _ctx()
+        )
+        displayed = "".join(sink.display_log)
+        assert "here is the answer" in displayed
+        assert "[ATELIER_DONE]" not in displayed
+
     async def test_marker_first_turn_terminates(self) -> None:
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
@@ -168,7 +243,11 @@ class TestInteractive:
             _task("do it", interactive=True), "do it", _ctx()
         )
         assert result.exit_code == 0
-        assert "[ATELIER_DONE]" in result.output
+        # The done marker is an internal protocol sentinel — it must NOT
+        # be returned to callers as user-visible content (would otherwise
+        # also persist into logs.json).
+        assert "[ATELIER_DONE]" not in result.output
+        assert "doing work" in result.output
         assert sink.input_prompts == []
 
     async def test_multi_turn_with_user_reply(self) -> None:
@@ -193,7 +272,8 @@ class TestInteractive:
         assert result.exit_code == 0
         assert "what is your name?" in result.output
         assert "hello luis" in result.output
-        assert "[ATELIER_DONE]" in result.output
+        # Marker stripped from the user-visible result.
+        assert "[ATELIER_DONE]" not in result.output
         assert len(sink.input_prompts) == 1
 
     async def test_missing_marker_fails_when_sink_exhausted(self) -> None:
@@ -223,7 +303,9 @@ class TestInteractive:
             _task("x", interactive=True), "x", _ctx()
         )
         assert result.exit_code == 0
-        assert "<<FIN>>" in result.output
+        # Custom markers are stripped just like the default.
+        assert "<<FIN>>" not in result.output
+        assert "done" in result.output
 
     async def test_permission_routed_to_sink(self) -> None:
         sink = RecordingSink(perm_choice="allow")

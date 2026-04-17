@@ -73,10 +73,26 @@ class _BufferingClient:
     The harness capabilities default to "no filesystem, no terminal" so the
     agent should not call the file/terminal methods — if it does, they raise
     :class:`NotImplementedError`.
+
+    :param sink: surface for permission requests and (when enabled) live
+        chunk streaming
+    :param live_stream: when ``True`` (interactive turns), agent message
+        chunks are mirrored to ``sink.display`` as they arrive so the user
+        can follow the agent before deciding their next reply. When
+        ``False`` (single-turn / non-interactive), chunks are only buffered
+        for the result — the caller renders them once when the turn ends,
+        avoiding double-rendering of the same text.
     """
 
-    def __init__(self, sink: PromptSink) -> None:
+    def __init__(
+        self,
+        sink: PromptSink,
+        live_stream: bool = False,
+        done_marker: str = DEFAULT_DONE_MARKER,
+    ) -> None:
         self._sink = sink
+        self._live_stream = live_stream
+        self._done_marker = done_marker
         self.buffer: list[str] = []
 
     async def session_update(self, session_id: str, update, **kwargs) -> None:
@@ -85,8 +101,15 @@ class _BufferingClient:
             content = update.content
             text = getattr(content, "text", None)
             if text:
+                # Buffer keeps the raw text so the executor can detect the
+                # done marker for loop termination.
                 self.buffer.append(text)
-                await self._sink.display(text)
+                if self._live_stream:
+                    # Hide the protocol marker from what the user sees on
+                    # screen (per-chunk strip — won't catch a marker split
+                    # across two chunks, but the model emits it whole in
+                    # practice).
+                    await self._sink.display(text.replace(self._done_marker, ""))
 
     async def request_permission(
         self, options, session_id: str, tool_call, **kwargs
@@ -180,7 +203,11 @@ class AcpHarnessExecutor(ExecutorBase):
             prompt_text = prompt_text + build_interactive_suffix(self.done_marker)
 
         cwd = str(Path.cwd())
-        client = _BufferingClient(self.sink)
+        client = _BufferingClient(
+            self.sink,
+            live_stream=task.interactive,
+            done_marker=self.done_marker,
+        )
 
         try:
             return await asyncio.wait_for(
@@ -285,7 +312,12 @@ class AcpHarnessExecutor(ExecutorBase):
     ) -> ExecutionResult:
         next_prompt = initial_prompt
         last_stop = "end_turn"
+        # Sinks that don't render visually (e.g. API/queue transports)
+        # may omit start_agent_turn; only call it if implemented.
+        start_turn = getattr(self.sink, "start_agent_turn", None)
         for _ in range(MAX_INTERACTIVE_TURNS):
+            if start_turn is not None:
+                await start_turn()
             resp = await conn.prompt(
                 prompt=[TextContentBlock(type="text", text=next_prompt)],
                 session_id=session_id,
@@ -294,11 +326,14 @@ class AcpHarnessExecutor(ExecutorBase):
             last_stop = resp.stop_reason
             buffer_text = "".join(client.buffer)
             if self.done_marker in buffer_text:
+                # Strip the protocol sentinel from anything we hand back to
+                # the user — it's an internal coordination marker, not content.
+                cleaned = buffer_text.replace(self.done_marker, "").rstrip()
                 return ExecutionResult(
                     exit_code=0,
-                    stdout=buffer_text,
+                    stdout=cleaned,
                     stderr="",
-                    output=buffer_text,
+                    output=cleaned,
                 )
             if resp.stop_reason not in ("end_turn", "max_tokens"):
                 break
