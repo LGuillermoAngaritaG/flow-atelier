@@ -30,6 +30,7 @@ from app.schemas.conduit import Conduit, TaskDefinition, ToolType
 from app.schemas.log import ExecutionResult, LogEntry, TaskEvent
 
 TaskEventCallback = Callable[[TaskEvent], None]
+FlowStartedCallback = Callable[[str], None]
 from app.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
 from app.services.executor.base import ExecutorBase, FlowContext
 from app.services.store.base import StoreBase
@@ -107,12 +108,17 @@ class Engine:
         inputs: dict[str, Any],
         parent_flow_id: str | None = None,
         on_task_event: TaskEventCallback | None = None,
+        on_flow_started: FlowStartedCallback | None = None,
     ) -> str:
         """Execute a conduit to completion, returning the flow id.
 
         :param conduit: parsed :class:`Conduit` definition
         :param inputs: conduit input map (must cover all required keys)
         :param parent_flow_id: parent flow id for nested ``tool:conduit`` runs
+        :param on_flow_started: optional callback invoked exactly once with
+            the new flow id, immediately after it is created and before any
+            task runs. Lets callers (e.g. the CLI) record the id so they
+            can surface it even if the flow later fails.
         :returns: the new flow id on success
         :raises ConduitValidationError: DAG is invalid (cycle, unknown dep, bad regex)
         :raises ValueError: required inputs are missing
@@ -126,6 +132,17 @@ class Engine:
         parsed_deps = _validate_dag(conduit)
 
         flow_id = self.store.create_flow(conduit.name, inputs, parent_flow_id)
+        if on_flow_started is not None:
+            try:
+                on_flow_started(flow_id)
+            except Exception as cb_exc:  # noqa: BLE001
+                # Caller-supplied callback bugs must never break the flow.
+                print(
+                    f"[flow-atelier] on_flow_started callback raised: "
+                    f"{type(cb_exc).__name__}: {cb_exc}",
+                    file=sys.stderr,
+                )
+                traceback.print_exc(file=sys.stderr)
 
         progress = Progress(
             status=FlowStatus.running,
@@ -154,30 +171,11 @@ class Engine:
         state_changed = asyncio.Event()
         state_changed.set()
 
-        def emit_event(
-            t: TaskDefinition,
-            iteration: int,
-            result: ExecutionResult,
-            duration: float,
-        ) -> None:
-            """Invoke the on_task_event callback, isolating renderer errors."""
+        def _safe_emit(event: TaskEvent) -> None:
             if on_task_event is None:
                 return
             try:
-                on_task_event(
-                    TaskEvent(
-                        task=t.name,
-                        tool=t.tool.value,
-                        iteration=iteration,
-                        of=t.repeat,
-                        exit_code=result.exit_code,
-                        duration_seconds=round(duration, 3),
-                        output=result.output,
-                        stdout=result.stdout,
-                        stderr=result.stderr,
-                        success=result.success,
-                    )
-                )
+                on_task_event(event)
             except Exception as cb_exc:  # noqa: BLE001
                 # Renderer bugs must never break the flow.
                 print(
@@ -186,6 +184,46 @@ class Engine:
                     file=sys.stderr,
                 )
                 traceback.print_exc(file=sys.stderr)
+
+        def emit_event(
+            t: TaskDefinition,
+            iteration: int,
+            result: ExecutionResult,
+            duration: float,
+        ) -> None:
+            """Emit a TaskEvent for a completed/failed iteration."""
+            _safe_emit(
+                TaskEvent(
+                    task=t.name,
+                    tool=t.tool.value,
+                    iteration=iteration,
+                    of=t.repeat,
+                    exit_code=result.exit_code,
+                    duration_seconds=round(duration, 3),
+                    output=result.output,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                    success=result.success,
+                    status=TaskStatus.completed if result.success else TaskStatus.failed,
+                    live_streamed=t.interactive,
+                )
+            )
+
+        def emit_disposition(
+            name: str, status: TaskStatus, reason: str = ""
+        ) -> None:
+            """Emit a TaskEvent for a non-running disposition (skip/cancel)."""
+            t = task_map[name]
+            _safe_emit(
+                TaskEvent(
+                    task=t.name,
+                    tool=t.tool.value,
+                    of=t.repeat,
+                    success=False,
+                    status=status,
+                    reason=reason,
+                )
+            )
 
         def mark_skipped(name: str, reason: str) -> None:
             statuses[name] = TaskStatus.skipped
@@ -196,6 +234,7 @@ class Engine:
                 reason=reason,
             )
             self.store.write_progress(flow_id, progress)
+            emit_disposition(name, TaskStatus.skipped, reason)
 
         def mark_running(name: str, iteration: int) -> None:
             statuses[name] = TaskStatus.running
@@ -334,6 +373,9 @@ class Engine:
                         status=TaskStatus.cancelled, of=t.repeat
                     )
                     self.store.write_progress(flow_id, progress)
+                    emit_disposition(
+                        t.name, TaskStatus.cancelled, "fail-fast: upstream failed"
+                    )
                 raise
             finally:
                 state_changed.set()
@@ -406,6 +448,9 @@ class Engine:
                     statuses[name] = TaskStatus.cancelled
                     progress.tasks[name] = TaskProgress(
                         status=TaskStatus.cancelled, of=task_map[name].repeat
+                    )
+                    emit_disposition(
+                        name, TaskStatus.cancelled, "upstream failed"
                     )
 
             progress.current_tasks = []

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.settings import AtelierSettings
-from app.modules.engine import Engine, TaskEventCallback
+from app.modules.engine import Engine, FlowStartedCallback, TaskEventCallback
 from app.schemas.progress import Progress
 from app.services.executor.bash import BashExecutor
 from app.services.executor.conduit import ConduitExecutor
@@ -71,6 +71,7 @@ class Atelier:
         name: str,
         inputs: dict[str, Any],
         on_task_event: TaskEventCallback | None = None,
+        on_flow_started: FlowStartedCallback | None = None,
     ) -> str:
         """Start a new flow for the named conduit.
 
@@ -80,11 +81,17 @@ class Atelier:
             :class:`TaskEvent` after every task iteration finishes (success
             or failure). Exceptions raised by the callback are logged but
             do not affect the flow.
+        :param on_flow_started: optional callback invoked once with the
+            new flow id, before any task runs. Lets the caller record the
+            id and surface it on failure as well as on success.
         :returns: the newly created flow id
         """
         conduit = self.store.read_conduit(name)
         return await self.engine.run(
-            conduit, inputs, on_task_event=on_task_event
+            conduit,
+            inputs,
+            on_task_event=on_task_event,
+            on_flow_started=on_flow_started,
         )
 
     def get_status(self, flow_id: str) -> Progress:

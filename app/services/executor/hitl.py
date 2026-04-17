@@ -48,6 +48,11 @@ class HitlExecutor(ExecutorBase):
         for name, description in task.inputs.items():
             prompt = f"  {name} ({description}): "
             response = await asyncio.to_thread(builtins.input, prompt)
+            # Piped stdin doesn't echo keystrokes nor add a newline; print
+            # the consumed value so scripted transcripts read like a real
+            # terminal session instead of two prompts smashed together.
+            if not sys.stdin.isatty():
+                print(response, file=sys.stdout, flush=True)
             collected[name] = response
             context.store.append_input(context.flow_id, name, response)
             context.inputs[name] = response
