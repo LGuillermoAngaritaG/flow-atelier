@@ -24,6 +24,7 @@ from app.modules.conditions import (
     DependencyParseError,
     evaluate,
     parse_dependencies,
+    parse_output_predicate,
 )
 from app.modules.templating import SkipSignal, TemplateError, resolve
 from app.schemas.conduit import Conduit, TaskDefinition, ToolType
@@ -248,11 +249,11 @@ class Engine:
             ]
             self.store.write_progress(flow_id, progress)
 
-        def mark_completed(name: str) -> None:
+        def mark_completed(name: str, iteration: int) -> None:
             statuses[name] = TaskStatus.completed
             progress.tasks[name] = TaskProgress(
                 status=TaskStatus.completed,
-                iteration=task_map[name].repeat,
+                iteration=iteration,
                 of=task_map[name].repeat,
             )
             progress.current_tasks = [
@@ -310,6 +311,12 @@ class Engine:
                     run_nested_conduit=self._make_nested_runner(on_task_event),
                 )
 
+                # Pre-parse the until predicate once per task. Already validated
+                # at conduit-load time, so this cannot raise in practice.
+                until_predicate: tuple | None = None
+                if t.until is not None:
+                    until_predicate = parse_output_predicate(t.until)
+
                 async with semaphore:
                     last_output = ""
                     for iteration in range(1, t.repeat + 1):
@@ -362,8 +369,13 @@ class Engine:
                             state_changed.set()
                             return
                         last_output = result.output
+                        if until_predicate is not None:
+                            pattern, negate = until_predicate
+                            matched = pattern.search(result.output) is not None
+                            if matched ^ negate:
+                                break
                     outputs[t.name] = last_output
-                    mark_completed(t.name)
+                    mark_completed(t.name, iteration)
             except asyncio.CancelledError:
                 if statuses[t.name] not in (
                     TaskStatus.completed, TaskStatus.failed, TaskStatus.skipped
