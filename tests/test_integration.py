@@ -212,6 +212,37 @@ tasks:
     assert p.tasks["bad"].status.value == "failed"
 
 
+async def test_until_early_exit_with_real_bash(workdir):
+    _write_conduit(
+        workdir,
+        "poller",
+        """
+name: poller
+description: poll with early exit
+tasks:
+  - poll:
+      description: echo HIT on the 3rd call
+      task: "echo x >> counter.log; n=$(wc -l < counter.log | tr -d ' '); if [ \\"$n\\" -ge 3 ]; then echo HIT; else echo wait; fi"
+      tool: tool:bash
+      depends_on: []
+      repeat: 5
+      until: "output.match(HIT)"
+""",
+    )
+    a = Atelier()
+    flow_id = await a.run_conduit("poller", {})
+    p = a.get_status(flow_id)
+    assert p.status.value == "completed"
+    assert p.tasks["poll"].status.value == "completed"
+    assert p.tasks["poll"].iteration == 3
+    assert p.tasks["poll"].of == 5
+
+    logs = json.loads((a.store._flow_dir(flow_id) / "logs.json").read_text())
+    poll_logs = [l for l in logs if l["task"] == "poll"]
+    assert len(poll_logs) == 3
+    assert "HIT" in poll_logs[-1]["output"]
+
+
 async def test_concurrency_cap_honored(workdir):
     # four sleeps with cap 2 should take >= 2 * sleep
     _write_conduit(
