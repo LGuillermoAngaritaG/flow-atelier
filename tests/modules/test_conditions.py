@@ -122,3 +122,59 @@ def test_evaluate_unknown_task_skips():
     result, reason = evaluate(dep, {"a": TaskStatus.completed}, {})
     assert result == "skip"
     assert "unknown" in reason
+
+
+# ---------------------------------------------------------------- output predicate
+
+
+def test_parse_output_predicate_match():
+    from app.modules.conditions import parse_output_predicate
+
+    pattern, negate = parse_output_predicate("output.match(DONE)")
+    assert pattern.search("foo DONE bar")
+    assert not pattern.search("nope")
+    assert negate is False
+
+
+def test_parse_output_predicate_not_match():
+    from app.modules.conditions import parse_output_predicate
+
+    pattern, negate = parse_output_predicate("output.not_match(RETRY)")
+    assert pattern.search("RETRY now")
+    assert negate is True
+
+
+def test_parse_output_predicate_inner_parens():
+    from app.modules.conditions import parse_output_predicate
+
+    pattern, negate = parse_output_predicate("output.match(foo(bar))")
+    assert pattern.pattern == "foo(bar)"
+    assert negate is False
+
+
+def test_parse_output_predicate_bare_regex_rejected():
+    from app.modules.conditions import parse_output_predicate
+
+    with pytest.raises(DependencyParseError):
+        parse_output_predicate("DONE")
+
+
+def test_parse_output_predicate_invalid_regex_rejected():
+    from app.modules.conditions import parse_output_predicate
+
+    with pytest.raises(DependencyParseError):
+        parse_output_predicate("output.match([unclosed)")
+
+
+def test_parse_output_predicate_missing_close_paren():
+    from app.modules.conditions import parse_output_predicate
+
+    with pytest.raises(DependencyParseError):
+        parse_output_predicate("output.match(foo")
+
+
+def test_parse_output_predicate_empty_rejected():
+    from app.modules.conditions import parse_output_predicate
+
+    with pytest.raises(DependencyParseError):
+        parse_output_predicate("")

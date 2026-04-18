@@ -31,6 +31,7 @@ class TaskDefinition(BaseModel):
     tool: ToolType
     depends_on: list[str] = Field(default_factory=list)
     repeat: int = 1
+    until: str | None = None
     interactive: bool = False
     inputs: dict[str, Any] = Field(default_factory=dict)
 
@@ -40,6 +41,21 @@ class TaskDefinition(BaseModel):
         if v < 1:
             raise ValueError("repeat must be >= 1")
         return v
+
+    @model_validator(mode="after")
+    def _validate_until(self) -> "TaskDefinition":
+        if self.until is None:
+            return self
+        if self.repeat <= 1:
+            raise ValueError("until requires repeat > 1 (single iteration can't early-exit)")
+        # Local import to avoid a schemas → modules dependency at import time.
+        from app.modules.conditions import DependencyParseError, parse_output_predicate
+
+        try:
+            parse_output_predicate(self.until)
+        except DependencyParseError as e:
+            raise ValueError(str(e)) from e
+        return self
 
 
 class Conduit(BaseModel):

@@ -115,6 +115,62 @@ def test_repeat_must_be_positive():
         )
 
 
+def _task_with_until(**overrides):
+    base = {
+        "description": "d",
+        "task": "x",
+        "tool": "tool:bash",
+        "depends_on": [],
+        "repeat": 3,
+        "until": "output.match(DONE)",
+    }
+    base.update(overrides)
+    return {
+        "name": "x",
+        "description": "d",
+        "tasks": [{"a": base}],
+    }
+
+
+def test_until_with_repeat_gt_1_ok():
+    c = Conduit.model_validate(_task_with_until())
+    assert c.tasks[0].until == "output.match(DONE)"
+
+
+def test_until_not_match_with_repeat_gt_1_ok():
+    c = Conduit.model_validate(_task_with_until(until="output.not_match(RETRY)"))
+    assert c.tasks[0].until == "output.not_match(RETRY)"
+
+
+def test_until_with_repeat_1_rejected():
+    with pytest.raises(Exception, match="repeat"):
+        Conduit.model_validate(_task_with_until(repeat=1))
+
+
+def test_until_with_invalid_dsl_rejected():
+    with pytest.raises(Exception):
+        Conduit.model_validate(_task_with_until(until="DONE"))
+
+
+def test_until_with_invalid_regex_rejected():
+    with pytest.raises(Exception):
+        Conduit.model_validate(_task_with_until(until="output.match([unclosed)"))
+
+
+def test_task_without_until_still_validates():
+    c = Conduit.model_validate(
+        {
+            "name": "x",
+            "description": "d",
+            "tasks": [
+                {"a": {"description": "d", "task": "x", "tool": "tool:bash",
+                       "depends_on": [], "repeat": 2}}
+            ],
+        }
+    )
+    assert c.tasks[0].until is None
+
+
 def test_flow_id_roundtrip():
     fid = new_flow_id("deploy_pipeline")
     assert FLOW_ID_RE.match(fid)

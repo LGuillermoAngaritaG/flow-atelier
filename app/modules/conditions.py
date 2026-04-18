@@ -19,6 +19,9 @@ from app.schemas.progress import TaskStatus
 _MATCH_MARKER = ".output.match("
 _NOT_MATCH_MARKER = ".output.not_match("
 
+_OUTPUT_MATCH_PREFIX = "output.match("
+_OUTPUT_NOT_MATCH_PREFIX = "output.not_match("
+
 
 @dataclass(frozen=True)
 class PlainDependency:
@@ -87,6 +90,43 @@ def parse_dependency(dep: str) -> Dependency:
 
 def parse_dependencies(deps: list[str]) -> list[Dependency]:
     return [parse_dependency(d) for d in deps]
+
+
+def parse_output_predicate(expr: str) -> tuple[re.Pattern[str], bool]:
+    """Parse a ``until``-style predicate against the current task's output.
+
+    Accepts ``output.match(<regex>)`` (returns ``negate=False``) or
+    ``output.not_match(<regex>)`` (returns ``negate=True``). The regex is
+    everything between the prefix's ``(`` and the final ``)`` — the same
+    delimiting rule as :func:`parse_dependency`.
+
+    :raises DependencyParseError: malformed DSL or uncompilable regex
+    """
+    if not isinstance(expr, str) or not expr.strip():
+        raise DependencyParseError(f"empty or non-string predicate: {expr!r}")
+
+    for prefix, negate in (
+        (_OUTPUT_NOT_MATCH_PREFIX, True),
+        (_OUTPUT_MATCH_PREFIX, False),
+    ):
+        if expr.startswith(prefix):
+            rest = expr[len(prefix):]
+            if not rest.endswith(")"):
+                raise DependencyParseError(
+                    f"predicate must end with ')': {expr!r}"
+                )
+            pattern = rest[:-1]
+            try:
+                compiled = re.compile(pattern)
+            except re.error as e:
+                raise DependencyParseError(
+                    f"invalid regex in predicate {expr!r}: {e}"
+                ) from e
+            return compiled, negate
+
+    raise DependencyParseError(
+        f"predicate must start with 'output.match(' or 'output.not_match(': {expr!r}"
+    )
 
 
 EvalResult = Literal["satisfied", "wait", "skip"]
