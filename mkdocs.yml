@@ -1,0 +1,97 @@
+site_name: flow-atelier
+site_description: CLI and async workflow engine for reproducible DAG-based workflows (conduits).
+site_author: Guillermo Angarita
+repo_url: https://github.com/goldenguille/flow-atelier
+repo_name: goldenguille/flow-atelier
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.instant
+    - navigation.tracking
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - mkdocs-click
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+  - Concepts:
+      - Architecture: concepts/architecture.md
+      - Folder layout: concepts/folder-layout.md
+      - Conduit scopes: concepts/scopes.md
+  - Reference:
+      - Conduit YAML: reference/conduit.md
+      - Templating: reference/templating.md
+      - Conditional dependencies: reference/conditions.md
+      - HITL inputs: reference/hitl.md
+      - Harness tasks: reference/harnesses.md
+      - CLI: reference/cli.md
+  - Examples:
+      - Overview: examples/index.md
+      - Hello world: examples/hello-world.md
+      - AI code review with rollback: examples/ai-code-review.md
+      - Deploy pipeline with HITL gate: examples/deploy-pipeline.md
+      - Parallel batch processing: examples/parallel-batch.md
+      - Interactive harness session: examples/interactive-harness.md
+      - Nested conduits: examples/nested-conduits.md
+  - Services:
+      - atelier serve (FastAPI): services/serve.md
+      - atelier schedule: services/schedule.md
