@@ -404,3 +404,337 @@ async def test_on_task_event_fires_per_repeat_iteration(store):
     assert len(events) == 3
     assert [e.iteration for e in events] == [1, 2, 3]
     assert all(e.of == 3 for e in events)
+
+
+# ---------------------------------------------------------------- until early-exit
+
+
+class ScriptedExecutor(FakeExecutor):
+    """Returns outputs from a scripted list, one per call."""
+
+    def __init__(self, outputs_per_call: list[str], fail_on: int | None = None):
+        super().__init__()
+        self._scripted = outputs_per_call
+        self._fail_on = fail_on  # 1-indexed iteration to fail on
+        self._n = 0
+
+    async def execute(self, task, resolved_command, context):
+        self._n += 1
+        self.calls.append(task.name)
+        if self._fail_on is not None and self._n == self._fail_on:
+            return ExecutionResult(
+                exit_code=1, stderr="boom",
+                output=self._scripted[self._n - 1],
+            )
+        out = self._scripted[self._n - 1]
+        return ExecutionResult(exit_code=0, output=out, stdout=out)
+
+
+async def test_until_match_breaks_loop_early(store):
+    conduit = _conduit(
+        [
+            {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "repeat": 5,
+             "until": "output.match(DONE)"},
+        ]
+    )
+    fake = ScriptedExecutor(["wait", "DONE", "x", "x", "x"])
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    assert len(fake.calls) == 2
+    p = store.read_progress(flow_id)
+    assert p.tasks["poll"].status == TaskStatus.completed
+    assert p.tasks["poll"].iteration == 2
+    assert p.tasks["poll"].of == 5
+
+
+async def test_until_match_never_fires_runs_full_repeat(store):
+    conduit = _conduit(
+        [
+            {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "repeat": 5,
+             "until": "output.match(NEVER)"},
+        ]
+    )
+    fake = ScriptedExecutor(["a", "b", "c", "d", "e"])
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    assert len(fake.calls) == 5
+    p = store.read_progress(flow_id)
+    assert p.tasks["poll"].status == TaskStatus.completed
+    assert p.tasks["poll"].iteration == 5
+    assert p.tasks["poll"].of == 5
+
+
+async def test_until_not_match_breaks_when_pattern_absent(store):
+    conduit = _conduit(
+        [
+            {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "repeat": 5,
+             "until": "output.not_match(RETRY)"},
+        ]
+    )
+    fake = ScriptedExecutor(["RETRY", "RETRY", "done", "x", "x"])
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    assert len(fake.calls) == 3
+    p = store.read_progress(flow_id)
+    assert p.tasks["poll"].status == TaskStatus.completed
+    assert p.tasks["poll"].iteration == 3
+    assert p.tasks["poll"].of == 5
+
+
+async def test_until_not_evaluated_on_failed_iteration(store):
+    """Fail-fast wins over until — a failed iteration never triggers early-exit."""
+    conduit = _conduit(
+        [
+            {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "repeat": 5,
+             "until": "output.match(DONE)"},
+        ]
+    )
+    # Iteration 2 fails; its output contains "DONE" — but fail-fast should win.
+    fake = ScriptedExecutor(["wait", "DONE", "x", "x", "x"], fail_on=2)
+    engine = Engine({"tool:bash": fake}, store)
+    with pytest.raises(RuntimeError):
+        await engine.run(conduit, {})
+    flow_id = store.list_flows()[0]
+    p = store.read_progress(flow_id)
+    assert p.tasks["poll"].status == TaskStatus.failed
+
+
+async def test_while_match_breaks_when_pattern_absent(store):
+    """`while: output.match(retry)` keeps iterating while output contains
+    "retry" and breaks on the first iteration that doesn't."""
+    conduit = _conduit(
+        [
+            {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "repeat": 5,
+             "while": "output.match(retry)"},
+        ]
+    )
+    fake = ScriptedExecutor(["retry", "retry", "done", "x", "x"])
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    assert len(fake.calls) == 3
+    p = store.read_progress(flow_id)
+    assert p.tasks["poll"].status == TaskStatus.completed
+    assert p.tasks["poll"].iteration == 3
+    assert p.tasks["poll"].of == 5
+
+
+async def test_while_not_match_breaks_when_pattern_present(store):
+    """`while: output.not_match(ready)` keeps iterating while output is
+    NOT ready and breaks on the first iteration that emits "ready"."""
+    conduit = _conduit(
+        [
+            {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "repeat": 5,
+             "while": "output.not_match(ready)"},
+        ]
+    )
+    fake = ScriptedExecutor(["pending", "pending", "ready now", "x", "x"])
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    assert len(fake.calls) == 3
+    p = store.read_progress(flow_id)
+    assert p.tasks["poll"].status == TaskStatus.completed
+    assert p.tasks["poll"].iteration == 3
+    assert p.tasks["poll"].of == 5
+
+
+async def test_while_runs_full_repeat_when_predicate_holds(store):
+    """If output keeps matching `while` regex, the loop never exits early."""
+    conduit = _conduit(
+        [
+            {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "repeat": 4,
+             "while": "output.match(retry)"},
+        ]
+    )
+    fake = ScriptedExecutor(["retry", "retry", "retry", "retry"])
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    assert len(fake.calls) == 4
+    p = store.read_progress(flow_id)
+    assert p.tasks["poll"].iteration == 4
+    assert p.tasks["poll"].of == 4
+
+
+async def test_while_not_evaluated_on_failed_iteration(store):
+    """Fail-fast wins over while too — failure stops the loop."""
+    conduit = _conduit(
+        [
+            {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "repeat": 5,
+             "while": "output.match(retry)"},
+        ]
+    )
+    fake = ScriptedExecutor(["retry", "retry", "x", "x", "x"], fail_on=2)
+    engine = Engine({"tool:bash": fake}, store)
+    with pytest.raises(RuntimeError):
+        await engine.run(conduit, {})
+    flow_id = store.list_flows()[0]
+    p = store.read_progress(flow_id)
+    assert p.tasks["poll"].status == TaskStatus.failed
+
+
+# ---------------------------------------------------------------- conduit-scope predicate
+
+
+class ScriptedConduitExecutor(FakeExecutor):
+    """Fakes a tool:conduit executor with fabricated sub-task outputs.
+
+    Lets us prove the engine evaluates loop predicates against sub-task
+    outputs (not just the aggregate ``result.output``) without the
+    ceremony of standing up a real nested conduit.
+    """
+
+    def __init__(
+        self,
+        sub_outputs_per_iteration: list[list[str]],
+        aggregate_output: str = "nested conduit completed",
+    ):
+        super().__init__()
+        self._scripted = sub_outputs_per_iteration
+        self._aggregate = aggregate_output
+        self._n = 0
+
+    async def execute(self, task, resolved_command, context):
+        self._n += 1
+        self.calls.append(task.name)
+        sub = self._scripted[self._n - 1]
+        return ExecutionResult(
+            exit_code=0,
+            output=self._aggregate,
+            stdout=self._aggregate,
+            sub_outputs=list(sub),
+        )
+
+
+async def test_conduit_until_breaks_on_any_sub_task_match(store):
+    """Until predicate over a tool:conduit task matches against any
+    nested sub-task output, even when the aggregate ``output`` does not.
+
+    Vacuousness guard (per SPEC §5): this test was confirmed to FAIL
+    against the engine *without* the conduit-scope wiring — it runs all
+    5 iterations because ``"PASS"`` never appears in
+    ``aggregate_output``. It only passes once the engine reads
+    ``result.sub_outputs`` for ``tool:conduit`` tasks.
+    """
+    conduit = _conduit(
+        [
+            {"name": "outer", "description": "d", "task": "child",
+             "tool": "tool:conduit",
+             "depends_on": [], "repeat": 5,
+             "until": "output.match(PASS)"},
+        ]
+    )
+    fake = ScriptedConduitExecutor(
+        sub_outputs_per_iteration=[
+            ["build ok", "tests FAIL"],
+            ["build ok", "tests FAIL"],
+            ["build ok", "tests PASS finally"],
+            ["unused"],
+            ["unused"],
+        ],
+        aggregate_output="nested conduit completed",
+    )
+    engine = Engine({"tool:conduit": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    assert len(fake.calls) == 3
+    p = store.read_progress(flow_id)
+    assert p.tasks["outer"].status == TaskStatus.completed
+    assert p.tasks["outer"].iteration == 3
+    assert p.tasks["outer"].of == 5
+
+
+async def test_conduit_while_continues_until_every_sub_task_matches(store):
+    """`while: output.not_match(ready)` over a tool:conduit task keeps
+    iterating while at least one sub-task is not ready, and breaks the
+    iteration in which every sub-task output contains "ready" (the
+    plan's M2 semantics for while + negated predicate)."""
+    conduit = _conduit(
+        [
+            {"name": "outer", "description": "d", "task": "child",
+             "tool": "tool:conduit",
+             "depends_on": [], "repeat": 5,
+             "while": "output.not_match(ready)"},
+        ]
+    )
+    fake = ScriptedConduitExecutor(
+        sub_outputs_per_iteration=[
+            ["build pending", "service pending"],
+            ["build ready", "service pending"],
+            ["build ready", "service ready"],
+            ["unused"],
+            ["unused"],
+        ],
+    )
+    engine = Engine({"tool:conduit": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    assert len(fake.calls) == 3
+    p = store.read_progress(flow_id)
+    assert p.tasks["outer"].status == TaskStatus.completed
+    assert p.tasks["outer"].iteration == 3
+    assert p.tasks["outer"].of == 5
+
+
+async def test_conduit_predicate_runs_full_repeat_when_no_sub_match(store):
+    """If no sub-output ever matches the until regex, the loop runs to
+    completion — no vacuous early exit."""
+    conduit = _conduit(
+        [
+            {"name": "outer", "description": "d", "task": "child",
+             "tool": "tool:conduit",
+             "depends_on": [], "repeat": 3,
+             "until": "output.match(PASS)"},
+        ]
+    )
+    fake = ScriptedConduitExecutor(
+        sub_outputs_per_iteration=[
+            ["build ok", "tests fail"],
+            ["build ok", "tests fail"],
+            ["build ok", "tests fail"],
+        ],
+        aggregate_output="nested conduit completed",
+    )
+    engine = Engine({"tool:conduit": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    assert len(fake.calls) == 3
+    p = store.read_progress(flow_id)
+    assert p.tasks["outer"].iteration == 3
+
+
+async def test_until_early_exit_publishes_output_to_downstream(store):
+    """Output from the early-exit iteration must reach downstream conditional deps."""
+    conduit = _conduit(
+        [
+            {"name": "up", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "repeat": 5,
+             "until": "output.match(DONE)"},
+            {"name": "down", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": ["up.output.match(DONE)"]},
+        ]
+    )
+
+    class ByName(FakeExecutor):
+        def __init__(self):
+            super().__init__()
+            self._up_n = 0
+
+        async def execute(self, task, resolved_command, context):
+            self.calls.append(task.name)
+            if task.name == "up":
+                self._up_n += 1
+                out = "DONE" if self._up_n == 2 else "wait"
+                return ExecutionResult(exit_code=0, output=out, stdout=out)
+            return ExecutionResult(exit_code=0, output="down-ran", stdout="down-ran")
+
+    fake = ByName()
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    assert fake.calls.count("up") == 2
+    assert "down" in fake.calls
+    p = store.read_progress(flow_id)
+    assert p.tasks["down"].status == TaskStatus.completed

@@ -1,3 +1,5 @@
+![flow-atelier](./atelier.png)
+
 # flow-atelier
 
 **flow-atelier** is a CLI and async workflow engine for running reproducible
@@ -180,7 +182,8 @@ tasks:
       task: "cd /tmp/build && make test"
       tool: tool:bash
       depends_on: [clone_repo]
-      repeat: 3                 # run sequentially 3 times
+      repeat: 3                          # try up to 3 times
+      until: output.match("PASS")        # ...stopping early on success
 
   - code_review:
       description: AI review
@@ -241,6 +244,46 @@ quoting required. Python's `re.search` is used.
 If the condition is not met, the dependent task is **skipped** (not failed).
 A skip does not trigger fail-fast. Any task that references a skipped task's
 output — via `depends_on` or `{{task.output}}` — is also skipped.
+
+### Loop predicates (`until` / `while`)
+
+A task with `repeat > 1` can break out of its loop early via one of two
+predicates (mutually exclusive — set at most one):
+
+```
+until: output.match(<regex>)       # break as soon as an output matches
+until: output.not_match(<regex>)   # break as soon as no output matches
+while: output.match(<regex>)       # loop while an output matches; break otherwise
+while: output.not_match(<regex>)   # loop while no output matches; break otherwise
+```
+
+Iteration 1 always runs before the predicate is evaluated. Both fields
+parse at conduit-load time — a malformed regex fails before the first
+task starts. The regex grammar is the same as the dependency DSL above:
+everything between the leftmost `(` and the final `)`, no quoting,
+matched with `re.search`.
+
+**Predicate scope** depends on the task type:
+
+- Non-conduit tasks — the predicate sees the single iteration output.
+- `tool:conduit` tasks — the predicate sees **every nested sub-task
+  output of that iteration** and fires on any-match. This lets you wrap
+  a multi-step conduit, retry it, and break the moment any internal
+  step emits a signal — not just the conduit's aggregate output.
+
+```yaml
+- retry_while_rate_limited:
+    tool: tool:bash
+    task: 'curl -s -o body -w "%{http_code}" https://api/x'
+    repeat: 10
+    while: output.match("^429$")
+
+- run_until_test_passes:
+    tool: tool:conduit
+    task: build_and_test
+    repeat: 5
+    until: output.match("PASS")
+```
 
 ### HITL inputs
 

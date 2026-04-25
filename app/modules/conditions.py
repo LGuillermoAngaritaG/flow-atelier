@@ -19,6 +19,9 @@ from app.schemas.progress import TaskStatus
 _MATCH_MARKER = ".output.match("
 _NOT_MATCH_MARKER = ".output.not_match("
 
+_OUTPUT_MATCH_PREFIX = "output.match("
+_OUTPUT_NOT_MATCH_PREFIX = "output.not_match("
+
 
 @dataclass(frozen=True)
 class PlainDependency:
@@ -87,6 +90,83 @@ def parse_dependency(dep: str) -> Dependency:
 
 def parse_dependencies(deps: list[str]) -> list[Dependency]:
     return [parse_dependency(d) for d in deps]
+
+
+def parse_output_predicate(expr: str) -> tuple[re.Pattern[str], bool]:
+    """Parse a ``until``-style predicate against the current task's output.
+
+    Accepts ``output.match(<regex>)`` (returns ``negate=False``) or
+    ``output.not_match(<regex>)`` (returns ``negate=True``). The regex is
+    everything between the prefix's ``(`` and the final ``)`` — the same
+    delimiting rule as :func:`parse_dependency`.
+
+    :raises DependencyParseError: malformed DSL or uncompilable regex
+    """
+    if not isinstance(expr, str) or not expr.strip():
+        raise DependencyParseError(f"empty or non-string predicate: {expr!r}")
+
+    for prefix, negate in (
+        (_OUTPUT_NOT_MATCH_PREFIX, True),
+        (_OUTPUT_MATCH_PREFIX, False),
+    ):
+        if expr.startswith(prefix):
+            rest = expr[len(prefix):]
+            if not rest.endswith(")"):
+                raise DependencyParseError(
+                    f"predicate must end with ')': {expr!r}"
+                )
+            pattern = rest[:-1]
+            try:
+                compiled = re.compile(pattern)
+            except re.error as e:
+                raise DependencyParseError(
+                    f"invalid regex in predicate {expr!r}: {e}"
+                ) from e
+            return compiled, negate
+
+    raise DependencyParseError(
+        f"predicate must start with 'output.match(' or 'output.not_match(': {expr!r}"
+    )
+
+
+LoopMode = Literal["until", "while"]
+
+
+def evaluate_loop_predicate(
+    predicate: tuple[re.Pattern[str], bool],
+    outputs: list[str],
+    mode: LoopMode,
+) -> bool:
+    """Decide whether a per-task loop should break at this iteration.
+
+    Returns True if the loop should stop now. ``outputs`` carries one
+    entry per nested sub-task output for conduit scope, or
+    ``[result.output]`` for simple tasks. ``predicate`` is the
+    ``(compiled_regex, negate)`` tuple produced by
+    :func:`parse_output_predicate`.
+
+    Truth table (any-match = at least one output matches the un-negated
+    regex; every-match = all outputs match):
+
+    - ``mode="until"`` + non-negated: break iff any-match.
+    - ``mode="until"`` + negated:     break iff not any-match.
+    - ``mode="while"`` + non-negated: break iff not any-match.
+    - ``mode="while"`` + negated:     break iff every-match.
+
+    An empty ``outputs`` list never breaks — wait for data on the next
+    iteration.
+    """
+    if mode not in ("until", "while"):
+        raise ValueError(f"unknown loop mode: {mode!r}")
+    if not outputs:
+        return False
+    pattern, negate = predicate
+    matches = [pattern.search(out) is not None for out in outputs]
+    any_match = any(matches)
+    if mode == "until":
+        return (not any_match) if negate else any_match
+    # mode == "while"
+    return all(matches) if negate else (not any_match)
 
 
 EvalResult = Literal["satisfied", "wait", "skip"]

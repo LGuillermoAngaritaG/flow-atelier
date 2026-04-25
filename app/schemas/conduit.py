@@ -4,7 +4,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ToolType(str, Enum):
@@ -28,12 +28,16 @@ class HitlInput(BaseModel):
 class TaskDefinition(BaseModel):
     """A single task within a conduit."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str
     description: str
     task: str
     tool: ToolType
     depends_on: list[str] = Field(default_factory=list)
     repeat: int = 1
+    until: str | None = None
+    while_: str | None = Field(default=None, alias="while")
     interactive: bool = False
     inputs: dict[str, Any] = Field(default_factory=dict)
 
@@ -43,6 +47,29 @@ class TaskDefinition(BaseModel):
         if v < 1:
             raise ValueError("repeat must be >= 1")
         return v
+
+    @model_validator(mode="after")
+    def _validate_loop_predicates(self) -> "TaskDefinition":
+        if self.until is not None and self.while_ is not None:
+            raise ValueError(
+                "until and while are mutually exclusive — set only one"
+            )
+        for field_name, expr in (("until", self.until), ("while", self.while_)):
+            if expr is None:
+                continue
+            if self.repeat <= 1:
+                raise ValueError(
+                    f"{field_name} requires repeat > 1 "
+                    "(single iteration can't early-exit)"
+                )
+            # Local import to avoid a schemas → modules dependency at import time.
+            from app.modules.conditions import DependencyParseError, parse_output_predicate
+
+            try:
+                parse_output_predicate(expr)
+            except DependencyParseError as e:
+                raise ValueError(str(e)) from e
+        return self
 
 
 class Conduit(BaseModel):

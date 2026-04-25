@@ -56,6 +56,11 @@ class ConduitExecutor(ExecutorBase):
                 last_output = entry.output
                 break
 
+        # Sub-task outputs feed the engine's loop-predicate evaluation
+        # for `tool:conduit` tasks (every entry, in append order — same
+        # rule the spec uses for "any sub-task output matches").
+        sub_outputs = [entry.output for entry in logs]
+
         status = child_progress.status.value
         exit_code = 0 if status == "completed" else 1
         return ExecutionResult(
@@ -63,4 +68,5 @@ class ConduitExecutor(ExecutorBase):
             stdout=last_output,
             stderr="" if exit_code == 0 else f"nested conduit {status}",
             output=last_output,
+            sub_outputs=sub_outputs,
         )

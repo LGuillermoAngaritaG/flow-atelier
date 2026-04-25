@@ -212,6 +212,147 @@ tasks:
     assert p.tasks["bad"].status.value == "failed"
 
 
+async def test_until_early_exit_with_real_bash(workdir):
+    _write_conduit(
+        workdir,
+        "poller",
+        """
+name: poller
+description: poll with early exit
+tasks:
+  - poll:
+      description: echo HIT on the 3rd call
+      task: "echo x >> counter.log; n=$(wc -l < counter.log | tr -d ' '); if [ \\"$n\\" -ge 3 ]; then echo HIT; else echo wait; fi"
+      tool: tool:bash
+      depends_on: []
+      repeat: 5
+      until: "output.match(HIT)"
+""",
+    )
+    a = Atelier()
+    flow_id = await a.run_conduit("poller", {})
+    p = a.get_status(flow_id)
+    assert p.status.value == "completed"
+    assert p.tasks["poll"].status.value == "completed"
+    assert p.tasks["poll"].iteration == 3
+    assert p.tasks["poll"].of == 5
+
+    logs = json.loads((a.store._flow_dir(flow_id) / "logs.json").read_text())
+    poll_logs = [l for l in logs if l["task"] == "poll"]
+    assert len(poll_logs) == 3
+    assert "HIT" in poll_logs[-1]["output"]
+
+
+async def test_while_early_exit_with_real_bash(workdir):
+    """`while: output.match(retry)` keeps iterating while bash emits
+    "retry" and breaks the iteration that emits something else."""
+    _write_conduit(
+        workdir,
+        "retry_loop",
+        """
+name: retry_loop
+description: while early-exit
+tasks:
+  - poll:
+      description: emit retry until the 3rd call
+      task: "echo x >> counter.log; n=$(wc -l < counter.log | tr -d ' '); if [ \\"$n\\" -lt 3 ]; then echo retry; else echo settled; fi"
+      tool: tool:bash
+      depends_on: []
+      repeat: 5
+      while: "output.match(retry)"
+""",
+    )
+    a = Atelier()
+    flow_id = await a.run_conduit("retry_loop", {})
+    p = a.get_status(flow_id)
+    assert p.status.value == "completed"
+    assert p.tasks["poll"].status.value == "completed"
+    assert p.tasks["poll"].iteration == 3
+    assert p.tasks["poll"].of == 5
+
+    logs = json.loads((a.store._flow_dir(flow_id) / "logs.json").read_text())
+    poll_logs = [l for l in logs if l["task"] == "poll"]
+    assert len(poll_logs) == 3
+    assert "retry" in poll_logs[0]["output"]
+    assert "settled" in poll_logs[-1]["output"]
+
+
+async def test_until_over_nested_conduit_sub_task_outputs(workdir):
+    """`tool:conduit` task with `until: output.match(PASS)` stops when a
+    nested sub-task emits PASS, even though the conduit's aggregate
+    output never contains PASS.
+
+    Vacuousness guard (per SPEC §5): the child's last sub-task always
+    echoes the fixed string "nested conduit completed", which becomes
+    the conduit's aggregate ``output``. Only the engine's conduit-scope
+    predicate (sub_outputs) can see the earlier ``tests`` task's
+    "PASS". Confirmed to fail on a build of the engine without the
+    conduit-scope wiring (the outer loop runs all 5 iterations).
+    """
+    _write_conduit(
+        workdir,
+        "build_and_test",
+        """
+name: build_and_test
+description: counter-driven test child
+tasks:
+  - tests:
+      description: emit PASS on the 3rd outer iteration
+      task: "echo x >> counter.log; n=$(wc -l < counter.log | tr -d ' '); if [ \\"$n\\" -ge 3 ]; then echo PASS; else echo RETRY; fi"
+      tool: tool:bash
+      depends_on: []
+  - finalize:
+      description: fixed terminal output
+      task: "echo 'nested conduit completed'"
+      tool: tool:bash
+      depends_on: [tests]
+""",
+    )
+    _write_conduit(
+        workdir,
+        "outer_runner",
+        """
+name: outer_runner
+description: outer loop over a nested conduit
+tasks:
+  - nested:
+      description: run build_and_test until tests pass
+      task: build_and_test
+      tool: tool:conduit
+      depends_on: []
+      repeat: 5
+      until: "output.match(PASS)"
+""",
+    )
+
+    a = Atelier()
+    flow_id = await a.run_conduit("outer_runner", {})
+    p = a.get_status(flow_id)
+    assert p.status.value == "completed"
+    assert p.tasks["nested"].status.value == "completed"
+    assert p.tasks["nested"].iteration == 3
+    assert p.tasks["nested"].of == 5
+
+    parent_dir = a.store._flow_dir(flow_id)
+    child_flows = list((parent_dir / "flows").iterdir())
+    assert len(child_flows) == 3, child_flows
+
+    # Confirm exactly one child flow's `tests` sub-task emitted PASS
+    # while every `finalize` sub-task emitted only the fixed terminal
+    # string. Together this proves the predicate fired on a sub-output,
+    # not on the aggregate output.
+    pass_count = 0
+    for child_dir in child_flows:
+        child_logs = json.loads((child_dir / "logs.json").read_text())
+        tests_log = next(l for l in child_logs if l["task"] == "tests")
+        finalize_log = next(l for l in child_logs if l["task"] == "finalize")
+        if "PASS" in tests_log["output"]:
+            pass_count += 1
+        assert "PASS" not in finalize_log["output"]
+        assert "nested conduit completed" in finalize_log["output"]
+    assert pass_count == 1
+
+
 async def test_concurrency_cap_honored(workdir):
     # four sleeps with cap 2 should take >= 2 * sleep
     _write_conduit(

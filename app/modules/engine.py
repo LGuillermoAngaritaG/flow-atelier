@@ -23,7 +23,9 @@ from typing import Any, Callable
 from app.modules.conditions import (
     DependencyParseError,
     evaluate,
+    evaluate_loop_predicate,
     parse_dependencies,
+    parse_output_predicate,
 )
 from app.modules.templating import SkipSignal, TemplateError, resolve
 from app.schemas.conduit import Conduit, TaskDefinition, ToolType
@@ -248,11 +250,11 @@ class Engine:
             ]
             self.store.write_progress(flow_id, progress)
 
-        def mark_completed(name: str) -> None:
+        def mark_completed(name: str, iteration: int) -> None:
             statuses[name] = TaskStatus.completed
             progress.tasks[name] = TaskProgress(
                 status=TaskStatus.completed,
-                iteration=task_map[name].repeat,
+                iteration=iteration,
                 of=task_map[name].repeat,
             )
             progress.current_tasks = [
@@ -310,6 +312,20 @@ class Engine:
                     run_nested_conduit=self._make_nested_runner(on_task_event),
                 )
 
+                # Pre-parse the loop predicate once per task. Schema enforces
+                # that at most one of `until` / `while_` is set, so we end up
+                # with a single (compiled_pattern, negate) plus a mode tag.
+                # Already validated at conduit-load time, so this cannot raise
+                # in practice.
+                loop_predicate: tuple | None = None
+                loop_mode: str = "until"
+                if t.until is not None:
+                    loop_predicate = parse_output_predicate(t.until)
+                    loop_mode = "until"
+                elif t.while_ is not None:
+                    loop_predicate = parse_output_predicate(t.while_)
+                    loop_mode = "while"
+
                 async with semaphore:
                     last_output = ""
                     for iteration in range(1, t.repeat + 1):
@@ -362,8 +378,20 @@ class Engine:
                             state_changed.set()
                             return
                         last_output = result.output
+                        if loop_predicate is not None:
+                            # Conduit tasks evaluate the predicate against the
+                            # outputs of every nested sub-task (any-match),
+                            # not just the conduit's aggregate result.output.
+                            if t.tool == ToolType.conduit:
+                                scope_outputs = result.sub_outputs
+                            else:
+                                scope_outputs = [result.output]
+                            if evaluate_loop_predicate(
+                                loop_predicate, scope_outputs, loop_mode
+                            ):
+                                break
                     outputs[t.name] = last_output
-                    mark_completed(t.name)
+                    mark_completed(t.name, iteration)
             except asyncio.CancelledError:
                 if statuses[t.name] not in (
                     TaskStatus.completed, TaskStatus.failed, TaskStatus.skipped
