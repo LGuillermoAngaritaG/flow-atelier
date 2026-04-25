@@ -171,6 +171,67 @@ def test_task_without_until_still_validates():
     assert c.tasks[0].until is None
 
 
+# ------------------------------------------------------------------ while
+
+
+def _task_with_while(**overrides):
+    base = {
+        "description": "d",
+        "task": "x",
+        "tool": "tool:bash",
+        "depends_on": [],
+        "repeat": 3,
+        "while": "output.match(retry)",
+    }
+    base.update(overrides)
+    return {
+        "name": "x",
+        "description": "d",
+        "tasks": [{"a": base}],
+    }
+
+
+def test_while_yaml_key_loads_into_while_attr():
+    c = Conduit.model_validate(_task_with_while())
+    assert c.tasks[0].while_ == "output.match(retry)"
+
+
+def test_while_not_match_with_repeat_gt_1_ok():
+    c = Conduit.model_validate(_task_with_while(**{"while": "output.not_match(ready)"}))
+    assert c.tasks[0].while_ == "output.not_match(ready)"
+
+
+def test_while_with_repeat_1_rejected():
+    with pytest.raises(Exception, match="repeat"):
+        Conduit.model_validate(_task_with_while(repeat=1))
+
+
+def test_while_and_until_mutually_exclusive():
+    body = _task_with_while(until="output.match(DONE)")
+    with pytest.raises(Exception) as exc:
+        Conduit.model_validate(body)
+    msg = str(exc.value)
+    assert "until" in msg and "while" in msg
+
+
+def test_while_with_invalid_dsl_rejected():
+    with pytest.raises(Exception):
+        Conduit.model_validate(_task_with_while(**{"while": "retry"}))
+
+
+def test_while_with_invalid_regex_rejected():
+    with pytest.raises(Exception):
+        Conduit.model_validate(_task_with_while(**{"while": "output.match([unclosed)"}))
+
+
+def test_while_round_trips_to_yaml_alias():
+    c = Conduit.model_validate(_task_with_while())
+    dumped = c.tasks[0].model_dump(by_alias=True)
+    assert "while" in dumped
+    assert dumped["while"] == "output.match(retry)"
+    assert "while_" not in dumped
+
+
 def test_flow_id_roundtrip():
     fid = new_flow_id("deploy_pipeline")
     assert FLOW_ID_RE.match(fid)
