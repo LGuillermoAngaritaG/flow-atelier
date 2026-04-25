@@ -155,7 +155,71 @@ atelier run <conduit> [--input key=value ...]
 atelier status <flow_id>
 atelier list conduits
 atelier list flows [--conduit <name>]
+
+# scheduler
+atelier schedule add <file.yaml> [--force]
+atelier schedule list [--json]
+atelier schedule remove <name>
+atelier schedule run-now <name>
+atelier scheduler start [--reload-interval 30] [--log-level INFO]
+atelier scheduler status [--json]
 ```
+
+## Scheduler
+
+`atelier scheduler` runs conduits on a wall-clock schedule. Schedules are
+defined as YAML files under `.atelier/schedules/`. The daemon
+(`atelier scheduler start`) is a single foreground asyncio process that
+fires conduits identically on Linux, macOS, and Windows — put it under
+your preferred supervisor (`systemd --user`, `launchd`, NSSM, etc.).
+
+Each schedule's filename stem is its canonical name. Two schedule modes
+are supported: **once** and **recurring**.
+
+```yaml
+# .atelier/schedules/nightly-report.yaml — recurring
+conduit: report                 # required
+working_dir: ./projects/foo     # optional; default = scheduler's cwd
+inputs:
+  date: today
+  region: us-east
+timezone: America/Bogota        # optional; default = system local zone
+schedule:
+  type: recurring
+  days: [mon, tue, wed, thu, fri]   # mon..sun, monday..sunday, 0..6, '*' / 'daily'
+  hours: ["09:00", "17:30"]         # HH:MM (24h); fires once per (day × hour) pair
+```
+
+```yaml
+# .atelier/schedules/backfill-april.yaml — one-shot
+conduit: backfill
+inputs:
+  month: "2026-04"
+schedule:
+  type: once
+  at: 2026-05-01T09:00:00       # ISO 8601; tz-aware suffix optional
+```
+
+Behavior notes:
+
+- **Timezone** defaults to the host's local zone (`tzlocal`); per-schedule
+  `timezone:` overrides it. Naive `at:` values are interpreted in the
+  resolved zone.
+- **Working directory** is where the conduit lives and where its flow
+  artefacts are written (`<working_dir>/.atelier/flows/...`). Relative
+  paths resolve against the daemon's cwd. Conduits resolve via the same
+  project/global scope rules as `atelier run`.
+- **Hot reload**: edits to `.atelier/schedules/*.yaml` are picked up on
+  the next reload tick (`--reload-interval`, default 30s). Broken YAML
+  files are logged but never crash the daemon.
+- **One-shot deduplication**: after a `once` schedule fires, its
+  scheduled timestamp is recorded in `.atelier/schedules/.state.json`
+  so a daemon restart never re-runs it. Edit the YAML to a new `at:`
+  to re-arm.
+- **Concurrency**: each schedule runs at most one instance at a time
+  (`max_instances=1`); missed fires are coalesced.
+- `atelier schedule run-now <name>` dispatches a schedule immediately
+  without going through the daemon and without touching fired-state.
 
 ## Conduit reference
 
@@ -330,6 +394,9 @@ invoked.
 .atelier/
 ├── conduits/
 │   └── <conduit_name>/conduit.yaml
+├── schedules/
+│   ├── <schedule_name>.yaml             # one ScheduleDefinition per file
+│   └── .state.json                      # fired-once markers (managed by the daemon)
 └── flows/
     └── <flow_id>/                       # <conduit>_<uuid8>_<YYYYMMDDTHHMMSSZ>
         ├── input.yaml
