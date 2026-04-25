@@ -1,10 +1,13 @@
-"""Harness executors — harness:claude-code and harness:codex over ACP.
+"""Harness executors — five ACP-speaking coding agents.
 
-Both harnesses speak the Agent Client Protocol (ACP) via Zed's adapter
-binaries, launched through ``npx`` by default:
+Each harness is a thin :class:`AcpHarnessExecutor` subclass differing only
+in its ``launch_cmd``. Each reuses the host CLI's own config and auth.
 
-- ``harness:claude-code`` → ``@zed-industries/claude-code-acp``
-- ``harness:codex``       → ``@zed-industries/codex-acp``
+- ``harness:claude-code`` → ``@zed-industries/claude-code-acp`` via ``npx``
+- ``harness:codex``       → ``@zed-industries/codex-acp`` via ``npx``
+- ``harness:opencode``    → ``opencode acp`` (native ACP)
+- ``harness:copilot``     → ``copilot --acp`` (GitHub Copilot CLI, native ACP)
+- ``harness:cursor``      → ``@blowmage/cursor-agent-acp`` via ``npx``
 
 Non-interactive mode sends one prompt turn and returns whatever the agent
 streams before ``stop_reason``. Interactive mode keeps the session open
