@@ -379,7 +379,13 @@ class Engine:
                             return
                         last_output = result.output
                         if loop_predicate is not None:
-                            scope_outputs = [result.output]
+                            # Conduit tasks evaluate the predicate against the
+                            # outputs of every nested sub-task (any-match),
+                            # not just the conduit's aggregate result.output.
+                            if t.tool == ToolType.conduit:
+                                scope_outputs = result.sub_outputs
+                            else:
+                                scope_outputs = [result.output]
                             if evaluate_loop_predicate(
                                 loop_predicate, scope_outputs, loop_mode
                             ):
