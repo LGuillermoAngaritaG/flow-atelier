@@ -178,3 +178,72 @@ def test_parse_output_predicate_empty_rejected():
 
     with pytest.raises(DependencyParseError):
         parse_output_predicate("")
+
+
+# ------------------------------------------------------------------ evaluate_loop_predicate
+
+
+def _pred(expr: str):
+    from app.modules.conditions import parse_output_predicate
+
+    return parse_output_predicate(expr)
+
+
+@pytest.mark.parametrize(
+    "expr,outputs,expected",
+    [
+        # mode="until", non-negated: break iff any output matches
+        ("output.match(DONE)", ["wait"], False),
+        ("output.match(DONE)", ["DONE"], True),
+        ("output.match(DONE)", ["wait", "still", "DONE finally"], True),
+        ("output.match(DONE)", ["wait", "still"], False),
+        # mode="until", negated (.not_match): break iff no output matches the un-negated regex
+        ("output.not_match(RETRY)", ["RETRY"], False),
+        ("output.not_match(RETRY)", ["clean"], True),
+        ("output.not_match(RETRY)", ["RETRY", "RETRY"], False),
+        ("output.not_match(RETRY)", ["clean", "also clean"], True),
+        ("output.not_match(RETRY)", ["RETRY", "clean"], False),
+    ],
+)
+def test_evaluate_loop_predicate_until(expr, outputs, expected):
+    from app.modules.conditions import evaluate_loop_predicate
+
+    assert evaluate_loop_predicate(_pred(expr), outputs, "until") is expected
+
+
+@pytest.mark.parametrize(
+    "expr,outputs,expected",
+    [
+        # mode="while", non-negated: break iff no output matches
+        ("output.match(retry)", ["retry"], False),
+        ("output.match(retry)", ["done"], True),
+        ("output.match(retry)", ["retry", "retry"], False),
+        ("output.match(retry)", ["done", "ready"], True),
+        ("output.match(retry)", ["done", "retry"], False),
+        # mode="while", negated: break iff every output matches the un-negated regex
+        ("output.not_match(ready)", ["pending"], False),
+        ("output.not_match(ready)", ["ready"], True),
+        ("output.not_match(ready)", ["ready", "ready"], True),
+        ("output.not_match(ready)", ["ready", "pending"], False),
+    ],
+)
+def test_evaluate_loop_predicate_while(expr, outputs, expected):
+    from app.modules.conditions import evaluate_loop_predicate
+
+    assert evaluate_loop_predicate(_pred(expr), outputs, "while") is expected
+
+
+def test_evaluate_loop_predicate_empty_outputs_does_not_break():
+    from app.modules.conditions import evaluate_loop_predicate
+
+    assert evaluate_loop_predicate(_pred("output.match(x)"), [], "until") is False
+    assert evaluate_loop_predicate(_pred("output.match(x)"), [], "while") is False
+    assert evaluate_loop_predicate(_pred("output.not_match(x)"), [], "until") is False
+    assert evaluate_loop_predicate(_pred("output.not_match(x)"), [], "while") is False
+
+
+def test_evaluate_loop_predicate_invalid_mode_raises():
+    from app.modules.conditions import evaluate_loop_predicate
+
+    with pytest.raises(ValueError):
+        evaluate_loop_predicate(_pred("output.match(x)"), ["x"], "forever")  # type: ignore[arg-type]

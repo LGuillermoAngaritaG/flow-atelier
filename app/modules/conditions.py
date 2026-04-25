@@ -129,6 +129,46 @@ def parse_output_predicate(expr: str) -> tuple[re.Pattern[str], bool]:
     )
 
 
+LoopMode = Literal["until", "while"]
+
+
+def evaluate_loop_predicate(
+    predicate: tuple[re.Pattern[str], bool],
+    outputs: list[str],
+    mode: LoopMode,
+) -> bool:
+    """Decide whether a per-task loop should break at this iteration.
+
+    Returns True if the loop should stop now. ``outputs`` carries one
+    entry per nested sub-task output for conduit scope, or
+    ``[result.output]`` for simple tasks. ``predicate`` is the
+    ``(compiled_regex, negate)`` tuple produced by
+    :func:`parse_output_predicate`.
+
+    Truth table (any-match = at least one output matches the un-negated
+    regex; every-match = all outputs match):
+
+    - ``mode="until"`` + non-negated: break iff any-match.
+    - ``mode="until"`` + negated:     break iff not any-match.
+    - ``mode="while"`` + non-negated: break iff not any-match.
+    - ``mode="while"`` + negated:     break iff every-match.
+
+    An empty ``outputs`` list never breaks — wait for data on the next
+    iteration.
+    """
+    if mode not in ("until", "while"):
+        raise ValueError(f"unknown loop mode: {mode!r}")
+    if not outputs:
+        return False
+    pattern, negate = predicate
+    matches = [pattern.search(out) is not None for out in outputs]
+    any_match = any(matches)
+    if mode == "until":
+        return (not any_match) if negate else any_match
+    # mode == "while"
+    return all(matches) if negate else (not any_match)
+
+
 EvalResult = Literal["satisfied", "wait", "skip"]
 
 
