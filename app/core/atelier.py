@@ -9,7 +9,13 @@ from app.modules.engine import Engine, FlowStartedCallback, TaskEventCallback
 from app.schemas.progress import Progress
 from app.services.executor.bash import BashExecutor
 from app.services.executor.conduit import ConduitExecutor
-from app.services.executor.harness import ClaudeHarness, CodexHarness
+from app.services.executor.harness import (
+    ClaudeHarness,
+    CodexHarness,
+    CopilotHarness,
+    CursorHarness,
+    OpencodeHarness,
+)
 from app.services.executor.hitl import HitlExecutor
 from app.services.executor.prompt_sink import PromptSink, TerminalPromptSink
 from app.services.store.filesystem import FilesystemStore
@@ -49,6 +55,9 @@ class Atelier:
             self.settings.claude_launch_cmd or None
         )
         codex_launch = self.settings.codex_launch_cmd or None
+        opencode_launch = self.settings.opencode_launch_cmd or None
+        copilot_launch = self.settings.copilot_launch_cmd or None
+        cursor_launch = self.settings.cursor_launch_cmd or None
         self.executors = {
             "tool:bash": BashExecutor(),
             "tool:hitl": HitlExecutor(),
@@ -61,6 +70,21 @@ class Atelier:
             "harness:codex": CodexHarness(
                 sink=sink,
                 launch_cmd=codex_launch,
+                done_marker=self.settings.done_marker,
+            ),
+            "harness:opencode": OpencodeHarness(
+                sink=sink,
+                launch_cmd=opencode_launch,
+                done_marker=self.settings.done_marker,
+            ),
+            "harness:copilot": CopilotHarness(
+                sink=sink,
+                launch_cmd=copilot_launch,
+                done_marker=self.settings.done_marker,
+            ),
+            "harness:cursor": CursorHarness(
+                sink=sink,
+                launch_cmd=cursor_launch,
                 done_marker=self.settings.done_marker,
             ),
         }

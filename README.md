@@ -5,7 +5,7 @@ DAG-based workflows called **conduits**. A single run of a conduit is a
 **flow**. Tasks whose dependencies are satisfied run concurrently via
 `asyncio`, subject to a conduit-level concurrency cap.
 
-Each task is dispatched to one of five executors:
+Each task is dispatched to one of eight executors:
 
 | Tool                  | What it runs                                                     |
 |-----------------------|------------------------------------------------------------------|
@@ -14,13 +14,15 @@ Each task is dispatched to one of five executors:
 | `tool:conduit`        | another conduit, as a nested flow                                |
 | `harness:claude-code` | Claude Code via the [ACP](https://agentclientprotocol.com) adapter |
 | `harness:codex`       | OpenAI Codex via the ACP adapter                                 |
+| `harness:opencode`    | [opencode](https://opencode.ai) via native `opencode acp`        |
+| `harness:copilot`     | GitHub Copilot CLI via native `copilot --acp`                    |
+| `harness:cursor`      | Cursor CLI via the `@blowmage/cursor-agent-acp` adapter          |
 
 Harnesses speak the **Agent Client Protocol** (ACP) over stdio, so they
 get real bidirectional interaction: the agent can ask for permission, ask
 the user a free-form question mid-turn, or run a multi-turn conversation.
-Both harnesses reuse your existing local CLI configuration — project-level
-`.claude/settings.json`, skills, subagents, hooks, MCP servers, CLAUDE.md
-(for claude) and `~/.codex/config.toml`, auth, AGENTS.md (for codex).
+Each harness reuses the host CLI's own local configuration and auth —
+flow-atelier does not read, write, or proxy any of it.
 
 In `interactive: true` mode, flow-atelier keeps the session open across
 turns: if the agent ends a turn without emitting the `[ATELIER_DONE]`
@@ -59,22 +61,38 @@ also works.
 
 ### Harness prerequisites
 
-`harness:claude-code` and `harness:codex` launch ACP adapters published
-by Zed via `npx`, so you need:
+You only need the prerequisites for the harness(es) you actually plan
+to use. A user who only wants `harness:opencode` does not need `claude`,
+`codex`, `copilot`, or `cursor-agent` installed, and so on.
 
-- **Node.js / `npx`** on your PATH.
-- An authenticated Claude Code and/or Codex setup on this machine (the
-  adapters reuse your `~/.claude` and `~/.codex` configuration, including
-  auth, settings, skills, MCP servers, CLAUDE.md, and AGENTS.md).
+- **`harness:claude-code`** — Node.js / `npx` on PATH, plus an
+  authenticated `claude` setup (`~/.claude`, skills, subagents, hooks,
+  MCP servers, CLAUDE.md). On first use `npx` downloads
+  `@zed-industries/claude-code-acp`.
+- **`harness:codex`** — Node.js / `npx` on PATH, plus an authenticated
+  `codex` setup (`~/.codex/config.toml`, auth, AGENTS.md). On first use
+  `npx` downloads `@zed-industries/codex-acp`.
+- **`harness:opencode`** — the `opencode` binary on PATH; ACP is
+  native. As an alternative, an npm-published adapter like
+  `josephschmitt/opencode-acp` can be swapped in via
+  `ATELIER_OPENCODE_LAUNCH_CMD` if you prefer an `npx`-launched flow
+  without a local `opencode` install.
+- **`harness:copilot`** — the `copilot` binary on PATH, from the
+  `@github/copilot` npm package (public preview as of Jan 2026). ACP
+  is native via `copilot --acp`.
+- **`harness:cursor`** — Node.js / `npx` on PATH, plus the
+  `cursor-agent` binary on PATH (the community npm adapter
+  `@blowmage/cursor-agent-acp` is pinned exactly at `0.7.1` and shells
+  out to `cursor-agent`).
 
-On first use `npx` will download and cache the adapter packages:
-
-- `@zed-industries/claude-code-acp`
-- `@zed-industries/codex-acp`
+Each harness reuses its host CLI's own config and auth — flow-atelier
+does not hard-code paths to, or proxy, any of that state.
 
 To pin a custom version or point at a locally installed adapter, set
-`ATELIER_CLAUDE_LAUNCH_CMD` / `ATELIER_CODEX_LAUNCH_CMD` to a JSON array
-of argv (see `.env.example`).
+the matching `ATELIER_*_LAUNCH_CMD` env var to a JSON array of argv:
+`ATELIER_CLAUDE_LAUNCH_CMD`, `ATELIER_CODEX_LAUNCH_CMD`,
+`ATELIER_OPENCODE_LAUNCH_CMD`, `ATELIER_COPILOT_LAUNCH_CMD`, or
+`ATELIER_CURSOR_LAUNCH_CMD` (see `.env.example`).
 
 ## Quick start
 

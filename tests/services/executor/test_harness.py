@@ -14,6 +14,10 @@ from app.services.executor.harness import (
     DEFAULT_DONE_MARKER,
     AcpHarnessExecutor,
     ClaudeHarness,
+    CodexHarness,
+    CopilotHarness,
+    CursorHarness,
+    OpencodeHarness,
     build_interactive_suffix,
 )
 from app.services.executor.prompt_sink import PermissionOption
@@ -345,6 +349,85 @@ class TestPreset:
     def test_claude_harness_override_launch_cmd(self) -> None:
         h = ClaudeHarness(sink=RecordingSink(), launch_cmd=["foo", "bar"])
         assert h.launch_cmd == ["foo", "bar"]
+
+    def test_codex_harness_default_launch_cmd(self) -> None:
+        h = CodexHarness(sink=RecordingSink())
+        assert "codex-acp" in " ".join(h.launch_cmd)
+
+    def test_opencode_harness_default_launch_cmd(self) -> None:
+        h = OpencodeHarness(sink=RecordingSink())
+        assert h.launch_cmd == ["opencode", "acp"]
+
+    def test_opencode_harness_override_launch_cmd(self) -> None:
+        h = OpencodeHarness(sink=RecordingSink(), launch_cmd=["foo", "bar"])
+        assert h.launch_cmd == ["foo", "bar"]
+
+    def test_copilot_harness_default_launch_cmd(self) -> None:
+        h = CopilotHarness(sink=RecordingSink())
+        assert h.launch_cmd == ["copilot", "--acp"]
+
+    def test_copilot_harness_override_launch_cmd(self) -> None:
+        h = CopilotHarness(sink=RecordingSink(), launch_cmd=["foo", "bar"])
+        assert h.launch_cmd == ["foo", "bar"]
+
+    def test_cursor_harness_default_launch_cmd(self) -> None:
+        h = CursorHarness(sink=RecordingSink())
+        assert h.launch_cmd == [
+            "npx",
+            "-y",
+            "@blowmage/cursor-agent-acp@0.7.1",
+        ]
+
+    def test_cursor_harness_override_launch_cmd(self) -> None:
+        h = CursorHarness(sink=RecordingSink(), launch_cmd=["foo", "bar"])
+        assert h.launch_cmd == ["foo", "bar"]
+
+
+class TestAtelierHarnessWiring:
+    def test_atelier_exposes_all_five_harness_keys(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        from app.core.atelier import Atelier
+
+        a = Atelier()
+        assert sorted(a.executors) == [
+            "harness:claude-code",
+            "harness:codex",
+            "harness:copilot",
+            "harness:cursor",
+            "harness:opencode",
+            "tool:bash",
+            "tool:conduit",
+            "tool:hitl",
+        ]
+        assert isinstance(a.executors["harness:opencode"], OpencodeHarness)
+        assert isinstance(a.executors["harness:copilot"], CopilotHarness)
+        assert isinstance(a.executors["harness:cursor"], CursorHarness)
+
+    def test_opencode_launch_cmd_env_override(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ATELIER_OPENCODE_LAUNCH_CMD", '["x","y"]')
+        from app.core.atelier import Atelier
+
+        a = Atelier()
+        assert a.executors["harness:opencode"].launch_cmd == ["x", "y"]
+
+    def test_copilot_launch_cmd_env_override(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ATELIER_COPILOT_LAUNCH_CMD", '["x","y"]')
+        from app.core.atelier import Atelier
+
+        a = Atelier()
+        assert a.executors["harness:copilot"].launch_cmd == ["x", "y"]
+
+    def test_cursor_launch_cmd_env_override(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ATELIER_CURSOR_LAUNCH_CMD", '["x","y"]')
+        from app.core.atelier import Atelier
+
+        a = Atelier()
+        assert a.executors["harness:cursor"].launch_cmd == ["x", "y"]
 
 
 def test_default_marker_constant() -> None:

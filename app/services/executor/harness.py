@@ -1,10 +1,13 @@
-"""Harness executors — harness:claude-code and harness:codex over ACP.
+"""Harness executors — five ACP-speaking coding agents.
 
-Both harnesses speak the Agent Client Protocol (ACP) via Zed's adapter
-binaries, launched through ``npx`` by default:
+Each harness is a thin :class:`AcpHarnessExecutor` subclass differing only
+in its ``launch_cmd``. Each reuses the host CLI's own config and auth.
 
-- ``harness:claude-code`` → ``@zed-industries/claude-code-acp``
-- ``harness:codex``       → ``@zed-industries/codex-acp``
+- ``harness:claude-code`` → ``@zed-industries/claude-code-acp`` via ``npx``
+- ``harness:codex``       → ``@zed-industries/codex-acp`` via ``npx``
+- ``harness:opencode``    → ``opencode acp`` (native ACP)
+- ``harness:copilot``     → ``copilot --acp`` (GitHub Copilot CLI, native ACP)
+- ``harness:cursor``      → ``@blowmage/cursor-agent-acp`` via ``npx``
 
 Non-interactive mode sends one prompt turn and returns whatever the agent
 streams before ``stop_reason``. Interactive mode keeps the session open
@@ -50,6 +53,13 @@ CODEX_ACP_LAUNCH = [
     "npx",
     "-y",
     "@zed-industries/codex-acp@0.11.1",
+]
+OPENCODE_ACP_LAUNCH = ["opencode", "acp"]
+COPILOT_ACP_LAUNCH = ["copilot", "--acp"]
+CURSOR_ACP_LAUNCH = [
+    "npx",
+    "-y",
+    "@blowmage/cursor-agent-acp@0.7.1",
 ]
 
 
@@ -405,6 +415,54 @@ class CodexHarness(AcpHarnessExecutor):
     ) -> None:
         super().__init__(
             launch_cmd=launch_cmd or list(CODEX_ACP_LAUNCH),
+            sink=sink,
+            done_marker=done_marker,
+        )
+
+
+class OpencodeHarness(AcpHarnessExecutor):
+    """`harness:opencode` — drives ``opencode acp`` (native ACP)."""
+
+    def __init__(
+        self,
+        sink: PromptSink | None = None,
+        launch_cmd: list[str] | None = None,
+        done_marker: str | None = None,
+    ) -> None:
+        super().__init__(
+            launch_cmd=launch_cmd or list(OPENCODE_ACP_LAUNCH),
+            sink=sink,
+            done_marker=done_marker,
+        )
+
+
+class CopilotHarness(AcpHarnessExecutor):
+    """`harness:copilot` — drives ``copilot --acp`` (GitHub Copilot CLI)."""
+
+    def __init__(
+        self,
+        sink: PromptSink | None = None,
+        launch_cmd: list[str] | None = None,
+        done_marker: str | None = None,
+    ) -> None:
+        super().__init__(
+            launch_cmd=launch_cmd or list(COPILOT_ACP_LAUNCH),
+            sink=sink,
+            done_marker=done_marker,
+        )
+
+
+class CursorHarness(AcpHarnessExecutor):
+    """`harness:cursor` — drives the ``@blowmage/cursor-agent-acp`` adapter via npx."""
+
+    def __init__(
+        self,
+        sink: PromptSink | None = None,
+        launch_cmd: list[str] | None = None,
+        done_marker: str | None = None,
+    ) -> None:
+        super().__init__(
+            launch_cmd=launch_cmd or list(CURSOR_ACP_LAUNCH),
             sink=sink,
             done_marker=done_marker,
         )

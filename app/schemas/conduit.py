@@ -13,6 +13,9 @@ class ToolType(str, Enum):
     conduit = "tool:conduit"
     claude = "harness:claude-code"
     codex = "harness:codex"
+    opencode = "harness:opencode"
+    copilot = "harness:copilot"
+    cursor = "harness:cursor"
 
 
 class HitlInput(BaseModel):
