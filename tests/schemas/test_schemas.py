@@ -102,6 +102,30 @@ def test_duplicate_task_names_rejected():
         )
 
 
+@pytest.mark.parametrize(
+    "tool_str",
+    ["harness:opencode", "harness:copilot", "harness:cursor"],
+)
+def test_new_harness_tool_strings_validate(tool_str):
+    c = Conduit.model_validate(
+        {
+            "name": "x",
+            "description": "d",
+            "tasks": [
+                {
+                    "t": {
+                        "description": "d",
+                        "task": "hi",
+                        "tool": tool_str,
+                        "depends_on": [],
+                    }
+                }
+            ],
+        }
+    )
+    assert c.tasks[0].tool.value == tool_str
+
+
 def test_repeat_must_be_positive():
     with pytest.raises(Exception):
         Conduit.model_validate(

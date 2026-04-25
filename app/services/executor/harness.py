@@ -51,6 +51,13 @@ CODEX_ACP_LAUNCH = [
     "-y",
     "@zed-industries/codex-acp@0.11.1",
 ]
+OPENCODE_ACP_LAUNCH = ["opencode", "acp"]
+COPILOT_ACP_LAUNCH = ["copilot", "--acp"]
+CURSOR_ACP_LAUNCH = [
+    "npx",
+    "-y",
+    "@blowmage/cursor-agent-acp@0.7.1",
+]
 
 
 def build_interactive_suffix(marker: str) -> str:
@@ -405,6 +412,54 @@ class CodexHarness(AcpHarnessExecutor):
     ) -> None:
         super().__init__(
             launch_cmd=launch_cmd or list(CODEX_ACP_LAUNCH),
+            sink=sink,
+            done_marker=done_marker,
+        )
+
+
+class OpencodeHarness(AcpHarnessExecutor):
+    """`harness:opencode` — drives ``opencode acp`` (native ACP)."""
+
+    def __init__(
+        self,
+        sink: PromptSink | None = None,
+        launch_cmd: list[str] | None = None,
+        done_marker: str | None = None,
+    ) -> None:
+        super().__init__(
+            launch_cmd=launch_cmd or list(OPENCODE_ACP_LAUNCH),
+            sink=sink,
+            done_marker=done_marker,
+        )
+
+
+class CopilotHarness(AcpHarnessExecutor):
+    """`harness:copilot` — drives ``copilot --acp`` (GitHub Copilot CLI)."""
+
+    def __init__(
+        self,
+        sink: PromptSink | None = None,
+        launch_cmd: list[str] | None = None,
+        done_marker: str | None = None,
+    ) -> None:
+        super().__init__(
+            launch_cmd=launch_cmd or list(COPILOT_ACP_LAUNCH),
+            sink=sink,
+            done_marker=done_marker,
+        )
+
+
+class CursorHarness(AcpHarnessExecutor):
+    """`harness:cursor` — drives the ``@blowmage/cursor-agent-acp`` adapter via npx."""
+
+    def __init__(
+        self,
+        sink: PromptSink | None = None,
+        launch_cmd: list[str] | None = None,
+        done_marker: str | None = None,
+    ) -> None:
+        super().__init__(
+            launch_cmd=launch_cmd or list(CURSOR_ACP_LAUNCH),
             sink=sink,
             done_marker=done_marker,
         )

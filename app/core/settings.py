@@ -41,4 +41,25 @@ class AtelierSettings(BaseSettings):
             "Empty = use the bundled default (@zed-industries/codex-acp)."
         ),
     )
+    opencode_launch_cmd: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Override argv for the harness:opencode ACP agent. "
+            "Empty = use the bundled default (opencode acp)."
+        ),
+    )
+    copilot_launch_cmd: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Override argv for the harness:copilot ACP agent. "
+            "Empty = use the bundled default (copilot --acp)."
+        ),
+    )
+    cursor_launch_cmd: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Override argv for the harness:cursor ACP agent. "
+            "Empty = use the bundled default (@blowmage/cursor-agent-acp)."
+        ),
+    )
     done_marker: str = "[ATELIER_DONE]"
