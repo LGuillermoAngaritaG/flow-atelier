@@ -23,6 +23,7 @@ from typing import Any, Callable
 from app.modules.conditions import (
     DependencyParseError,
     evaluate,
+    evaluate_loop_predicate,
     parse_dependencies,
     parse_output_predicate,
 )
@@ -311,11 +312,19 @@ class Engine:
                     run_nested_conduit=self._make_nested_runner(on_task_event),
                 )
 
-                # Pre-parse the until predicate once per task. Already validated
-                # at conduit-load time, so this cannot raise in practice.
-                until_predicate: tuple | None = None
+                # Pre-parse the loop predicate once per task. Schema enforces
+                # that at most one of `until` / `while_` is set, so we end up
+                # with a single (compiled_pattern, negate) plus a mode tag.
+                # Already validated at conduit-load time, so this cannot raise
+                # in practice.
+                loop_predicate: tuple | None = None
+                loop_mode: str = "until"
                 if t.until is not None:
-                    until_predicate = parse_output_predicate(t.until)
+                    loop_predicate = parse_output_predicate(t.until)
+                    loop_mode = "until"
+                elif t.while_ is not None:
+                    loop_predicate = parse_output_predicate(t.while_)
+                    loop_mode = "while"
 
                 async with semaphore:
                     last_output = ""
@@ -369,10 +378,11 @@ class Engine:
                             state_changed.set()
                             return
                         last_output = result.output
-                        if until_predicate is not None:
-                            pattern, negate = until_predicate
-                            matched = pattern.search(result.output) is not None
-                            if matched ^ negate:
+                        if loop_predicate is not None:
+                            scope_outputs = [result.output]
+                            if evaluate_loop_predicate(
+                                loop_predicate, scope_outputs, loop_mode
+                            ):
                                 break
                     outputs[t.name] = last_output
                     mark_completed(t.name, iteration)
