@@ -15,6 +15,14 @@ class ExecutionResult(BaseModel):
     stdout: str = ""
     stderr: str = ""
     exit_code: int = 0
+    sub_outputs: list[str] = Field(default_factory=list)
+    """Per-sub-task outputs from a nested conduit's child flow.
+
+    Populated only by :class:`ConduitExecutor`; every other executor
+    leaves this empty. The engine reads this field exclusively for
+    ``tool:conduit`` tasks when evaluating the per-iteration loop
+    predicate.
+    """
 
     @property
     def success(self) -> bool:
