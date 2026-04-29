@@ -157,69 +157,101 @@ atelier list conduits
 atelier list flows [--conduit <name>]
 
 # scheduler
-atelier schedule add <file.yaml> [--force]
+atelier schedule add <file.{json,yaml}>
 atelier schedule list [--json]
-atelier schedule remove <name>
-atelier schedule run-now <name>
+atelier schedule remove <id-or-name>
+atelier schedule run-now <id-or-name>
 atelier scheduler start [--reload-interval 30] [--log-level INFO]
 atelier scheduler status [--json]
+
+# server (HTTP + WebSocket)
+atelier serve [--host 127.0.0.1] [--port 8000] \
+              [--reload-interval 30] [--cors-origin URL]* \
+              [--log-level INFO]
 ```
+
+## Server (`atelier serve`)
+
+`atelier serve` boots a single uvicorn process that hosts both the
+FastAPI HTTP API and the in-process scheduler daemon (one event loop,
+clean SIGTERM cascade). It is the entry point the Flow Atelier visual
+frontend connects to.
+
+- Binds to `127.0.0.1:8000` by default. Pass `--host 0.0.0.0` to expose
+  on the LAN.
+- `--cors-origin` is repeatable; absent means `["*"]`.
+- All JSON payloads are snake_case; the frontend translates camelCase ↔
+  snake_case on its side.
+
+Endpoint surface:
+
+| Method   | Path                       | Notes |
+|----------|----------------------------|-------|
+| `GET`    | `/conduits`                | List conduits |
+| `GET`    | `/conduits/:name`          | Read one |
+| `POST`   | `/conduits`                | Create (409 on collision) |
+| `PATCH`  | `/conduits/:name`          | Partial update |
+| `DELETE` | `/conduits/:name`          | Delete |
+| `POST`   | `/conduits/open-path`      | Reveal flow run path in OS file explorer |
+| `POST`   | `/tasks/run`               | Run an ad-hoc one-task conduit |
+| `GET`    | `/schedules`               | List active schedules |
+| `POST`   | `/schedules`               | Create (registers with the embedded daemon) |
+| `DELETE` | `/schedules/:id`           | Soft-delete |
+| `GET`    | `/flows`                   | List prior flows |
+| `GET`    | `/flows/:id/logs`          | Per-flow log entries |
+| `WS`     | `/ws/run-conduit`          | Run flows + HITL gates over a multiplexed socket |
 
 ## Scheduler
 
-`atelier scheduler` runs conduits on a wall-clock schedule. Schedules are
-defined as YAML files under `.atelier/schedules/`. The daemon
-(`atelier scheduler start`) is a single foreground asyncio process that
-fires conduits identically on Linux, macOS, and Windows — put it under
-your preferred supervisor (`systemd --user`, `launchd`, NSSM, etc.).
+`atelier scheduler` runs conduits on a wall-clock schedule. Schedules
+live in `.atelier/schedules.json` (one JSON file per project,
+soft-deleted entries kept around so existing ids stay stable). The
+daemon (`atelier scheduler start` or, embedded, `atelier serve`) is a
+single foreground asyncio process that fires conduits identically on
+Linux, macOS, and Windows — put it under your preferred supervisor
+(`systemd --user`, `launchd`, NSSM, etc.).
 
-Each schedule's filename stem is its canonical name. Two schedule modes
-are supported: **once** and **recurring**.
+Schedules use the same shape that the HTTP API consumes:
 
-```yaml
-# .atelier/schedules/nightly-report.yaml — recurring
-conduit: report                 # required
-working_dir: ./projects/foo     # optional; default = scheduler's cwd
-inputs:
-  date: today
-  region: us-east
-timezone: America/Bogota        # optional; default = system local zone
-schedule:
-  type: recurring
-  days: [mon, tue, wed, thu, fri]   # mon..sun, monday..sunday, 0..6, '*' / 'daily'
-  hours: ["09:00", "17:30"]         # HH:MM (24h); fires once per (day × hour) pair
+```json
+{
+  "conduit_name": "report",
+  "inputs": { "date": "today" },
+  "run_path": "/abs/path",
+  "schedule": {
+    "mode": "recurring",
+    "name": "weekday mornings",
+    "days": [1, 2, 3, 4, 5],
+    "times": ["06:00", "12:00"]
+  }
+}
 ```
 
-```yaml
-# .atelier/schedules/backfill-april.yaml — one-shot
-conduit: backfill
-inputs:
-  month: "2026-04"
-schedule:
-  type: once
-  at: 2026-05-01T09:00:00       # ISO 8601; tz-aware suffix optional
-```
+`days` are ISO-8601 day-of-week ints (`1=Mon`..`7=Sun`); `times` are
+`"HH:mm"` 24h strings. One-shots use `mode: "once"` with a `run_at`
+ISO datetime instead of `days`/`times`.
 
 Behavior notes:
 
-- **Timezone** defaults to the host's local zone (`tzlocal`); per-schedule
-  `timezone:` overrides it. Naive `at:` values are interpreted in the
-  resolved zone.
-- **Working directory** is where the conduit lives and where its flow
-  artefacts are written (`<working_dir>/.atelier/flows/...`). Relative
-  paths resolve against the daemon's cwd. Conduits resolve via the same
-  project/global scope rules as `atelier run`.
-- **Hot reload**: edits to `.atelier/schedules/*.yaml` are picked up on
-  the next reload tick (`--reload-interval`, default 30s). Broken YAML
-  files are logged but never crash the daemon.
-- **One-shot deduplication**: after a `once` schedule fires, its
-  scheduled timestamp is recorded in `.atelier/schedules/.state.json`
-  so a daemon restart never re-runs it. Edit the YAML to a new `at:`
-  to re-arm.
+- **Hot reload**: schedules added or removed via the CLI / HTTP API are
+  picked up on the next reload tick (`--reload-interval`, default 30s).
+- **One-shot deduplication**: after a `once` schedule fires, its id is
+  recorded in `.atelier/scheduler_state.json`, so a daemon restart
+  never re-runs it.
 - **Concurrency**: each schedule runs at most one instance at a time
   (`max_instances=1`); missed fires are coalesced.
-- `atelier schedule run-now <name>` dispatches a schedule immediately
-  without going through the daemon and without touching fired-state.
+- `atelier schedule run-now <id-or-name>` dispatches a schedule
+  immediately without going through the daemon and without touching
+  fired-state.
+
+### Migrating from YAML schedules
+
+Earlier versions of flow-atelier stored schedules as YAML files under
+`.atelier/schedules/<name>.yaml`. Those files are no longer read; the
+new JSON store is canonical. Existing YAML files are left on disk for
+your reference but ignored by the daemon — re-issue each schedule via
+`atelier schedule add` (passing a JSON or YAML file in the new shape)
+or `POST /schedules`.
 
 ## Conduit reference
 
