@@ -9,7 +9,12 @@ from typing import Any
 
 from app.core.settings import AtelierSettings
 from app.modules.engine import Engine, FlowStartedCallback, TaskEventCallback
-from app.schemas.api import CreateConduitInput, UpdateConduitInput
+from app.schemas.api import (
+    CreateConduitInput,
+    RunTaskInput,
+    RunTaskOutput,
+    UpdateConduitInput,
+)
 from app.schemas.conduit import Conduit
 from app.schemas.progress import Progress
 from app.services.executor.bash import BashExecutor
@@ -194,6 +199,41 @@ class Atelier:
         :returns: True if it existed and was deleted, False otherwise
         """
         return self.store.delete_conduit(name)
+
+    async def run_single_task(self, payload: RunTaskInput) -> RunTaskOutput:
+        """Run an ad-hoc one-task conduit and return the resulting logs.
+
+        :param payload: validated :class:`RunTaskInput`
+        :returns: :class:`RunTaskOutput` carrying the flow id and logs
+        """
+        conduit = Conduit.model_validate(
+            {
+                "name": f"adhoc__{payload.name}",
+                "description": payload.description or payload.name,
+                "tasks": [
+                    {
+                        "name": payload.name,
+                        "description": payload.description or payload.name,
+                        "task": payload.task,
+                        "tool": payload.tool,
+                        "depends_on": [],
+                    }
+                ],
+            }
+        )
+        captured: dict[str, str | None] = {"id": None}
+
+        def _on_started(fid: str) -> None:
+            captured["id"] = fid
+
+        try:
+            flow_id = await self.engine.run(
+                conduit, dict(payload.inputs), on_flow_started=_on_started
+            )
+        except Exception:  # noqa: BLE001
+            flow_id = captured["id"] or ""
+        logs = self.store.read_logs(flow_id) if flow_id else []
+        return RunTaskOutput(flow_id=flow_id, logs=logs)
 
     def open_conduit_path(self, conduit_name: str, run_path: str) -> bool:
         """Reveal ``run_path`` in the host's file explorer.
