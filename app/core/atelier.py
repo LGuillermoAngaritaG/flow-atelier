@@ -11,12 +11,18 @@ from app.core.settings import AtelierSettings
 from app.modules.engine import Engine, FlowStartedCallback, TaskEventCallback
 from app.schemas.api import (
     CreateConduitInput,
+    CreateScheduleInput,
+    PriorFlow,
     RunTaskInput,
     RunTaskOutput,
+    ScheduledJob,
     UpdateConduitInput,
 )
 from app.schemas.conduit import Conduit
+from app.schemas.flow import parse_flow_id
+from app.schemas.log import LogEntry
 from app.schemas.progress import Progress
+from app.services.scheduler.store import ScheduleStore
 from app.services.executor.bash import BashExecutor
 from app.services.executor.conduit import ConduitExecutor
 from app.services.executor.harness import (
@@ -102,6 +108,7 @@ class Atelier:
             ),
         }
         self.engine = Engine(self.executors, self.store)
+        self.schedule_store = ScheduleStore(self.settings.atelier_dir)
 
     async def run_conduit(
         self,
@@ -234,6 +241,70 @@ class Atelier:
             flow_id = captured["id"] or ""
         logs = self.store.read_logs(flow_id) if flow_id else []
         return RunTaskOutput(flow_id=flow_id, logs=logs)
+
+    # ------------------------------------------------------------------ schedules
+
+    def list_schedules(self) -> list[ScheduledJob]:
+        """Return active schedules persisted by this Atelier."""
+        return self.schedule_store.list()
+
+    def create_schedule(self, payload: CreateScheduleInput) -> ScheduledJob:
+        """Persist a new schedule and return it.
+
+        :param payload: validated :class:`CreateScheduleInput`
+        :returns: the new :class:`ScheduledJob`
+        """
+        return self.schedule_store.create(payload)
+
+    def delete_schedule(self, schedule_id: str) -> ScheduledJob:
+        """Soft-delete a schedule by id.
+
+        :param schedule_id: schedule identifier
+        :returns: the soft-deleted :class:`ScheduledJob`
+        :raises KeyError: if the schedule doesn't exist
+        """
+        return self.schedule_store.delete(schedule_id)
+
+    # ------------------------------------------------------------------ history
+
+    def list_prior_flows(self) -> list[PriorFlow]:
+        """Return :class:`PriorFlow` summaries for every flow on disk."""
+        out: list[PriorFlow] = []
+        for flow_id in self.store.list_flows():
+            try:
+                conduit_name, _, _ = parse_flow_id(flow_id)
+            except ValueError:
+                continue
+            try:
+                progress = self.store.read_progress(flow_id)
+                status = progress.status.value
+                started_at = progress.started_at
+                finished_at = progress.finished_at
+            except (FileNotFoundError, ValueError):
+                status = "unknown"
+                started_at = None
+                finished_at = None
+            out.append(
+                PriorFlow(
+                    flow_id=flow_id,
+                    conduit_name=conduit_name,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    status=status,
+                )
+            )
+        return out
+
+    def get_flow_logs(self, flow_id: str) -> list[LogEntry]:
+        """Return the log entries for ``flow_id``.
+
+        :param flow_id: flow identifier
+        :returns: list of :class:`LogEntry` (empty if the file is empty)
+        :raises FileNotFoundError: if no flow with that id exists
+        """
+        # ``_flow_dir`` raises FileNotFoundError when the id is unknown.
+        self.store._flow_dir(flow_id)
+        return self.store.read_logs(flow_id)
 
     def open_conduit_path(self, conduit_name: str, run_path: str) -> bool:
         """Reveal ``run_path`` in the host's file explorer.
