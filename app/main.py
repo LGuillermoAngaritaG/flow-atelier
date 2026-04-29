@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections import Counter
 from datetime import datetime
@@ -15,9 +16,17 @@ from rich.table import Table
 from rich.text import Text
 
 from app.core.atelier import Atelier
+from app.core.settings import AtelierSettings
 from app.schemas.flow import parse_flow_id
 from app.schemas.log import TaskEvent
 from app.schemas.progress import FlowStatus, Progress, TaskStatus
+from app.services.scheduler import (
+    PlannedJob,
+    ScheduleStore,
+    SchedulerDaemon,
+    compute_planned_view,
+    default_local_zone,
+)
 
 HELLO_CONDUIT_YAML = """name: hello
 description: Say hello
@@ -42,6 +51,20 @@ list_app = typer.Typer(
     rich_markup_mode="rich",
 )
 app.add_typer(list_app, name="list")
+
+schedule_app = typer.Typer(
+    help="Manage scheduled conduit runs (YAML files in .atelier/schedules/).",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
+app.add_typer(schedule_app, name="schedule")
+
+scheduler_app = typer.Typer(
+    help="Run and inspect the scheduler daemon.",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
+app.add_typer(scheduler_app, name="scheduler")
 
 console = Console()
 
@@ -761,6 +784,222 @@ def list_flows_cmd(
             _task_status_summary(progress),
         )
     console.print(table)
+
+
+# ---------------------------------------------------------------- schedule / scheduler
+
+
+def _schedule_store() -> ScheduleStore:
+    settings = AtelierSettings()
+    return ScheduleStore(
+        settings.schedules_dir,
+        state_path=settings.scheduler_state_path,
+    )
+
+
+def _format_next_fire(value: datetime | None) -> str:
+    if value is None:
+        return "—"
+    return value.astimezone().strftime("%Y-%m-%d %H:%M %Z").strip()
+
+
+def _render_planned_table(planned: list[PlannedJob]) -> Table:
+    table = Table("name", "conduit", "kind", "next fire", "working_dir")
+    for p in planned:
+        kind_style = "cyan" if p.schedule_kind == "recurring" else "magenta"
+        next_cell = _format_next_fire(p.next_fire_time)
+        if p.next_fire_time is None and p.schedule_kind == "once":
+            next_cell = "[dim](already fired)[/dim]"
+        table.add_row(
+            p.name,
+            p.conduit,
+            f"[{kind_style}]{p.schedule_kind}[/{kind_style}]",
+            next_cell,
+            str(p.working_dir),
+        )
+    return table
+
+
+@schedule_app.command(
+    "add",
+    help="Install a schedule YAML into .atelier/schedules/.",
+)
+def schedule_add_cmd(
+    file: Path = typer.Argument(
+        ..., exists=True, dir_okay=False, readable=True,
+        help="Path to a schedule YAML file."
+    ),
+    force: bool = typer.Option(
+        False, "--force", "-f",
+        help="Overwrite if a schedule with this name already exists."
+    ),
+) -> None:
+    """Validate and copy a schedule YAML into ``.atelier/schedules/``."""
+    store = _schedule_store()
+    try:
+        dest = store.install(file, force=force)
+    except FileExistsError as e:
+        console.print(f"[red]{e}[/red]  [dim](use --force to overwrite)[/dim]")
+        raise typer.Exit(code=1)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]invalid schedule:[/red] {e}")
+        raise typer.Exit(code=1)
+    console.print(f"[green]installed[/green] {dest}")
+
+
+@schedule_app.command("list", help="List installed schedules and their next fire times.")
+def schedule_list_cmd(
+    json_mode: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON instead of a table."
+    ),
+) -> None:
+    store = _schedule_store()
+    planned, errors = compute_planned_view(
+        store,
+        default_zone=default_local_zone(),
+        default_working_dir=Path.cwd(),
+    )
+
+    if json_mode:
+        payload = {
+            "schedules": [
+                {
+                    "name": p.name,
+                    "conduit": p.conduit,
+                    "kind": p.schedule_kind,
+                    "next_fire_time": (
+                        p.next_fire_time.isoformat() if p.next_fire_time else None
+                    ),
+                    "working_dir": str(p.working_dir),
+                }
+                for p in planned
+            ],
+            "errors": [
+                {"path": str(e.source_path), "error": e.error} for e in errors
+            ],
+        }
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    if not planned and not errors:
+        console.print("[yellow]no schedules found[/yellow]")
+        return
+
+    if planned:
+        console.print(_render_planned_table(planned))
+    for err in errors:
+        console.print(
+            f"[red]× {err.source_path.name}:[/red] {err.error}"
+        )
+
+
+@schedule_app.command("remove", help="Delete a schedule YAML from .atelier/schedules/.")
+def schedule_remove_cmd(
+    name: str = typer.Argument(..., help="Schedule name (filename stem)."),
+) -> None:
+    store = _schedule_store()
+    if not store.remove(name):
+        console.print(f"[yellow]schedule not found:[/yellow] {name}")
+        raise typer.Exit(code=1)
+    console.print(f"[green]removed[/green] {name}")
+
+
+@schedule_app.command(
+    "run-now",
+    help="Run a scheduled conduit immediately (bypasses the daemon).",
+)
+def schedule_run_now_cmd(
+    name: str = typer.Argument(..., help="Schedule name to dispatch."),
+) -> None:
+    store = _schedule_store()
+    try:
+        definition = store.read(name)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1)
+    working_dir = Path.cwd()
+    if definition.working_dir is not None:
+        wd = Path(definition.working_dir)
+        working_dir = wd if wd.is_absolute() else (working_dir / wd).resolve()
+
+    atelier = Atelier(base_dir=working_dir / ".atelier")
+    collected_events: list[TaskEvent] = []
+
+    def _on_event(event: TaskEvent) -> None:
+        collected_events.append(event)
+        _render_task_event(event, console)
+
+    captured: dict[str, str | None] = {"id": None}
+
+    def _on_started(fid: str) -> None:
+        captured["id"] = fid
+
+    try:
+        flow_id = asyncio.run(
+            atelier.run_conduit(
+                definition.conduit,
+                dict(definition.inputs),
+                on_task_event=_on_event,
+                on_flow_started=_on_started,
+            )
+        )
+    except Exception as e:  # noqa: BLE001
+        _render_run_footer(collected_events, console)
+        console.print(f"[red]flow failed:[/red] {e}")
+        if captured["id"]:
+            console.print(f"[red]flow_id:[/red] {captured['id']}")
+        raise typer.Exit(code=1)
+    _render_run_footer(collected_events, console)
+    console.print(f"[green]flow_id:[/green] {flow_id}")
+
+
+@scheduler_app.command(
+    "start",
+    help="Run the scheduler daemon in the foreground (Ctrl+C / SIGTERM to stop).",
+)
+def scheduler_start_cmd(
+    reload_interval: float = typer.Option(
+        30.0, "--reload-interval",
+        help="Seconds between YAML directory rescans."
+    ),
+    log_level: str = typer.Option(
+        "INFO", "--log-level",
+        help="Logging level for the daemon (DEBUG, INFO, WARNING, ERROR)."
+    ),
+) -> None:
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)-7s %(name)s — %(message)s",
+    )
+    store = _schedule_store()
+    daemon = SchedulerDaemon(
+        store,
+        default_zone=default_local_zone(),
+        default_working_dir=Path.cwd(),
+        reload_interval_seconds=reload_interval,
+    )
+    console.print(
+        f"[green]scheduler running[/green] "
+        f"(tz={daemon.default_zone}, reload={reload_interval}s, "
+        f"schedules_dir={store.schedules_dir})"
+    )
+    try:
+        asyncio.run(daemon.run_forever())
+    except KeyboardInterrupt:
+        pass
+    console.print("[dim]scheduler stopped[/dim]")
+
+
+@scheduler_app.command(
+    "status",
+    help="Show registered schedules and their next fire times (no daemon required).",
+)
+def scheduler_status_cmd(
+    json_mode: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON instead of a table."
+    ),
+) -> None:
+    schedule_list_cmd(json_mode=json_mode)
 
 
 if __name__ == "__main__":
