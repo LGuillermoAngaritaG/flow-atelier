@@ -12,8 +12,9 @@ from fastapi import FastAPI
 
 def register_routes(app: FastAPI) -> None:
     """Register every resource router on the given FastAPI app."""
-    from app.routes import conduits, schedules, tasks
+    from app.routes import conduits, flows, schedules, tasks
 
     app.include_router(conduits.router)
     app.include_router(schedules.router)
     app.include_router(tasks.router)
+    app.include_router(flows.router)
