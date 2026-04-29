@@ -1,11 +1,16 @@
 """Facade: wires store + executors + engine and exposes the public API."""
 from __future__ import annotations
 
+import logging
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 from app.core.settings import AtelierSettings
 from app.modules.engine import Engine, FlowStartedCallback, TaskEventCallback
+from app.schemas.api import CreateConduitInput, UpdateConduitInput
+from app.schemas.conduit import Conduit
 from app.schemas.progress import Progress
 from app.services.executor.bash import BashExecutor
 from app.services.executor.conduit import ConduitExecutor
@@ -19,6 +24,9 @@ from app.services.executor.harness import (
 from app.services.executor.hitl import HitlExecutor
 from app.services.executor.prompt_sink import PromptSink, TerminalPromptSink
 from app.services.store.filesystem import FilesystemStore
+
+
+logger = logging.getLogger(__name__)
 
 
 class Atelier:
@@ -140,3 +148,72 @@ class Atelier:
         :returns: sorted list of flow ids
         """
         return self.store.list_flows(conduit_name)
+
+    # ------------------------------------------------------------------ CRUD
+
+    def create_conduit(self, payload: CreateConduitInput) -> Conduit:
+        """Persist a new conduit; raise if one with that name already exists.
+
+        :param payload: validated :class:`CreateConduitInput`
+        :returns: the persisted :class:`Conduit`
+        :raises FileExistsError: if a project conduit with that name exists
+        """
+        existing = self.store.base_dir / "conduits" / payload.name
+        if existing.exists():
+            raise FileExistsError(f"conduit already exists: {payload.name}")
+        conduit = Conduit.model_validate(payload.model_dump())
+        self.store.write_conduit(conduit)
+        return conduit
+
+    def update_conduit(
+        self, name: str, payload: UpdateConduitInput
+    ) -> Conduit:
+        """Apply a partial update to an existing conduit.
+
+        :param name: conduit to modify
+        :param payload: subset of fields to overwrite
+        :returns: the updated :class:`Conduit`
+        :raises FileNotFoundError: if the conduit doesn't exist
+        """
+        existing = self.store.read_conduit(name)
+        merged = existing.model_dump()
+        for key, value in payload.model_dump(exclude_none=True).items():
+            merged[key] = value
+        merged["name"] = merged.get("name") or name
+        updated = Conduit.model_validate(merged)
+        self.store.write_conduit(updated)
+        if updated.name != name:
+            # Rename: drop the old folder.
+            self.store.delete_conduit(name)
+        return updated
+
+    def delete_conduit(self, name: str) -> bool:
+        """Remove a project-level conduit.
+
+        :param name: conduit name
+        :returns: True if it existed and was deleted, False otherwise
+        """
+        return self.store.delete_conduit(name)
+
+    def open_conduit_path(self, conduit_name: str, run_path: str) -> bool:
+        """Reveal ``run_path`` in the host's file explorer.
+
+        :param conduit_name: conduit context (not used by the OS opener,
+            kept for API symmetry with the frontend contract)
+        :param run_path: absolute path to open
+        :returns: True if the platform opener was launched, False otherwise
+        """
+        del conduit_name
+        cmd: list[str]
+        if sys.platform == "darwin":
+            cmd = ["open", run_path]
+        elif sys.platform == "win32":
+            cmd = ["explorer", run_path]
+        else:
+            cmd = ["xdg-open", run_path]
+        try:
+            subprocess.Popen(cmd)
+        except (FileNotFoundError, OSError) as e:
+            logger.warning("open_conduit_path failed: %s", e)
+            return False
+        return True
