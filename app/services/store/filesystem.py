@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -116,6 +117,31 @@ class FilesystemStore(StoreBase):
             source: ConduitSource = "project" if name in project_names else "global"
             entries.append((name, source))
         return entries
+
+    def write_conduit(self, conduit: Conduit) -> None:
+        """Persist ``conduit`` under ``conduits/<name>/conduit.yaml``.
+
+        :param conduit: validated conduit to persist (overwrites if present)
+        """
+        conduit_dir = self._conduit_dir(conduit.name)
+        conduit_dir.mkdir(parents=True, exist_ok=True)
+        payload = conduit.model_dump(mode="json", by_alias=True, exclude_none=True)
+        path = self._conduit_yaml(conduit.name)
+        tmp = path.with_suffix(".yaml.tmp")
+        tmp.write_text(yaml.safe_dump(payload, sort_keys=False))
+        os.replace(tmp, path)
+
+    def delete_conduit(self, name: str) -> bool:
+        """Remove ``conduits/<name>/`` if present (project store only).
+
+        :param name: conduit name
+        :returns: True if deleted, False if it didn't exist
+        """
+        conduit_dir = self._conduit_dir(name)
+        if not conduit_dir.exists():
+            return False
+        shutil.rmtree(conduit_dir)
+        return True
 
     # ------------------------------------------------------------------ flows
 

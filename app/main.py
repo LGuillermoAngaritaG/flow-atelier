@@ -17,9 +17,11 @@ from rich.text import Text
 
 from app.core.atelier import Atelier
 from app.core.settings import AtelierSettings
+from app.schemas.api import CreateScheduleInput
 from app.schemas.flow import parse_flow_id
 from app.schemas.log import TaskEvent
 from app.schemas.progress import FlowStatus, Progress, TaskStatus
+from app.services.api.app import FastApiServer
 from app.services.scheduler import (
     PlannedJob,
     ScheduleStore,
@@ -53,7 +55,7 @@ list_app = typer.Typer(
 app.add_typer(list_app, name="list")
 
 schedule_app = typer.Typer(
-    help="Manage scheduled conduit runs (YAML files in .atelier/schedules/).",
+    help="Manage scheduled conduit runs (.atelier/schedules.json).",
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
@@ -791,10 +793,7 @@ def list_flows_cmd(
 
 def _schedule_store() -> ScheduleStore:
     settings = AtelierSettings()
-    return ScheduleStore(
-        settings.schedules_dir,
-        state_path=settings.scheduler_state_path,
-    )
+    return ScheduleStore(settings.atelier_dir)
 
 
 def _format_next_fire(value: datetime | None) -> str:
@@ -804,15 +803,16 @@ def _format_next_fire(value: datetime | None) -> str:
 
 
 def _render_planned_table(planned: list[PlannedJob]) -> Table:
-    table = Table("name", "conduit", "kind", "next fire", "working_dir")
+    table = Table("id", "name", "conduit", "kind", "next fire", "working_dir")
     for p in planned:
         kind_style = "cyan" if p.schedule_kind == "recurring" else "magenta"
         next_cell = _format_next_fire(p.next_fire_time)
         if p.next_fire_time is None and p.schedule_kind == "once":
             next_cell = "[dim](already fired)[/dim]"
         table.add_row(
+            p.id,
             p.name,
-            p.conduit,
+            p.conduit_name,
             f"[{kind_style}]{p.schedule_kind}[/{kind_style}]",
             next_cell,
             str(p.working_dir),
@@ -820,31 +820,48 @@ def _render_planned_table(planned: list[PlannedJob]) -> Table:
     return table
 
 
+def _resolve_schedule(store: ScheduleStore, ref: str):
+    """Find a schedule by id, then fall back to a name lookup."""
+    job = store.get(ref)
+    if job is not None:
+        return job
+    return store.get_by_name(ref)
+
+
+def _load_schedule_payload(path: Path) -> CreateScheduleInput:
+    """Load YAML or JSON containing a CreateScheduleInput shape."""
+    text = path.read_text()
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        raw = json.loads(text)
+    else:
+        import yaml
+
+        raw = yaml.safe_load(text)
+    if not isinstance(raw, dict):
+        raise ValueError("schedule file must contain a JSON/YAML mapping")
+    return CreateScheduleInput.model_validate(raw)
+
+
 @schedule_app.command(
     "add",
-    help="Install a schedule YAML into .atelier/schedules/.",
+    help="Install a schedule (JSON or YAML) into .atelier/schedules.json.",
 )
 def schedule_add_cmd(
     file: Path = typer.Argument(
         ..., exists=True, dir_okay=False, readable=True,
-        help="Path to a schedule YAML file."
-    ),
-    force: bool = typer.Option(
-        False, "--force", "-f",
-        help="Overwrite if a schedule with this name already exists."
+        help="Path to a schedule JSON or YAML file."
     ),
 ) -> None:
-    """Validate and copy a schedule YAML into ``.atelier/schedules/``."""
+    """Validate and persist a schedule via the JSON store."""
     store = _schedule_store()
     try:
-        dest = store.install(file, force=force)
-    except FileExistsError as e:
-        console.print(f"[red]{e}[/red]  [dim](use --force to overwrite)[/dim]")
-        raise typer.Exit(code=1)
+        payload = _load_schedule_payload(file)
     except Exception as e:  # noqa: BLE001
         console.print(f"[red]invalid schedule:[/red] {e}")
         raise typer.Exit(code=1)
-    console.print(f"[green]installed[/green] {dest}")
+    job = store.create(payload)
+    console.print(f"[green]installed[/green] {job.id}")
 
 
 @schedule_app.command("list", help="List installed schedules and their next fire times.")
@@ -854,7 +871,7 @@ def schedule_list_cmd(
     ),
 ) -> None:
     store = _schedule_store()
-    planned, errors = compute_planned_view(
+    planned = compute_planned_view(
         store,
         default_zone=default_local_zone(),
         default_working_dir=Path.cwd(),
@@ -864,8 +881,9 @@ def schedule_list_cmd(
         payload = {
             "schedules": [
                 {
+                    "id": p.id,
                     "name": p.name,
-                    "conduit": p.conduit,
+                    "conduit": p.conduit_name,
                     "kind": p.schedule_kind,
                     "next_fire_time": (
                         p.next_fire_time.isoformat() if p.next_fire_time else None
@@ -874,34 +892,28 @@ def schedule_list_cmd(
                 }
                 for p in planned
             ],
-            "errors": [
-                {"path": str(e.source_path), "error": e.error} for e in errors
-            ],
         }
         typer.echo(json.dumps(payload, indent=2))
         return
 
-    if not planned and not errors:
+    if not planned:
         console.print("[yellow]no schedules found[/yellow]")
         return
 
-    if planned:
-        console.print(_render_planned_table(planned))
-    for err in errors:
-        console.print(
-            f"[red]× {err.source_path.name}:[/red] {err.error}"
-        )
+    console.print(_render_planned_table(planned))
 
 
-@schedule_app.command("remove", help="Delete a schedule YAML from .atelier/schedules/.")
+@schedule_app.command("remove", help="Soft-delete a schedule by id or name.")
 def schedule_remove_cmd(
-    name: str = typer.Argument(..., help="Schedule name (filename stem)."),
+    ref: str = typer.Argument(..., help="Schedule id or schedule.name."),
 ) -> None:
     store = _schedule_store()
-    if not store.remove(name):
-        console.print(f"[yellow]schedule not found:[/yellow] {name}")
+    job = _resolve_schedule(store, ref)
+    if job is None:
+        console.print(f"[yellow]schedule not found:[/yellow] {ref}")
         raise typer.Exit(code=1)
-    console.print(f"[green]removed[/green] {name}")
+    store.delete(job.id)
+    console.print(f"[green]removed[/green] {job.id}")
 
 
 @schedule_app.command(
@@ -909,17 +921,17 @@ def schedule_remove_cmd(
     help="Run a scheduled conduit immediately (bypasses the daemon).",
 )
 def schedule_run_now_cmd(
-    name: str = typer.Argument(..., help="Schedule name to dispatch."),
+    ref: str = typer.Argument(..., help="Schedule id or schedule.name."),
 ) -> None:
     store = _schedule_store()
-    try:
-        definition = store.read(name)
-    except FileNotFoundError as e:
-        console.print(f"[red]{e}[/red]")
+    job = _resolve_schedule(store, ref)
+    if job is None:
+        console.print(f"[red]schedule not found:[/red] {ref}")
         raise typer.Exit(code=1)
+
     working_dir = Path.cwd()
-    if definition.working_dir is not None:
-        wd = Path(definition.working_dir)
+    if job.run_path:
+        wd = Path(job.run_path)
         working_dir = wd if wd.is_absolute() else (working_dir / wd).resolve()
 
     atelier = Atelier(base_dir=working_dir / ".atelier")
@@ -937,8 +949,8 @@ def schedule_run_now_cmd(
     try:
         flow_id = asyncio.run(
             atelier.run_conduit(
-                definition.conduit,
-                dict(definition.inputs),
+                job.conduit_name,
+                dict(job.inputs),
                 on_task_event=_on_event,
                 on_flow_started=_on_started,
             )
@@ -960,7 +972,7 @@ def schedule_run_now_cmd(
 def scheduler_start_cmd(
     reload_interval: float = typer.Option(
         30.0, "--reload-interval",
-        help="Seconds between YAML directory rescans."
+        help="Seconds between schedule store rescans."
     ),
     log_level: str = typer.Option(
         "INFO", "--log-level",
@@ -981,7 +993,7 @@ def scheduler_start_cmd(
     console.print(
         f"[green]scheduler running[/green] "
         f"(tz={daemon.default_zone}, reload={reload_interval}s, "
-        f"schedules_dir={store.schedules_dir})"
+        f"schedules={store.schedules_path})"
     )
     try:
         asyncio.run(daemon.run_forever())
@@ -1000,6 +1012,96 @@ def scheduler_status_cmd(
     ),
 ) -> None:
     schedule_list_cmd(json_mode=json_mode)
+
+
+# ---------------------------------------------------------------- serve
+
+
+@app.command(
+    "serve",
+    help="Run the FastAPI HTTP + WebSocket server with the embedded scheduler.",
+)
+def serve_cmd(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind host."),
+    port: int = typer.Option(
+        8000, "--port", help="Bind port (use 0 for an ephemeral port)."
+    ),
+    reload_interval: float = typer.Option(
+        30.0, "--reload-interval",
+        help="Seconds between schedule store rescans."
+    ),
+    cors_origin: list[str] = typer.Option(
+        [], "--cors-origin",
+        help="Allowed CORS origin (repeatable). Default = '*'."
+    ),
+    log_level: str = typer.Option(
+        "INFO", "--log-level",
+        help="Logging level for the server."
+    ),
+) -> None:
+    import uvicorn
+    from contextlib import asynccontextmanager
+
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)-7s %(name)s — %(message)s",
+    )
+
+    atelier = Atelier()
+    daemon = SchedulerDaemon(
+        atelier.schedule_store,
+        default_zone=default_local_zone(),
+        default_working_dir=Path.cwd(),
+        reload_interval_seconds=reload_interval,
+    )
+    # The schedules POST/DELETE handlers look here to opportunistically
+    # re-sync the daemon when a schedule is created or removed.
+    atelier.scheduler_daemon = daemon  # type: ignore[attr-defined]
+
+    @asynccontextmanager
+    async def _lifespan(app):
+        await daemon.start()
+        try:
+            yield
+        finally:
+            await daemon.stop()
+
+    cors = list(cors_origin) if cors_origin else None
+    api_app = FastApiServer().create_app(atelier, cors_origins=cors)
+    api_app.router.lifespan_context = _lifespan
+
+    config = uvicorn.Config(
+        api_app,
+        host=host,
+        port=port,
+        log_level=log_level.lower(),
+        lifespan="on",
+    )
+    server = uvicorn.Server(config)
+
+    async def _run() -> None:
+        serve_task = asyncio.create_task(server.serve())
+        # Wait for uvicorn to bind so we can print the actual port.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 10.0
+        while not server.started and loop.time() < deadline:
+            await asyncio.sleep(0.05)
+        actual = port
+        try:
+            if server.servers:
+                actual = server.servers[0].sockets[0].getsockname()[1]
+        except (AttributeError, IndexError, OSError):
+            pass
+        console.print(
+            f"[green]atelier serve[/green] running at "
+            f"[bold]http://{host}:{actual}[/bold]"
+        )
+        await serve_task
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":

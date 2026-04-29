@@ -203,3 +203,59 @@ def test_read_missing_from_both_raises(tmp_path):
     s = FilesystemStore(project, global_dir=global_dir)
     with pytest.raises(FileNotFoundError):
         s.read_conduit("nope")
+
+
+# --------------------------------------------------------------- write/delete
+
+
+from app.schemas.conduit import Conduit
+
+
+def _build_conduit(name: str, description: str = "d") -> Conduit:
+    return Conduit.model_validate(
+        {
+            "name": name,
+            "description": description,
+            "tasks": [
+                {
+                    "name": "echo",
+                    "description": "echo",
+                    "task": "echo hi",
+                    "tool": "tool:bash",
+                    "depends_on": [],
+                }
+            ],
+        }
+    )
+
+
+def test_write_conduit_creates_yaml_and_round_trips(tmp_path):
+    s = FilesystemStore(tmp_path / ".atelier")
+    c = _build_conduit("release_notes")
+    s.write_conduit(c)
+    assert (s.base_dir / "conduits" / "release_notes" / "conduit.yaml").exists()
+    restored = s.read_conduit("release_notes")
+    assert restored.name == "release_notes"
+    assert restored.tasks[0].task == "echo hi"
+
+
+def test_write_conduit_overwrites_existing(tmp_path):
+    s = FilesystemStore(tmp_path / ".atelier")
+    s.write_conduit(_build_conduit("x", description="old"))
+    s.write_conduit(_build_conduit("x", description="new"))
+    restored = s.read_conduit("x")
+    assert restored.description == "new"
+
+
+def test_delete_conduit_removes_directory(tmp_path):
+    s = FilesystemStore(tmp_path / ".atelier")
+    s.write_conduit(_build_conduit("x"))
+    assert s.delete_conduit("x") is True
+    assert not (s.base_dir / "conduits" / "x").exists()
+    with pytest.raises(FileNotFoundError):
+        s.read_conduit("x")
+
+
+def test_delete_conduit_idempotent_returns_false(tmp_path):
+    s = FilesystemStore(tmp_path / ".atelier")
+    assert s.delete_conduit("nope") is False
