@@ -26,6 +26,16 @@ class StoreBase(ABC):
         """Return ``(name, source)`` pairs. Project shadows global on collision."""
         ...
 
+    @abstractmethod
+    def write_conduit(self, conduit: Conduit) -> None:
+        """Persist ``conduit`` to the project store, overwriting if present."""
+        ...
+
+    @abstractmethod
+    def delete_conduit(self, name: str) -> bool:
+        """Delete a project-level conduit. Returns False if it didn't exist."""
+        ...
+
     # --- flows ---
     @abstractmethod
     def create_flow(
