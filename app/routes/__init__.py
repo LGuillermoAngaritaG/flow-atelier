@@ -12,5 +12,6 @@ from fastapi import FastAPI
 
 def register_routes(app: FastAPI) -> None:
     """Register every resource router on the given FastAPI app."""
-    # Local imports keep optional deps (websockets, etc.) lazy.
-    return None
+    from app.routes import conduits
+
+    app.include_router(conduits.router)
