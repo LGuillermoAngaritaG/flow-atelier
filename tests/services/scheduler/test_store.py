@@ -1,235 +1,165 @@
-"""Tests for ScheduleStore: YAML CRUD and fired-state persistence."""
+"""Tests for the JSON-backed ScheduleStore (per SPEC §7)."""
 from __future__ import annotations
 
-import textwrap
-from pathlib import Path
+import json
 
 import pytest
-import yaml
 
-from app.schemas.schedule import ScheduleDefinition
+from app.schemas.api import CreateScheduleInput
 from app.services.scheduler.store import ScheduleStore
 
 
-RECURRING_YAML = """
-conduit: report
-inputs:
-  date: today
-schedule:
-  type: recurring
-  days: [mon, fri]
-  hours: ["09:00"]
-"""
-
-ONCE_YAML = """
-conduit: backfill
-schedule:
-  type: once
-  at: "2026-05-01T09:00:00"
-"""
+# ----------------------------------------------------------- fixtures / helpers
 
 
 @pytest.fixture
 def store(tmp_path) -> ScheduleStore:
-    return ScheduleStore(tmp_path / "schedules")
+    return ScheduleStore(tmp_path / ".atelier")
 
 
-def _write(store: ScheduleStore, name: str, body: str) -> Path:
-    p = store.path_for(name)
-    p.write_text(body)
-    return p
+def _recurring_payload(**overrides):
+    base = {
+        "conduit_name": "report",
+        "inputs": {"foo": "bar"},
+        "run_path": "/tmp/x",
+        "schedule": {
+            "mode": "recurring",
+            "name": "weekday mornings",
+            "days": [1, 2, 3, 4, 5],
+            "times": ["06:00", "12:00"],
+        },
+    }
+    base.update(overrides)
+    return CreateScheduleInput.model_validate(base)
 
 
-# -------------------------------------------------------------- list / read
+def _once_payload(**overrides):
+    base = {
+        "conduit_name": "backfill",
+        "inputs": {},
+        "run_path": "/tmp/x",
+        "schedule": {
+            "mode": "once",
+            "name": "tomorrow",
+            "run_at": "2026-05-01T09:00:00Z",
+        },
+    }
+    base.update(overrides)
+    return CreateScheduleInput.model_validate(base)
+
+
+# ----------------------------------------------------------- list / create
 
 
 def test_list_empty(store):
-    assert store.list_definitions() == []
+    assert store.list() == []
 
 
-def test_list_picks_up_yaml_and_yml(store):
-    _write(store, "a", RECURRING_YAML)
-    (store.schedules_dir / "b.yml").write_text(ONCE_YAML)
-    loaded = store.list_definitions()
-    names = [ls.definition.name for ls in loaded]
-    assert names == ["a", "b"]
+def test_create_assigns_id_created_at_status(store):
+    job = store.create(_recurring_payload())
+    assert job.id.startswith("SCH-")
+    assert job.status == "active"
+    assert job.runs_completed == 0
+    assert job.created_at > 0
+    assert job.conduit_name == "report"
 
 
-def test_list_skips_dotfiles(store):
-    _write(store, "a", RECURRING_YAML)
-    (store.schedules_dir / ".state.json").write_text("{}")
-    (store.schedules_dir / ".hidden.yaml").write_text(RECURRING_YAML)
-    names = [ls.definition.name for ls in store.list_definitions()]
-    assert names == ["a"]
+def test_create_persists_to_schedules_json(store):
+    job = store.create(_recurring_payload())
+    raw = json.loads(store.schedules_path.read_text())
+    assert "schedules" in raw
+    assert raw["schedules"][0]["id"] == job.id
+    assert raw["schedules"][0]["conduit_name"] == "report"
+    assert raw["schedules"][0]["schedule"]["mode"] == "recurring"
 
 
-def test_list_records_errors_for_broken_yaml(store):
-    _write(store, "good", RECURRING_YAML)
-    _write(store, "broken", "name: broken\n  bad: indentation")
-    loaded, errors = store.list_definitions_with_errors()
-    assert [ls.definition.name for ls in loaded] == ["good"]
-    assert len(errors) == 1
-    assert errors[0].source_path.name == "broken.yaml"
+def test_list_returns_active_schedules_only(store):
+    a = store.create(_recurring_payload())
+    b = store.create(_once_payload())
+    listed = store.list()
+    ids = [j.id for j in listed]
+    assert a.id in ids and b.id in ids
+    store.delete(a.id)
+    listed_after = store.list()
+    assert all(j.status == "active" for j in listed_after)
+    assert a.id not in [j.id for j in listed_after]
 
 
-def test_list_records_errors_for_invalid_schema(store):
-    _write(store, "bad", textwrap.dedent("""
-        conduit: x
-        schedule:
-          type: recurring
-          days: [funday]
-          hours: ["09:00"]
-    """))
-    loaded, errors = store.list_definitions_with_errors()
-    assert loaded == []
-    assert len(errors) == 1
+def test_get_by_id(store):
+    job = store.create(_recurring_payload())
+    again = store.get(job.id)
+    assert again is not None
+    assert again.id == job.id
 
 
-def test_read_unknown(store):
-    with pytest.raises(FileNotFoundError):
-        store.read("missing")
+def test_get_unknown_returns_none(store):
+    assert store.get("SCH-nope") is None
 
 
-def test_read_patches_name_from_filename(store):
-    _write(store, "weekly", RECURRING_YAML)
-    sd = store.read("weekly")
-    assert sd.name == "weekly"
+# ----------------------------------------------------------- delete (soft)
 
 
-def test_read_rejects_filename_name_mismatch(store):
-    _write(store, "weekly", "name: other\n" + RECURRING_YAML)
-    with pytest.raises(ValueError) as exc:
-        store.read("weekly")
-    assert "filename stem" in str(exc.value)
+def test_delete_marks_status_deleted(store):
+    job = store.create(_recurring_payload())
+    deleted = store.delete(job.id)
+    assert deleted.status == "deleted"
+    # Soft delete: still present in raw file
+    raw = json.loads(store.schedules_path.read_text())
+    statuses = [s["status"] for s in raw["schedules"]]
+    assert "deleted" in statuses
 
 
-# -------------------------------------------------------------- write
+def test_delete_unknown_raises(store):
+    with pytest.raises(KeyError):
+        store.delete("SCH-nope")
 
 
-def test_write_creates_file_and_omits_name_field(store):
-    sd = ScheduleDefinition.model_validate({
-        "name": "nightly",
-        "conduit": "report",
-        "schedule": {"type": "recurring", "days": ["mon"], "hours": ["09:00"]},
-    })
-    path = store.write(sd)
-    assert path.exists()
-    raw = yaml.safe_load(path.read_text())
-    assert "name" not in raw
-    assert raw["conduit"] == "report"
-    # Round-trip via read.
-    parsed = store.read("nightly")
-    assert parsed.name == "nightly"
-    assert parsed.conduit == "report"
+def test_delete_clears_fired_state(store):
+    job = store.create(_once_payload())
+    store.mark_fired(job.id)
+    assert store.fired_at(job.id) is not None
+    store.delete(job.id)
+    assert store.fired_at(job.id) is None
 
 
-def test_write_collision_without_force(store):
-    sd = ScheduleDefinition.model_validate({
-        "name": "n",
-        "conduit": "c",
-        "schedule": {"type": "recurring", "days": ["mon"], "hours": ["09:00"]},
-    })
-    store.write(sd)
-    with pytest.raises(FileExistsError):
-        store.write(sd)
-
-
-def test_write_force_overwrites(store):
-    sd = ScheduleDefinition.model_validate({
-        "name": "n",
-        "conduit": "old",
-        "schedule": {"type": "recurring", "days": ["mon"], "hours": ["09:00"]},
-    })
-    store.write(sd)
-    sd2 = ScheduleDefinition.model_validate({
-        "name": "n",
-        "conduit": "new",
-        "schedule": {"type": "recurring", "days": ["mon"], "hours": ["09:00"]},
-    })
-    store.write(sd2, force=True)
-    assert store.read("n").conduit == "new"
-
-
-# -------------------------------------------------------------- install
-
-
-def test_install_copies_file(tmp_path, store):
-    src = tmp_path / "scratch.yaml"
-    src.write_text("name: copied\n" + RECURRING_YAML)
-    dest = store.install(src)
-    assert dest == store.path_for("copied")
-    assert store.read("copied").conduit == "report"
-
-
-def test_install_uses_filename_when_no_name_field(tmp_path, store):
-    src = tmp_path / "from-stem.yaml"
-    src.write_text(RECURRING_YAML)
-    dest = store.install(src)
-    assert dest.name == "from-stem.yaml"
-
-
-def test_install_rejects_collision(tmp_path, store):
-    src = tmp_path / "scratch.yaml"
-    src.write_text("name: dup\n" + RECURRING_YAML)
-    store.install(src)
-    with pytest.raises(FileExistsError):
-        store.install(src)
-
-
-def test_install_force_overwrites(tmp_path, store):
-    src = tmp_path / "scratch.yaml"
-    src.write_text("name: dup\n" + RECURRING_YAML)
-    store.install(src)
-    src.write_text("name: dup\nconduit: changed\nschedule:\n  type: once\n  at: '2026-01-01T00:00:00'\n")
-    store.install(src, force=True)
-    assert store.read("dup").conduit == "changed"
-
-
-def test_install_validates_before_writing(tmp_path, store):
-    src = tmp_path / "bad.yaml"
-    src.write_text("name: bad\nconduit: c\nschedule:\n  type: bogus\n")
-    with pytest.raises(Exception):  # ValidationError surfaces as ValueError-like
-        store.install(src)
-    assert not store.path_for("bad").exists()
-
-
-# -------------------------------------------------------------- remove
-
-
-def test_remove_returns_true_when_existed(store):
-    _write(store, "x", RECURRING_YAML)
-    store.mark_fired("x", "2026-05-01T09:00:00")
-    assert store.remove("x") is True
-    assert not store.path_for("x").exists()
-    assert store.fired_at("x") is None
-
-
-def test_remove_returns_false_when_missing(store):
-    assert store.remove("ghost") is False
-
-
-# -------------------------------------------------------------- fired-state
+# ----------------------------------------------------------- fired-state
 
 
 def test_fired_state_round_trip(store):
-    assert store.fired_at("once") is None
-    store.mark_fired("once", "2026-05-01T09:00:00")
-    assert store.fired_at("once") == "2026-05-01T09:00:00"
-    store.mark_fired("once", "2026-06-01T09:00:00")
-    assert store.fired_at("once") == "2026-06-01T09:00:00"
+    job = store.create(_once_payload())
+    assert store.fired_at(job.id) is None
+    store.mark_fired(job.id)
+    assert store.fired_at(job.id) is not None
 
 
-def test_fired_state_clear(store):
-    store.mark_fired("a", "2026-05-01T09:00:00")
-    store.mark_fired("b", "2026-05-02T09:00:00")
-    store.clear_fired("a")
-    assert store.fired_at("a") is None
-    assert store.fired_at("b") == "2026-05-02T09:00:00"
+def test_clear_fired_removes_marker(store):
+    job = store.create(_once_payload())
+    store.mark_fired(job.id)
+    store.clear_fired(job.id)
+    assert store.fired_at(job.id) is None
 
 
-def test_fired_state_resilient_to_corrupt_file(store):
+def test_state_resilient_to_corrupt_file(store):
     store.state_path.parent.mkdir(parents=True, exist_ok=True)
     store.state_path.write_text("{not json")
-    assert store.fired_at("x") is None
-    store.mark_fired("x", "2026-05-01T09:00:00")
-    assert store.fired_at("x") == "2026-05-01T09:00:00"
+    assert store.fired_at("SCH-x") is None
+    store.mark_fired("SCH-x")
+    assert store.fired_at("SCH-x") is not None
+
+
+# ----------------------------------------------------------- atomic write
+
+
+def test_atomic_write_does_not_leave_tmp(store):
+    store.create(_recurring_payload())
+    leftovers = list(store.atelier_dir.glob("schedules.json.tmp"))
+    assert leftovers == []
+
+
+def test_recreate_after_load_round_trips(store, tmp_path):
+    job = store.create(_recurring_payload())
+    fresh = ScheduleStore(tmp_path / ".atelier")
+    listed = fresh.list()
+    assert len(listed) == 1
+    assert listed[0].id == job.id
+    assert listed[0].schedule.times == ["06:00", "12:00"]

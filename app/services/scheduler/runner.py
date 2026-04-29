@@ -1,4 +1,4 @@
-"""Async scheduler daemon driven by .atelier/schedules YAML."""
+"""Async scheduler daemon driven by the JSON-backed ScheduleStore."""
 from __future__ import annotations
 
 import asyncio
@@ -14,12 +14,8 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.schemas.schedule import OnceSchedule, ScheduleDefinition
-from app.services.scheduler.store import (
-    LoadedSchedule,
-    ScheduleLoadError,
-    ScheduleStore,
-)
+from app.schemas.api import ScheduledJob
+from app.services.scheduler.store import ScheduleStore
 from app.services.scheduler.triggers import default_local_zone, to_trigger
 
 
@@ -30,43 +26,43 @@ logger = logging.getLogger(__name__)
 _RELOAD_JOB_ID = "__atelier_sync__"
 
 
-ScheduleExecutor = Callable[[ScheduleDefinition, Path], Awaitable[None]]
+ScheduleExecutor = Callable[[ScheduledJob, Path], Awaitable[None]]
 
 
-async def _default_executor(definition: ScheduleDefinition, working_dir: Path) -> None:
+async def _default_executor(job: ScheduledJob, working_dir: Path) -> None:
     """Default fire action: instantiate ``Atelier(base_dir=working_dir/.atelier)``
-    and ``await run_conduit(...)``. Imported lazily to keep test-time
-    bootstrapping cheap and to avoid a circular import.
+    and ``await run_conduit(...)``. Imported lazily to avoid a circular import.
     """
-    from app.core.atelier import Atelier  # local import: avoids cycle at scheduler import time
+    from app.core.atelier import Atelier
 
     atelier = Atelier(base_dir=working_dir / ".atelier")
-    await atelier.run_conduit(definition.conduit, dict(definition.inputs))
+    await atelier.run_conduit(job.conduit_name, dict(job.inputs))
 
 
 @dataclass(frozen=True)
 class PlannedJob:
-    """A schedule that is currently registered with the daemon."""
+    """A schedule currently registered with the daemon."""
 
+    id: str
     name: str
-    conduit: str
+    conduit_name: str
     next_fire_time: datetime | None
     working_dir: Path
     schedule_kind: str  # "once" | "recurring"
 
 
 class SchedulerDaemon:
-    """YAML-driven async scheduler.
+    """JSON-driven async scheduler.
 
-    Holds an :class:`AsyncIOScheduler`, syncs the live job set against
-    the contents of ``store.schedules_dir`` on startup and on a fixed
-    reload interval, and dispatches each fire by calling the configured
-    executor with a fresh :class:`Atelier`.
+    Holds an :class:`AsyncIOScheduler`, syncs the live job set against the
+    schedule store on a fixed reload interval, and dispatches each fire by
+    calling the configured executor with a fresh :class:`Atelier`.
 
-    The daemon is a thin coordinator — it never blocks on a running flow
-    (APScheduler runs each fire as its own task), and it never owns flow
-    state. All persistence is the existing filesystem store under each
-    schedule's ``working_dir``.
+    :param store: backing :class:`ScheduleStore`
+    :param executor: per-fire coroutine; defaults to running the conduit
+    :param default_zone: default timezone for naive ``run_at`` values
+    :param default_working_dir: fallback working dir if ``run_path`` is empty
+    :param reload_interval_seconds: how often to re-scan the store
     """
 
     def __init__(
@@ -84,11 +80,7 @@ class SchedulerDaemon:
         self.default_working_dir = (default_working_dir or Path.cwd()).resolve()
         self.reload_interval_seconds = reload_interval_seconds
         self._scheduler: AsyncIOScheduler | None = None
-        self._known_mtimes: dict[str, float] = {}
-        # Cached after each sync; the CLI's `scheduler status` reads this
-        # to render a table without re-parsing every YAML file.
         self._planned: dict[str, PlannedJob] = {}
-        self._load_errors: list[ScheduleLoadError] = []
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -121,7 +113,7 @@ class SchedulerDaemon:
         logger.info("scheduler stopped")
 
     async def run_forever(self) -> None:
-        """Start the daemon and block until SIGINT/SIGTERM (or Ctrl+C)."""
+        """Start the daemon and block until SIGINT/SIGTERM."""
         await self.start()
         stop_event = asyncio.Event()
         loop = asyncio.get_running_loop()
@@ -146,129 +138,101 @@ class SchedulerDaemon:
     # ------------------------------------------------------------------ sync
 
     async def _sync_from_disk(self) -> None:
-        """Diff live jobs against on-disk YAML; add/update/remove as needed."""
+        """Diff live jobs against active schedules; add/update/remove as needed."""
         if self._scheduler is None:
-            # Initial sync runs *before* scheduler.start() so
-            # self._scheduler is set; the early-return only matters if a
-            # caller manually invokes sync after stop().
             return
-        loaded, errors = self.store.list_definitions_with_errors()
-        self._load_errors = errors
-        for err in errors:
-            logger.warning("skipping unparseable schedule %s: %s", err.source_path, err.error)
-
-        on_disk: dict[str, LoadedSchedule] = {ls.definition.name: ls for ls in loaded}
+        active = {j.id: j for j in self.store.list()}
         live_ids = {
             job.id
             for job in self._scheduler.get_jobs()
             if job.id != _RELOAD_JOB_ID
         }
 
-        # Remove jobs whose YAML has been deleted.
-        for stale in live_ids - on_disk.keys():
+        for stale in live_ids - active.keys():
             self._scheduler.remove_job(stale)
-            self._known_mtimes.pop(stale, None)
             self._planned.pop(stale, None)
-            logger.info("removed schedule %s (yaml deleted)", stale)
+            logger.info("removed schedule %s (not active)", stale)
 
-        # Add or update jobs from YAML.
-        for name, ls in on_disk.items():
-            prior_mtime = self._known_mtimes.get(name)
-            if name in live_ids and prior_mtime == ls.mtime:
-                continue
-            self._register(ls)
+        for sid, job in active.items():
+            if job.schedule.mode == "once":
+                # Skip already-fired one-shots (regardless of whether the
+                # daemon was previously running).
+                if self.store.fired_at(sid):
+                    if sid in live_ids:
+                        self._scheduler.remove_job(sid)
+                    self._planned.pop(sid, None)
+                    continue
+            self._register(job)
 
-    def _register(self, ls: LoadedSchedule) -> None:
+    def _register(self, job: ScheduledJob) -> None:
         assert self._scheduler is not None
-        definition = ls.definition
-
-        # Skip already-fired one-shots so a daemon restart doesn't re-run them.
-        if isinstance(definition.schedule, OnceSchedule):
-            already = self.store.fired_at(definition.name)
-            if already and already == definition.schedule.at.isoformat():
-                logger.info(
-                    "skipping one-shot %s: already fired for at=%s",
-                    definition.name,
-                    already,
-                )
-                if definition.name in {j.id for j in self._scheduler.get_jobs()}:
-                    self._scheduler.remove_job(definition.name)
-                self._known_mtimes[definition.name] = ls.mtime
-                self._planned.pop(definition.name, None)
-                return
-
-        trigger = to_trigger(definition, default_zone=self.default_zone)
-        working_dir = self._resolve_working_dir(definition)
+        trigger = to_trigger(job, default_zone=self.default_zone)
+        working_dir = self._resolve_working_dir(job)
         self._scheduler.add_job(
             self._fire,
             trigger=trigger,
-            id=definition.name,
-            args=[definition.name],
+            id=job.id,
+            args=[job.id],
             replace_existing=True,
             max_instances=1,
             coalesce=True,
         )
-        self._known_mtimes[definition.name] = ls.mtime
-        # Compute next fire time from the trigger directly: APScheduler
-        # only populates Job.next_run_time *after* scheduler.start(), and
-        # the initial sync runs before that.
         now = datetime.now(tz=self.default_zone)
         next_fire = trigger.get_next_fire_time(None, now)
-        self._planned[definition.name] = PlannedJob(
-            name=definition.name,
-            conduit=definition.conduit,
+        self._planned[job.id] = PlannedJob(
+            id=job.id,
+            name=job.schedule.name or job.id,
+            conduit_name=job.conduit_name,
             next_fire_time=next_fire,
             working_dir=working_dir,
-            schedule_kind=definition.schedule.type,
+            schedule_kind=job.schedule.mode,
         )
         logger.info(
             "registered schedule %s (%s): next fire %s",
-            definition.name,
-            definition.schedule.type,
+            job.id,
+            job.schedule.mode,
             next_fire,
         )
 
-    def _resolve_working_dir(self, definition: ScheduleDefinition) -> Path:
-        if definition.working_dir is None:
+    def _resolve_working_dir(self, job: ScheduledJob) -> Path:
+        if not job.run_path:
             return self.default_working_dir
-        wd = Path(definition.working_dir)
+        wd = Path(job.run_path)
         if not wd.is_absolute():
             wd = (self.default_working_dir / wd).resolve()
         return wd
 
     # ------------------------------------------------------------------ fire
 
-    async def _fire(self, name: str) -> None:
-        """Job function: re-read the latest definition and dispatch it."""
-        try:
-            definition = self.store.read(name)
-        except FileNotFoundError:
-            logger.warning("schedule %s vanished before firing; skipping", name)
+    async def _fire(self, schedule_id: str) -> None:
+        """Job function: re-read the latest schedule and dispatch it."""
+        job = self.store.get(schedule_id)
+        if job is None:
+            logger.warning(
+                "schedule %s not active before firing; skipping", schedule_id
+            )
             return
-        working_dir = self._resolve_working_dir(definition)
-        scheduled_at = (
-            definition.schedule.at.isoformat()
-            if isinstance(definition.schedule, OnceSchedule)
-            else None
+        working_dir = self._resolve_working_dir(job)
+        logger.info(
+            "firing schedule %s → %s in %s",
+            schedule_id,
+            job.conduit_name,
+            working_dir,
         )
-        logger.info("firing schedule %s → %s in %s", name, definition.conduit, working_dir)
         try:
-            await self.executor(definition, working_dir)
+            await self.executor(job, working_dir)
         except Exception:  # noqa: BLE001 — daemon must survive a single failed fire
-            logger.exception("schedule %s failed", name)
+            logger.exception("schedule %s failed", schedule_id)
             return
-        if scheduled_at is not None:
-            self.store.mark_fired(name, scheduled_at)
+        if job.schedule.mode == "once":
+            self.store.mark_fired(schedule_id)
+        self.store.increment_runs(schedule_id)
 
     # ------------------------------------------------------------------ introspection
 
     def list_planned(self) -> list[PlannedJob]:
         """Return the schedules currently registered with the daemon."""
-        return sorted(self._planned.values(), key=lambda p: p.name)
-
-    @property
-    def load_errors(self) -> list[ScheduleLoadError]:
-        return list(self._load_errors)
+        return sorted(self._planned.values(), key=lambda p: p.id)
 
 
 def compute_planned_view(
@@ -276,46 +240,46 @@ def compute_planned_view(
     *,
     default_zone: ZoneInfo,
     default_working_dir: Path,
-) -> tuple[list[PlannedJob], list[ScheduleLoadError]]:
-    """Compute next-fire-time for every schedule on disk.
+) -> list[PlannedJob]:
+    """Compute next-fire-time for every active schedule on disk.
 
-    Used by ``atelier schedule list`` and ``atelier scheduler status`` so
-    they work whether or not a daemon is running. Already-fired one-shots
-    are surfaced with ``next_fire_time=None``.
+    Used by ``atelier schedule list`` and ``atelier scheduler status`` so they
+    work whether or not a daemon is running. Already-fired one-shots are
+    surfaced with ``next_fire_time=None``.
     """
-    loaded, errors = store.list_definitions_with_errors()
     now = datetime.now(tz=default_zone)
     base = default_working_dir.resolve()
     planned: list[PlannedJob] = []
-    for ls in loaded:
-        d = ls.definition
-        wd = d.working_dir
-        working_dir = base if wd is None else (
-            Path(wd) if Path(wd).is_absolute() else (base / wd).resolve()
-        )
-        if isinstance(d.schedule, OnceSchedule):
-            already = store.fired_at(d.name)
-            if already and already == d.schedule.at.isoformat():
-                planned.append(
-                    PlannedJob(
-                        name=d.name,
-                        conduit=d.conduit,
-                        next_fire_time=None,
-                        working_dir=working_dir,
-                        schedule_kind="once",
-                    )
+    for job in store.list():
+        run_path = job.run_path
+        if run_path:
+            wd = Path(run_path)
+            working_dir = wd if wd.is_absolute() else (base / wd).resolve()
+        else:
+            working_dir = base
+        if job.schedule.mode == "once" and store.fired_at(job.id):
+            planned.append(
+                PlannedJob(
+                    id=job.id,
+                    name=job.schedule.name or job.id,
+                    conduit_name=job.conduit_name,
+                    next_fire_time=None,
+                    working_dir=working_dir,
+                    schedule_kind="once",
                 )
-                continue
-        trigger = to_trigger(d, default_zone=default_zone)
+            )
+            continue
+        trigger = to_trigger(job, default_zone=default_zone)
         next_fire = trigger.get_next_fire_time(None, now)
         planned.append(
             PlannedJob(
-                name=d.name,
-                conduit=d.conduit,
+                id=job.id,
+                name=job.schedule.name or job.id,
+                conduit_name=job.conduit_name,
                 next_fire_time=next_fire,
                 working_dir=working_dir,
-                schedule_kind=d.schedule.type,
+                schedule_kind=job.schedule.mode,
             )
         )
-    planned.sort(key=lambda p: p.name)
-    return planned, errors
+    planned.sort(key=lambda p: p.id)
+    return planned

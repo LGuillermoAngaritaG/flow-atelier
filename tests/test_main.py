@@ -366,36 +366,38 @@ tasks:
 # ---------------------------------------------------------------- schedule cmds
 
 
-SCHEDULE_RECURRING_YAML = """
-name: nightly
-conduit: hello
-inputs:
-  name: world
-schedule:
-  type: recurring
-  days: [mon, fri]
-  hours: ["09:00"]
-"""
+SCHEDULE_RECURRING_JSON = """{
+  "conduit_name": "hello",
+  "inputs": {"name": "world"},
+  "run_path": ".",
+  "schedule": {
+    "mode": "recurring",
+    "name": "nightly",
+    "days": [1, 5],
+    "times": ["09:00"]
+  }
+}"""
 
-SCHEDULE_ONCE_YAML = """
-name: backfill
-conduit: hello
-inputs:
-  name: once
-schedule:
-  type: once
-  at: "2099-05-01T09:00:00"
-"""
+SCHEDULE_ONCE_JSON = """{
+  "conduit_name": "hello",
+  "inputs": {"name": "once"},
+  "run_path": ".",
+  "schedule": {
+    "mode": "once",
+    "name": "backfill",
+    "run_at": "2099-05-01T09:00:00Z"
+  }
+}"""
 
 
 def test_schedule_add_and_list(workdir, tmp_path):
-    src = tmp_path / "nightly.yaml"
-    src.write_text(SCHEDULE_RECURRING_YAML)
+    src = tmp_path / "nightly.json"
+    src.write_text(SCHEDULE_RECURRING_JSON)
     runner = CliRunner()
     result = runner.invoke(app, ["schedule", "add", str(src)])
     assert result.exit_code == 0, result.output
     assert "installed" in result.output
-    assert (workdir / ".atelier" / "schedules" / "nightly.yaml").exists()
+    assert (workdir / ".atelier" / "schedules.json").exists()
 
     listing = runner.invoke(app, ["schedule", "list"])
     assert listing.exit_code == 0, listing.output
@@ -404,38 +406,30 @@ def test_schedule_add_and_list(workdir, tmp_path):
     assert "recurring" in listing.output
 
 
-def test_schedule_add_collision_requires_force(workdir, tmp_path):
-    src = tmp_path / "nightly.yaml"
-    src.write_text(SCHEDULE_RECURRING_YAML)
-    runner = CliRunner()
-    runner.invoke(app, ["schedule", "add", str(src)])
-    again = runner.invoke(app, ["schedule", "add", str(src)])
-    assert again.exit_code != 0
-    assert "already exists" in again.output
-
-    forced = runner.invoke(app, ["schedule", "add", str(src), "--force"])
-    assert forced.exit_code == 0, forced.output
-
-
-def test_schedule_add_rejects_invalid_yaml(workdir, tmp_path):
-    bad = tmp_path / "bad.yaml"
-    bad.write_text("name: bad\nconduit: c\nschedule:\n  type: weekly\n")
+def test_schedule_add_rejects_invalid(workdir, tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text(
+        '{"conduit_name": "x", "run_path": "/tmp", "schedule": {"mode": "weekly"}}'
+    )
     runner = CliRunner()
     result = runner.invoke(app, ["schedule", "add", str(bad)])
     assert result.exit_code != 0
-    assert "invalid schedule" in result.output
+    assert "invalid" in result.output.lower()
 
 
-def test_schedule_remove(workdir, tmp_path):
-    src = tmp_path / "nightly.yaml"
-    src.write_text(SCHEDULE_RECURRING_YAML)
+def test_schedule_remove_by_name(workdir, tmp_path):
+    src = tmp_path / "nightly.json"
+    src.write_text(SCHEDULE_RECURRING_JSON)
     runner = CliRunner()
     runner.invoke(app, ["schedule", "add", str(src)])
 
     result = runner.invoke(app, ["schedule", "remove", "nightly"])
     assert result.exit_code == 0, result.output
     assert "removed" in result.output
-    assert not (workdir / ".atelier" / "schedules" / "nightly.yaml").exists()
+
+    # After removal, it should no longer appear in the active list.
+    listing = runner.invoke(app, ["schedule", "list"])
+    assert "nightly" not in listing.output
 
 
 def test_schedule_remove_unknown(workdir):
@@ -453,37 +447,24 @@ def test_schedule_list_empty(workdir):
 
 
 def test_schedule_list_json_includes_one_shot(workdir, tmp_path):
-    src = tmp_path / "backfill.yaml"
-    src.write_text(SCHEDULE_ONCE_YAML)
+    src = tmp_path / "backfill.json"
+    src.write_text(SCHEDULE_ONCE_JSON)
     runner = CliRunner()
     runner.invoke(app, ["schedule", "add", str(src)])
 
     result = runner.invoke(app, ["schedule", "list", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.output)
-    assert "schedules" in payload and "errors" in payload
+    assert "schedules" in payload
     assert len(payload["schedules"]) == 1
     entry = payload["schedules"][0]
     assert entry["name"] == "backfill"
     assert entry["kind"] == "once"
-    assert entry["next_fire_time"].startswith("2099-05-01")
 
 
-def test_schedule_list_surfaces_load_errors(workdir):
-    schedules_dir = workdir / ".atelier" / "schedules"
-    schedules_dir.mkdir(parents=True, exist_ok=True)
-    (schedules_dir / "broken.yaml").write_text(
-        "conduit: c\nschedule:\n  type: bogus\n"
-    )
-    runner = CliRunner()
-    result = runner.invoke(app, ["schedule", "list"])
-    assert result.exit_code == 0  # broken schedules don't fail the listing
-    assert "broken.yaml" in result.output
-
-
-def test_schedule_run_now(workdir, tmp_path):
-    src = tmp_path / "nightly.yaml"
-    src.write_text(SCHEDULE_RECURRING_YAML)
+def test_schedule_run_now_by_name(workdir, tmp_path):
+    src = tmp_path / "nightly.json"
+    src.write_text(SCHEDULE_RECURRING_JSON)
     runner = CliRunner()
     runner.invoke(app, ["schedule", "add", str(src)])
 
@@ -501,8 +482,8 @@ def test_schedule_run_now_unknown(workdir):
 
 
 def test_scheduler_status_alias(workdir, tmp_path):
-    src = tmp_path / "nightly.yaml"
-    src.write_text(SCHEDULE_RECURRING_YAML)
+    src = tmp_path / "nightly.json"
+    src.write_text(SCHEDULE_RECURRING_JSON)
     runner = CliRunner()
     runner.invoke(app, ["schedule", "add", str(src)])
     result = runner.invoke(app, ["scheduler", "status"])

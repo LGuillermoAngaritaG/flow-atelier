@@ -1,4 +1,4 @@
-"""Convert schedule specs into APScheduler triggers."""
+"""Convert :class:`ScheduledJob` records into APScheduler triggers."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -9,23 +9,25 @@ from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
-from app.schemas.schedule import (
-    OnceSchedule,
-    RecurringSchedule,
-    ScheduleDefinition,
-)
+from app.schemas.api import ScheduledJob
+
+
+# ISO 8601 day-of-week (1=Mon..7=Sun) → APScheduler cron day_of_week names.
+_ISO_DAY_TO_CRON = {
+    1: "mon",
+    2: "tue",
+    3: "wed",
+    4: "thu",
+    5: "fri",
+    6: "sat",
+    7: "sun",
+}
 
 
 def default_local_zone() -> ZoneInfo:
-    """Resolve the host's local IANA timezone, with a UTC fallback.
-
-    Tries ``tzlocal.get_localzone()`` first because it normalizes Windows
-    "Pacific Standard Time"-style names to ``America/Los_Angeles``. Falls
-    back to whatever ``datetime.now().astimezone()`` gives us if tzlocal
-    is unavailable or returns a non-IANA zone.
-    """
+    """Resolve the host's local IANA timezone, with a UTC fallback."""
     try:
-        import tzlocal  # local import: optional perf cost only on first call
+        import tzlocal
     except ImportError:  # pragma: no cover — declared as a dep
         tzlocal = None
     if tzlocal is not None:
@@ -35,7 +37,7 @@ def default_local_zone() -> ZoneInfo:
                 return zone
             name = getattr(zone, "key", None) or str(zone)
             return ZoneInfo(name)
-        except Exception:  # noqa: BLE001 — fall through to system clock zone
+        except Exception:  # noqa: BLE001
             pass
     fallback = datetime.now().astimezone().tzinfo
     name = getattr(fallback, "key", None) or "UTC"
@@ -45,32 +47,37 @@ def default_local_zone() -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
-def to_trigger(definition: ScheduleDefinition, default_zone: ZoneInfo) -> BaseTrigger:
-    """Build an APScheduler trigger from a parsed schedule definition.
+def to_trigger(job: ScheduledJob, default_zone: ZoneInfo) -> BaseTrigger:
+    """Build an APScheduler trigger for ``job``.
 
-    :param definition: validated schedule
-    :param default_zone: timezone used when the schedule omits ``timezone:``
-    :returns: ``DateTrigger`` for ``once``, ``CronTrigger`` (or
-        ``OrTrigger`` of crons) for ``recurring``
+    :param job: persisted schedule
+    :param default_zone: timezone used for naive ``run_at`` values
+    :returns: ``DateTrigger`` for ``mode="once"``; ``CronTrigger`` (or
+        ``OrTrigger`` of crons) for ``mode="recurring"``
     """
-    zone = definition.resolve_zone(default_zone)
-    spec = definition.schedule
-    if isinstance(spec, OnceSchedule):
-        run_date = spec.at if spec.at.tzinfo is not None else spec.at.replace(tzinfo=zone)
-        return DateTrigger(run_date=run_date, timezone=zone)
-    if isinstance(spec, RecurringSchedule):
-        day_of_week = ",".join(spec.days)
-        crons = [
+    schedule = job.schedule
+    if schedule.mode == "once":
+        run_at = schedule.run_at
+        assert run_at is not None  # validated upstream
+        run_date = (
+            run_at if run_at.tzinfo is not None else run_at.replace(tzinfo=default_zone)
+        )
+        return DateTrigger(run_date=run_date, timezone=default_zone)
+    days = schedule.days or []
+    times = schedule.times or []
+    day_of_week = ",".join(_ISO_DAY_TO_CRON[d] for d in days)
+    crons: list[CronTrigger] = []
+    for t in times:
+        hour_str, minute_str = t.split(":")
+        crons.append(
             CronTrigger(
                 day_of_week=day_of_week,
-                hour=t.hour,
-                minute=t.minute,
-                second=t.second,
-                timezone=zone,
+                hour=int(hour_str),
+                minute=int(minute_str),
+                second=0,
+                timezone=default_zone,
             )
-            for t in spec.hours
-        ]
-        if len(crons) == 1:
-            return crons[0]
-        return OrTrigger(crons)
-    raise TypeError(f"unsupported schedule spec: {spec!r}")  # pragma: no cover
+        )
+    if len(crons) == 1:
+        return crons[0]
+    return OrTrigger(crons)
