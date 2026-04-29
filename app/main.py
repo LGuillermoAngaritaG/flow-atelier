@@ -1080,9 +1080,12 @@ def serve_cmd(
     server = uvicorn.Server(config)
 
     async def _run() -> None:
-        # Bind sockets first so we can print the chosen port even when
-        # --port 0 was requested.
-        await server.startup()
+        serve_task = asyncio.create_task(server.serve())
+        # Wait for uvicorn to bind so we can print the actual port.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 10.0
+        while not server.started and loop.time() < deadline:
+            await asyncio.sleep(0.05)
         actual = port
         try:
             if server.servers:
@@ -1093,8 +1096,7 @@ def serve_cmd(
             f"[green]atelier serve[/green] running at "
             f"[bold]http://{host}:{actual}[/bold]"
         )
-        await server.main_loop()
-        await server.shutdown()
+        await serve_task
 
     try:
         asyncio.run(_run())
