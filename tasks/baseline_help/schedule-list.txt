@@ -1,0 +1,10 @@
+                                                                                
+ Usage: atelier schedule list [OPTIONS]                                         
+                                                                                
+ List installed schedules and their next fire times.                            
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --json          Emit machine-readable JSON instead of a table.               │
+│ --help          Show this message and exit.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+

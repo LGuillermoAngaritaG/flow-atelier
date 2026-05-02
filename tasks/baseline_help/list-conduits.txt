@@ -1,0 +1,10 @@
+                                                                                
+ Usage: atelier list conduits [OPTIONS]                                         
+                                                                                
+ List all available conduits (project and global).                              
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --json          Emit machine-readable JSON instead of a table.               │
+│ --help          Show this message and exit.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+

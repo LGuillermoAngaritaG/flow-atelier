@@ -1,0 +1,10 @@
+                                                                                
+ Usage: atelier scheduler status [OPTIONS]                                      
+                                                                                
+ Show registered schedules and their next fire times (no daemon required).      
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --json          Emit machine-readable JSON instead of a table.               │
+│ --help          Show this message and exit.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+

@@ -5,7 +5,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from app.main import app
+from app.cli import app
 from app.schemas.conduit import Conduit
 
 

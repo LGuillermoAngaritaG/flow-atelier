@@ -1,0 +1,13 @@
+                                                                                
+ Usage: atelier run [OPTIONS] CONDUIT_NAME                                      
+                                                                                
+ Start a new flow for the named conduit. Use --input key=value to pass inputs.  
+                                                                                
+╭─ Arguments ──────────────────────────────────────────────────────────────────╮
+│ *    conduit_name      TEXT  Name of the conduit to run. [required]          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --input  -i      TEXT  key=value input (repeatable).                         │
+│ --help                 Show this message and exit.                           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+

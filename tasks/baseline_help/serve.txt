@@ -1,0 +1,18 @@
+                                                                                
+ Usage: atelier serve [OPTIONS]                                                 
+                                                                                
+ Run the FastAPI HTTP + WebSocket server with the embedded scheduler.           
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --host                   TEXT     Bind host. [default: 127.0.0.1]            │
+│ --port                   INTEGER  Bind port (use 0 for an ephemeral port).   │
+│                                   [default: 8000]                            │
+│ --reload-interval        FLOAT    Seconds between schedule store rescans.    │
+│                                   [default: 30.0]                            │
+│ --cors-origin            TEXT     Allowed CORS origin (repeatable). Default  │
+│                                   = '*'.                                     │
+│ --log-level              TEXT     Logging level for the server.              │
+│                                   [default: INFO]                            │
+│ --help                            Show this message and exit.                │
+╰──────────────────────────────────────────────────────────────────────────────╯
+

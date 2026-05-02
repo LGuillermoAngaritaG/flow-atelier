@@ -1,0 +1,13 @@
+                                                                                
+ Usage: atelier status [OPTIONS] FLOW_ID                                        
+                                                                                
+ Show progress for a flow.                                                      
+                                                                                
+╭─ Arguments ──────────────────────────────────────────────────────────────────╮
+│ *    flow_id      TEXT  Flow id (or unique prefix) to inspect. [required]    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --json          Emit machine-readable JSON instead of a table.               │
+│ --help          Show this message and exit.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
