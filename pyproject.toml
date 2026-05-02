@@ -16,6 +16,7 @@ dependencies = [
     "tzlocal>=5.2",
     "fastapi>=0.136.1",
     "uvicorn[standard]>=0.46.0",
+    "httpx>=0.28.1",
 ]
 
 [project.scripts]
@@ -23,7 +24,6 @@ atelier = "app.main:app"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-timeout>=2.3",
