@@ -27,6 +27,7 @@ from app.schemas.conduit import Conduit
 from app.schemas.flow import parse_flow_id
 from app.schemas.log import LogEntry
 from app.schemas.progress import Progress
+from app.services.channels.adapters.discord import DiscordAdapter
 from app.services.channels.adapters.telegram import TelegramAdapter
 from app.services.channels.base import ChannelAdapter
 from app.services.channels.registry import ChannelRegistry
@@ -347,7 +348,8 @@ class Atelier:
             )
         if cfg.kind == ChannelKind.telegram:
             return TelegramAdapter(name=cfg.name, token=token)
-        # Discord support lands in a later task; surface a clear error today.
+        if cfg.kind == ChannelKind.discord:
+            return DiscordAdapter(name=cfg.name, token=token)
         raise NotImplementedError(
             f"channel kind {cfg.kind!r} not implemented yet"
         )
