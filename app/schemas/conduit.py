@@ -81,6 +81,7 @@ class Conduit(BaseModel):
     max_concurrency: int = 3
     inputs: dict[str, str] = Field(default_factory=dict)
     tasks: list[TaskDefinition]
+    faucet: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -110,4 +111,20 @@ class Conduit(BaseModel):
         if len(names) != len(set(names)):
             dupes = sorted({n for n in names if names.count(n) > 1})
             raise ValueError(f"duplicate task names: {dupes}")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_faucet(self) -> "Conduit":
+        if not self.faucet:
+            return self
+        if self.inputs:
+            raise ValueError(
+                "faucet conduits cannot declare inputs: — the channel injects "
+                "_message, _channel, and _session_key at runtime"
+            )
+        if not any(t.tool.value.startswith("harness:") for t in self.tasks):
+            raise ValueError(
+                "faucet conduits must have at least one harness:* task "
+                "(the ACP turn the channel message drives)"
+            )
         return self
