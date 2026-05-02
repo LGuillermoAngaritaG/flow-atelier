@@ -67,6 +67,10 @@ def resolve(
                     f"references output of task {task!r} which has not completed"
                 )
             return task_outputs[task]
+        # Bare ``_<name>`` shorthand for channel-injected inputs (faucet
+        # conduits): {{_message}} resolves against inputs["_message"].
+        if expr.startswith("_") and expr in inputs:
+            return str(inputs[expr])
         raise TemplateError(f"unknown template expression: {expr!r}")
 
     return _TEMPLATE_RE.sub(_sub, template)

@@ -28,6 +28,7 @@ class ChannelExecutionContext:
     :param channel: configured channel name
     :param session_key: per-sender key (e.g. ``str(chat_id)``)
     :param address: opaque payload the originating adapter needs to reply
+    :param message: the user's message text (seeds ``{{_message}}``)
     """
 
     faucet: bool = False
@@ -36,6 +37,7 @@ class ChannelExecutionContext:
     channel: str = ""
     session_key: str = ""
     address: dict[str, Any] = field(default_factory=dict)
+    message: str = ""
 
 
 @dataclass

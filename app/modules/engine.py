@@ -34,7 +34,11 @@ from app.schemas.log import ExecutionResult, LogEntry, TaskEvent
 TaskEventCallback = Callable[[TaskEvent], None]
 FlowStartedCallback = Callable[[str], None]
 from app.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
-from app.services.executor.base import ExecutorBase, FlowContext
+from app.services.executor.base import (
+    ChannelExecutionContext,
+    ExecutorBase,
+    FlowContext,
+)
 from app.services.store.base import StoreBase
 
 
@@ -111,25 +115,42 @@ class Engine:
         parent_flow_id: str | None = None,
         on_task_event: TaskEventCallback | None = None,
         on_flow_started: FlowStartedCallback | None = None,
+        channel_context: ChannelExecutionContext | None = None,
     ) -> str:
         """Execute a conduit to completion, returning the flow id.
 
         :param conduit: parsed :class:`Conduit` definition
-        :param inputs: conduit input map (must cover all required keys)
+        :param inputs: conduit input map (must cover all required keys, unless
+            the conduit is a faucet — in which case implicit inputs come from
+            ``channel_context`` instead)
         :param parent_flow_id: parent flow id for nested ``tool:conduit`` runs
         :param on_flow_started: optional callback invoked exactly once with
             the new flow id, immediately after it is created and before any
             task runs. Lets callers (e.g. the CLI) record the id so they
             can surface it even if the flow later fails.
+        :param channel_context: present when the flow was triggered by a
+            channel adapter feeding a faucet conduit; seeds ``_message``,
+            ``_channel``, ``_session_key`` and is threaded onto every
+            :class:`FlowContext` so harness executors can resume sessions
         :returns: the new flow id on success
         :raises ConduitValidationError: DAG is invalid (cycle, unknown dep, bad regex)
-        :raises ValueError: required inputs are missing
+        :raises ValueError: required inputs are missing (non-faucet only)
         :raises Exception: first task failure propagates after fail-fast cancel
         """
-        # Validate required inputs
-        missing = [k for k in conduit.inputs if k not in inputs]
-        if missing:
-            raise ValueError(f"missing required inputs: {missing}")
+        # Faucet conduits draw their inputs from the channel, not from
+        # the explicit `inputs` map — schema enforces `inputs:` is empty.
+        if conduit.faucet and channel_context is not None:
+            inputs = {
+                **inputs,
+                "_message": channel_context.message,
+                "_channel": channel_context.channel,
+                "_session_key": channel_context.session_key,
+            }
+        else:
+            # Validate required inputs (non-faucet path only).
+            missing = [k for k in conduit.inputs if k not in inputs]
+            if missing:
+                raise ValueError(f"missing required inputs: {missing}")
 
         parsed_deps = _validate_dag(conduit)
 
@@ -310,6 +331,7 @@ class Engine:
                     task_outputs=outputs,
                     timeout=conduit.timeout,
                     run_nested_conduit=self._make_nested_runner(on_task_event),
+                    channel_context=channel_context,
                 )
 
                 # Pre-parse the loop predicate once per task. Schema enforces
