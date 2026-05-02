@@ -11,6 +11,7 @@ class ToolType(str, Enum):
     bash = "tool:bash"
     hitl = "tool:hitl"
     conduit = "tool:conduit"
+    reply = "tool:reply"
     claude = "harness:claude-code"
     codex = "harness:codex"
     opencode = "harness:opencode"

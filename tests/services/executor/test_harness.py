@@ -400,6 +400,7 @@ class TestAtelierHarnessWiring:
             "tool:bash",
             "tool:conduit",
             "tool:hitl",
+            "tool:reply",
         ]
         assert isinstance(a.executors["harness:opencode"], OpencodeHarness)
         assert isinstance(a.executors["harness:copilot"], CopilotHarness)

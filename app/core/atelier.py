@@ -46,6 +46,7 @@ from app.services.executor.harness import (
     OpencodeHarness,
 )
 from app.services.executor.hitl import HitlExecutor
+from app.services.executor.reply import ReplyExecutor
 from app.services.executor.prompt_sink import PromptSink, TerminalPromptSink
 from app.services.store.filesystem import FilesystemStore
 
@@ -94,6 +95,9 @@ class Atelier:
             "tool:bash": BashExecutor(),
             "tool:hitl": HitlExecutor(),
             "tool:conduit": ConduitExecutor(),
+            "tool:reply": ReplyExecutor(
+                adapters_provider=self._channel_adapters,
+            ),
             "harness:claude-code": ClaudeHarness(
                 sink=sink,
                 launch_cmd=claude_launch,
@@ -326,6 +330,12 @@ class Atelier:
         return self.store.read_logs(flow_id)
 
     # ------------------------------------------------------------------ channels
+
+    def _channel_adapters(self) -> dict[str, ChannelAdapter]:
+        """Return the live adapter map, or empty when channels aren't started."""
+        if self.channel_registry is None:
+            return {}
+        return self.channel_registry.adapters
 
     def _channels_path(self) -> Path:
         if self.settings.channels_config_path is not None:
