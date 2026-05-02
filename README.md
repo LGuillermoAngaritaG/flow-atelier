@@ -417,6 +417,58 @@ agent as the permission outcome.
 Non-interactive tasks run a single turn and return whatever the agent
 streamed before `stop_reason`.
 
+## Channel adapters (Telegram / Discord)
+
+A **faucet conduit** is fed by an external channel — Telegram or Discord
+today. Each inbound message becomes one ACP turn against a harness, and the
+harness's reply lands back in the same chat as one message.
+
+Drop a `channels.yaml` next to your conduits:
+
+```yaml
+# .atelier/channels.yaml
+channels:
+  - name: tg_bot
+    kind: telegram
+    token_env: TG_BOT_TOKEN     # name of the env var holding the token
+bindings:
+  - channel: tg_bot
+    conduit: echo
+```
+
+Mark the conduit as a faucet — it draws inputs from the channel, not from a
+caller-provided map:
+
+```yaml
+# .atelier/conduits/echo/conduit.yaml
+name: echo
+description: chat handler
+faucet: true
+tasks:
+  - chat:
+      description: respond to user
+      task: "Briefly answer: {{_message}}"
+      tool: harness:claude-code
+      depends_on: []
+```
+
+Tokens are read at startup from the env var named in `token_env` and never
+persisted by atelier. Run `export TG_BOT_TOKEN=...` (or set it in `.env`)
+and start `atelier serve` — the bot is live.
+
+Per-sender ACP sessions are persisted to
+`.atelier/channel_sessions.json` (48h TTL). Each follow-up message from the
+same chat resumes the same harness session, so the conversation has memory.
+Sending `/new` clears the session and replies `Session reset.`.
+
+`tool:reply` is the inverse direction: a non-faucet task that posts a
+message into a channel (deploy alerts, cron summaries, ...). It needs
+`inputs.channel`, `inputs.address` (e.g. `{chat_id: 42}`), and `inputs.text`.
+
+`atelier channels list / sessions / reset <key>` inspect and manage on-disk
+channel state without needing `serve` running. See `SPEC.md` for the full
+contract (session-key conventions, `/new` semantics, attachment handling).
+
 ## Folder layout
 
 The `.atelier` directory lives in the working directory where `atelier` is
