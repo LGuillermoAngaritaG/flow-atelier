@@ -63,3 +63,10 @@ class AtelierSettings(BaseSettings):
         ),
     )
     done_marker: str = "[ATELIER_DONE]"
+    channels_config_path: Path | None = Field(
+        default=None,
+        description=(
+            "Override path to channels.yaml. Defaults to "
+            "<atelier_dir>/channels.yaml when unset."
+        ),
+    )

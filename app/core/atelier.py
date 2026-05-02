@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from app.core.settings import AtelierSettings
 from app.modules.engine import Engine, FlowStartedCallback, TaskEventCallback
@@ -18,14 +21,23 @@ from app.schemas.api import (
     ScheduledJob,
     UpdateConduitInput,
 )
+from app.schemas.channel import ChannelKind
+from app.schemas.channels_file import ChannelsFile
 from app.schemas.conduit import Conduit
 from app.schemas.flow import parse_flow_id
 from app.schemas.log import LogEntry
 from app.schemas.progress import Progress
+from app.services.channels.adapters.telegram import TelegramAdapter
+from app.services.channels.base import ChannelAdapter
+from app.services.channels.registry import ChannelRegistry
+from app.services.channels.sessions import ChannelSessionStore
+from app.services.channels.sink import ChannelPromptSink
+from app.services.executor.base import ChannelExecutionContext
 from app.services.scheduler.store import ScheduleStore
 from app.services.executor.bash import BashExecutor
 from app.services.executor.conduit import ConduitExecutor
 from app.services.executor.harness import (
+    AcpHarnessExecutor,
     ClaudeHarness,
     CodexHarness,
     CopilotHarness,
@@ -109,6 +121,12 @@ class Atelier:
         }
         self.engine = Engine(self.executors, self.store)
         self.schedule_store = ScheduleStore(self.settings.atelier_dir)
+
+        # Channels are optional. Loading the YAML now (cheap) so callers can
+        # tell whether channels are configured before bothering to start them.
+        self.channels_config: ChannelsFile | None = self._load_channels_file()
+        self.channel_registry: ChannelRegistry | None = None
+        self._channel_session_store: ChannelSessionStore | None = None
 
     async def run_conduit(
         self,
@@ -305,6 +323,125 @@ class Atelier:
         # ``_flow_dir`` raises FileNotFoundError when the id is unknown.
         self.store._flow_dir(flow_id)
         return self.store.read_logs(flow_id)
+
+    # ------------------------------------------------------------------ channels
+
+    def _channels_path(self) -> Path:
+        if self.settings.channels_config_path is not None:
+            return Path(self.settings.channels_config_path)
+        return self.settings.atelier_dir / "channels.yaml"
+
+    def _load_channels_file(self) -> ChannelsFile | None:
+        path = self._channels_path()
+        if not path.exists():
+            return None
+        with path.open() as f:
+            data = yaml.safe_load(f) or {}
+        return ChannelsFile.model_validate(data)
+
+    def _build_adapter(self, cfg) -> ChannelAdapter:
+        token = os.environ.get(cfg.token_env)
+        if not token:
+            raise RuntimeError(
+                f"channel {cfg.name!r}: env var {cfg.token_env!r} is unset"
+            )
+        if cfg.kind == ChannelKind.telegram:
+            return TelegramAdapter(name=cfg.name, token=token)
+        # Discord support lands in a later task; surface a clear error today.
+        raise NotImplementedError(
+            f"channel kind {cfg.kind!r} not implemented yet"
+        )
+
+    async def start_channels(self) -> None:
+        """Spin up the channel registry if ``channels.yaml`` declared any."""
+        if self.channels_config is None or not self.channels_config.channels:
+            return
+        adapters: dict[str, ChannelAdapter] = {
+            cfg.name: self._build_adapter(cfg)
+            for cfg in self.channels_config.channels
+        }
+        self._channel_session_store = ChannelSessionStore(
+            atelier_dir=self.settings.atelier_dir
+        )
+        self.channel_registry = ChannelRegistry(
+            adapters=adapters,
+            bindings=self.channels_config.bindings,
+            conduit_lookup=self._lookup_conduit_for_channel,
+            runner=self.run_conduit_for_channel,
+            session_store=self._channel_session_store,
+        )
+        await self.channel_registry.start()
+
+    async def stop_channels(self) -> None:
+        """Stop the channel registry; safe to call when not started."""
+        if self.channel_registry is not None:
+            await self.channel_registry.stop()
+            self.channel_registry = None
+
+    def _lookup_conduit_for_channel(self, name: str) -> Conduit | None:
+        try:
+            return self.store.read_conduit(name)
+        except (FileNotFoundError, ValueError):
+            return None
+
+    async def run_conduit_for_channel(
+        self,
+        name: str,
+        channel_context: ChannelExecutionContext,
+    ) -> str:
+        """Run a faucet conduit driven by a channel message.
+
+        Builds a per-flow :class:`ChannelPromptSink` wired to the originating
+        adapter so harness streams flush back to the same chat. Threads the
+        ``channel_context`` through the engine so harness executors can resume
+        per-task ACP sessions.
+        """
+        if self.channel_registry is None:
+            raise RuntimeError("channels not started")
+        adapter = self.channel_registry.adapters[channel_context.channel]
+        sink = ChannelPromptSink(send=adapter.send, address=channel_context.address)
+
+        # Per-flow harness instances bound to this sink — cheap, and avoids
+        # cross-channel sink leakage.
+        harness_overrides = {
+            "harness:claude-code": ClaudeHarness(
+                sink=sink,
+                launch_cmd=self.settings.claude_launch_cmd or None,
+                done_marker=self.settings.done_marker,
+            ),
+            "harness:codex": CodexHarness(
+                sink=sink,
+                launch_cmd=self.settings.codex_launch_cmd or None,
+                done_marker=self.settings.done_marker,
+            ),
+            "harness:opencode": OpencodeHarness(
+                sink=sink,
+                launch_cmd=self.settings.opencode_launch_cmd or None,
+                done_marker=self.settings.done_marker,
+            ),
+            "harness:copilot": CopilotHarness(
+                sink=sink,
+                launch_cmd=self.settings.copilot_launch_cmd or None,
+                done_marker=self.settings.done_marker,
+            ),
+            "harness:cursor": CursorHarness(
+                sink=sink,
+                launch_cmd=self.settings.cursor_launch_cmd or None,
+                done_marker=self.settings.done_marker,
+            ),
+        }
+        per_flow_executors = {**self.executors, **harness_overrides}
+        per_flow_engine = Engine(per_flow_executors, self.store)
+
+        conduit = self.store.read_conduit(name)
+        try:
+            flow_id = await per_flow_engine.run(
+                conduit, inputs={}, channel_context=channel_context
+            )
+        finally:
+            # Flush any buffered agent output to the channel as one message.
+            await sink.flush()
+        return flow_id
 
     def open_conduit_path(self, conduit_name: str, run_path: str) -> bool:
         """Reveal ``run_path`` in the host's file explorer.

@@ -58,9 +58,11 @@ def serve_cmd(
     @asynccontextmanager
     async def _lifespan(app):
         await daemon.start()
+        await atelier.start_channels()
         try:
             yield
         finally:
+            await atelier.stop_channels()
             await daemon.stop()
 
     cors = list(cors_origin) if cors_origin else None
