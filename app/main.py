@@ -20,6 +20,7 @@ from app.cli._shared import (
     _schedule_store,
     console,
 )
+from app.cli.main import app, list_app, schedule_app, scheduler_app
 from app.cli.render import (
     _FLOW_STATUS_STYLE,
     _TASK_STATUS_GLYPHS,
@@ -56,32 +57,6 @@ tasks:
       tool: tool:bash
       depends_on: []
 """
-
-app = typer.Typer(
-    help="flow-atelier: run reproducible async DAG workflows (conduits).",
-    no_args_is_help=True,
-    rich_markup_mode="rich",
-)
-list_app = typer.Typer(
-    help="List conduits or flows.",
-    no_args_is_help=True,
-    rich_markup_mode="rich",
-)
-app.add_typer(list_app, name="list")
-
-schedule_app = typer.Typer(
-    help="Manage scheduled conduit runs (.atelier/schedules.json).",
-    no_args_is_help=True,
-    rich_markup_mode="rich",
-)
-app.add_typer(schedule_app, name="schedule")
-
-scheduler_app = typer.Typer(
-    help="Run and inspect the scheduler daemon.",
-    no_args_is_help=True,
-    rich_markup_mode="rich",
-)
-app.add_typer(scheduler_app, name="scheduler")
 
 
 @app.command(
