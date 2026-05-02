@@ -37,6 +37,7 @@ from acp.schema import (
     AllowedOutcome,
     Implementation,
     InitializeResponse,
+    LoadSessionResponse,
     NewSessionResponse,
     PermissionOption as AcpPermissionOption,
     PromptCapabilities,
@@ -131,7 +132,7 @@ class FakeAgent:
         return None
 
     async def load_session(self, *args, **kwargs):
-        return None
+        return LoadSessionResponse()
 
     async def list_sessions(self, *args, **kwargs):
         raise NotImplementedError

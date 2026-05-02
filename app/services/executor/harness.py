@@ -208,20 +208,45 @@ class AcpHarnessExecutor(ExecutorBase):
         resolved_command: str,
         context: FlowContext,
     ) -> ExecutionResult:
+        chan = context.channel_context
+        faucet = chan is not None and chan.faucet
+        # Faucet mode = exactly one ACP turn per channel message: skip the
+        # done-marker suffix and the interactive loop, regardless of
+        # task.interactive.
+        interactive = task.interactive and not faucet
+
         prompt_text = resolved_command
-        if task.interactive:
+        if interactive:
             prompt_text = prompt_text + build_interactive_suffix(self.done_marker)
 
         cwd = str(Path.cwd())
         client = _BufferingClient(
             self.sink,
-            live_stream=task.interactive,
+            live_stream=interactive,
             done_marker=self.done_marker,
         )
 
+        resume_id: str | None = None
+        on_minted: Any = None
+        if chan is not None:
+            resume_id = chan.resume_session_ids.get(task.name)
+            if chan.on_session_minted is not None:
+                on_minted = chan.on_session_minted
+
         try:
             return await asyncio.wait_for(
-                self._drive_session(client, prompt_text, task.interactive, cwd),
+                self._drive_session(
+                    client,
+                    prompt_text,
+                    interactive,
+                    cwd,
+                    resume_session_id=resume_id,
+                    on_session_minted=(
+                        (lambda sid: on_minted(task.name, sid))
+                        if on_minted is not None
+                        else None
+                    ),
+                ),
                 timeout=context.timeout,
             )
         except asyncio.TimeoutError:
@@ -245,6 +270,9 @@ class AcpHarnessExecutor(ExecutorBase):
         initial_prompt: str,
         interactive: bool,
         cwd: str,
+        *,
+        resume_session_id: str | None = None,
+        on_session_minted: Any = None,
     ) -> ExecutionResult:
         cmd, *args = self.launch_cmd
         # Raise the per-line StreamReader limit well above asyncio's 64 KiB
@@ -261,14 +289,28 @@ class AcpHarnessExecutor(ExecutorBase):
             _proc,
         ):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
-            sess = await conn.new_session(cwd=cwd)
+
+            if resume_session_id is not None:
+                # Resume the existing ACP session — the agent should pick up
+                # mid-conversation. Some agents return None; the resume id
+                # itself is what we report back.
+                await conn.load_session(
+                    session_id=resume_session_id, cwd=cwd, mcp_servers=[]
+                )
+                session_id = resume_session_id
+            else:
+                sess = await conn.new_session(cwd=cwd)
+                session_id = sess.session_id
+
+            if on_session_minted is not None:
+                on_session_minted(session_id)
 
             if not interactive:
                 return await self._run_single_turn(
-                    conn, sess.session_id, initial_prompt, client
+                    conn, session_id, initial_prompt, client
                 )
             return await self._run_interactive(
-                conn, sess.session_id, initial_prompt, client
+                conn, session_id, initial_prompt, client
             )
 
     async def _run_single_turn(
