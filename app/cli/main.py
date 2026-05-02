@@ -31,6 +31,13 @@ scheduler_app = typer.Typer(
 )
 app.add_typer(scheduler_app, name="scheduler")
 
+channels_app = typer.Typer(
+    help="Inspect and manage channel adapters (.atelier/channels.yaml).",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
+app.add_typer(channels_app, name="channels")
+
 # Side-effect imports: each command module decorates its handler against
 # the appropriate Typer instance above. Order matches the original
 # decoration order in app/main.py so --help layout stays byte-identical.
@@ -43,4 +50,5 @@ from app.cli import (  # noqa: E402, F401
     schedule,
     scheduler,
     serve,
+    channels,
 )
