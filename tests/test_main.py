@@ -6,7 +6,8 @@ import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
-from app.main import _render_task_event, _truncate_tail, app
+from app.cli import app
+from app.cli.render import _render_task_event, _truncate_tail
 from app.schemas.log import TaskEvent
 
 CONDUIT_YAML = """
