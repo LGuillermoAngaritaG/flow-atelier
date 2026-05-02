@@ -1,0 +1,13 @@
+                                                                                
+ Usage: atelier list [OPTIONS] COMMAND [ARGS]...                                
+                                                                                
+ List conduits or flows.                                                        
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --help          Show this message and exit.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ conduits  List all available conduits (project and global).                  │
+│ flows     List all flows, optionally filtered by conduit.                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
