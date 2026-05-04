@@ -22,7 +22,7 @@ class TestDisplayStep:
         step = IntermediateStep(kind=StepKind.thinking, text="Let me analyze this code")
         await sink.display_step(step)
         output = buf.getvalue()
-        assert "thinking" in output
+        assert "💭" in output
         assert "Let me analyze" in output
 
     async def test_tool_call_step_prints_tool_name(self) -> None:

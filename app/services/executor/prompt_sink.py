@@ -144,16 +144,9 @@ class TerminalPromptSink:
         return answer
 
     async def display_step(self, step: IntermediateStep) -> None:
-        from app.schemas.log import StepKind
+        from app.cli.render import _render_step
 
-        if step.kind == StepKind.thinking:
-            text = step.text[:120] + ("..." if len(step.text) > 120 else "")
-            self._console.print(f"[dim]\\[thinking] {text}[/dim]")
-        elif step.kind == StepKind.tool_call:
-            loc = f" {step.locations[0]}" if step.locations else ""
-            self._console.print(f"[dim]\\[tool] {step.tool_name}{loc}[/dim]")
-        elif step.kind == StepKind.tool_result:
-            self._console.print(f"[dim]  -> {step.tool_status}[/dim]")
+        self._console.print(_render_step(step))
 
     async def request_permission(
         self, summary: str, options: list[PermissionOption]
