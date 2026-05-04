@@ -25,14 +25,17 @@ from typing import Any
 import acp
 from acp.schema import (
     AgentMessageChunk,
+    AgentThoughtChunk,
     AllowedOutcome,
     DeniedOutcome,
     RequestPermissionResponse,
     TextContentBlock,
+    ToolCallProgress,
+    ToolCallStart,
 )
 
 from app.schemas.conduit import TaskDefinition
-from app.schemas.log import ExecutionResult
+from app.schemas.log import ExecutionResult, IntermediateStep, StepKind
 from app.services.executor.base import ExecutorBase, FlowContext
 from app.services.executor.prompt_sink import (
     PermissionOption,
@@ -104,6 +107,7 @@ class _BufferingClient:
         self._live_stream = live_stream
         self._done_marker = done_marker
         self.buffer: list[str] = []
+        self.steps: list[IntermediateStep] = []
 
     async def session_update(self, session_id: str, update, **kwargs) -> None:
         del session_id, kwargs
@@ -111,15 +115,39 @@ class _BufferingClient:
             content = update.content
             text = getattr(content, "text", None)
             if text:
-                # Buffer keeps the raw text so the executor can detect the
-                # done marker for loop termination.
                 self.buffer.append(text)
                 if self._live_stream:
-                    # Hide the protocol marker from what the user sees on
-                    # screen (per-chunk strip — won't catch a marker split
-                    # across two chunks, but the model emits it whole in
-                    # practice).
                     await self._sink.display(text.replace(self._done_marker, ""))
+        elif isinstance(update, AgentThoughtChunk):
+            text = getattr(update.content, "text", "") or ""
+            step = IntermediateStep(kind=StepKind.thinking, text=text)
+            self.steps.append(step)
+            if self._live_stream and hasattr(self._sink, "display_step"):
+                await self._sink.display_step(step)
+        elif isinstance(update, ToolCallStart):
+            step = IntermediateStep(
+                kind=StepKind.tool_call,
+                tool_call_id=update.tool_call_id,
+                tool_name=update.title,
+                tool_kind=update.kind or "",
+                tool_status=update.status or "",
+                tool_input=str(update.raw_input)[:500] if update.raw_input else "",
+                locations=[loc.path for loc in (update.locations or [])],
+            )
+            self.steps.append(step)
+            if self._live_stream and hasattr(self._sink, "display_step"):
+                await self._sink.display_step(step)
+        elif isinstance(update, ToolCallProgress):
+            if update.status in ("completed", "failed"):
+                step = IntermediateStep(
+                    kind=StepKind.tool_result,
+                    tool_call_id=update.tool_call_id,
+                    tool_status=update.status or "",
+                    tool_output=str(update.raw_output)[:500] if update.raw_output else "",
+                )
+                self.steps.append(step)
+                if self._live_stream and hasattr(self._sink, "display_step"):
+                    await self._sink.display_step(step)
 
     async def request_permission(
         self, options, session_id: str, tool_call, **kwargs
@@ -230,6 +258,7 @@ class AcpHarnessExecutor(ExecutorBase):
                 stdout="".join(client.buffer),
                 stderr=f"harness timeout after {context.timeout}s",
                 output="".join(client.buffer),
+                steps=client.steps,
             )
         except Exception as exc:  # noqa: BLE001
             return ExecutionResult(
@@ -237,6 +266,7 @@ class AcpHarnessExecutor(ExecutorBase):
                 stdout="".join(client.buffer),
                 stderr=f"{type(exc).__name__}: {exc}",
                 output="".join(client.buffer),
+                steps=client.steps,
             )
 
     async def _drive_session(
@@ -344,6 +374,7 @@ class AcpHarnessExecutor(ExecutorBase):
                     stdout=cleaned,
                     stderr="",
                     output=cleaned,
+                    steps=client.steps,
                 )
             if resp.stop_reason not in ("end_turn", "max_tokens"):
                 break
@@ -357,6 +388,7 @@ class AcpHarnessExecutor(ExecutorBase):
                     stdout=buffer_text,
                     stderr=f"interactive input unavailable: {type(exc).__name__}",
                     output=buffer_text,
+                    steps=client.steps,
                 )
             next_prompt = user_reply + build_interactive_suffix(self.done_marker)
 
@@ -369,6 +401,7 @@ class AcpHarnessExecutor(ExecutorBase):
                 f"(last stop_reason={last_stop})"
             ),
             output=buffer_text,
+            steps=client.steps,
         )
 
     @staticmethod
@@ -378,13 +411,15 @@ class AcpHarnessExecutor(ExecutorBase):
         output = "".join(client.buffer)
         if stop_reason in ("end_turn", "max_tokens"):
             return ExecutionResult(
-                exit_code=0, stdout=output, stderr="", output=output
+                exit_code=0, stdout=output, stderr="", output=output,
+                steps=client.steps,
             )
         return ExecutionResult(
             exit_code=1,
             stdout=output,
             stderr=f"agent stopped with reason={stop_reason}",
             output=output,
+            steps=client.steps,
         )
 
 
