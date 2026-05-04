@@ -42,6 +42,13 @@ def _render_step(step: IntermediateStep) -> Text:
     return t
 
 
+def _render_orchestration_msg(text: str) -> Text:
+    """Render an orchestration lifecycle message: ``· {text}`` in dim."""
+    t = Text()
+    t.append(f"· {text}", style="dim")
+    return t
+
+
 def _truncate_tail(text: str, max_lines: int = 20) -> tuple[str, int]:
     """Return ``(displayed_text, dropped_line_count)``.
 

@@ -8,7 +8,7 @@ import typer
 
 from app.cli._shared import _parse_inputs, console
 from app.cli.main import app
-from app.cli.render import _render_run_footer, _render_task_event
+from app.cli.render import _render_orchestration_msg, _render_run_footer, _render_task_event
 from app.core.atelier import Atelier
 from app.schemas.log import TaskEvent
 
@@ -52,6 +52,12 @@ def run_cmd(
 
     def _on_started(fid: str) -> None:
         captured_flow_id["id"] = fid
+        console.print(_render_orchestration_msg(f'starting flow {fid}'))
+
+    def _on_task_starting(task_name: str, tool: str) -> None:
+        console.print(_render_orchestration_msg(f'running task "{task_name}" [{tool}]'))
+
+    console.print(_render_orchestration_msg(f'loading conduit "{conduit_name}"'))
 
     try:
         flow_id = asyncio.run(
@@ -60,6 +66,7 @@ def run_cmd(
                 inputs,
                 on_task_event=_on_event,
                 on_flow_started=_on_started,
+                on_task_starting=_on_task_starting,
             )
         )
     except Exception as e:  # noqa: BLE001

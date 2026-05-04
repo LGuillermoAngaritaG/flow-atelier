@@ -6,7 +6,7 @@ import io
 from rich.console import Console
 from rich.text import Text
 
-from app.cli.render import _render_log_entry, _render_step, _render_task_event
+from app.cli.render import _render_log_entry, _render_orchestration_msg, _render_step, _render_task_event
 from app.schemas.log import IntermediateStep, LogEntry, StepKind, TaskEvent
 from app.schemas.progress import TaskStatus
 
@@ -257,3 +257,22 @@ class TestRenderLogEntrySteps:
         _render_log_entry(entry, "output", c)
         output = buf.getvalue()
         assert "Let me analyze" not in output
+
+
+# ─── Tests for _render_orchestration_msg() ─────────────────────────────────
+
+
+class TestRenderOrchestrationMsg:
+    def test_returns_rich_text(self) -> None:
+        result = _render_orchestration_msg("loading conduit")
+        assert isinstance(result, Text)
+
+    def test_has_dot_prefix(self) -> None:
+        result = _render_orchestration_msg("loading conduit")
+        plain = result.plain
+        assert plain.startswith("·")
+
+    def test_contains_message(self) -> None:
+        result = _render_orchestration_msg('running task "lint" [tool:bash]')
+        plain = result.plain
+        assert 'running task "lint" [tool:bash]' in plain

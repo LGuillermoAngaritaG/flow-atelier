@@ -33,6 +33,7 @@ from app.schemas.log import ExecutionResult, LogEntry, TaskEvent
 
 TaskEventCallback = Callable[[TaskEvent], None]
 FlowStartedCallback = Callable[[str], None]
+TaskStartingCallback = Callable[[str, str], None]
 from app.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
 from app.services.executor.base import ExecutorBase, FlowContext
 from app.services.store.base import StoreBase
@@ -111,6 +112,7 @@ class Engine:
         parent_flow_id: str | None = None,
         on_task_event: TaskEventCallback | None = None,
         on_flow_started: FlowStartedCallback | None = None,
+        on_task_starting: TaskStartingCallback | None = None,
     ) -> str:
         """Execute a conduit to completion, returning the flow id.
 
@@ -250,6 +252,11 @@ class Engine:
                 n for n, s in statuses.items() if s == TaskStatus.running
             ]
             self.store.write_progress(flow_id, progress)
+            if iteration == 1 and on_task_starting is not None:
+                try:
+                    on_task_starting(name, task_map[name].tool.value)
+                except Exception:  # noqa: BLE001
+                    pass
 
         def mark_completed(name: str, iteration: int) -> None:
             statuses[name] = TaskStatus.completed
