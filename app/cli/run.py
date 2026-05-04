@@ -25,6 +25,11 @@ def run_cmd(
         "-i",
         help="key=value input (repeatable).",
     ),
+    show_steps: bool = typer.Option(
+        True,
+        "--show-steps/--hide-steps",
+        help="Stream intermediate thinking and tool activity live (default: on).",
+    ),
 ) -> None:
     """Start a new flow for the named conduit."""
     inputs = _parse_inputs(inputs_raw)
@@ -34,9 +39,14 @@ def run_cmd(
     conduit = atelier.store.read_conduit(conduit_name)
     missing = [k for k in conduit.inputs if k not in inputs]
     if missing and sys.stdin.isatty():
+        from app.cli.multiline_input import multiline_input_sync
+
         try:
             for key in missing:
-                value = input(f"  {key} ({conduit.inputs[key]}): ")
+                value = multiline_input_sync(
+                    f"  {key} ({conduit.inputs[key]}): ",
+                    hint="Alt+Enter to submit",
+                )
                 inputs[key] = value
         except KeyboardInterrupt:
             print()
@@ -67,6 +77,7 @@ def run_cmd(
                 on_task_event=_on_event,
                 on_flow_started=_on_started,
                 on_task_starting=_on_task_starting,
+                show_steps=show_steps,
             )
         )
     except Exception as e:  # noqa: BLE001
