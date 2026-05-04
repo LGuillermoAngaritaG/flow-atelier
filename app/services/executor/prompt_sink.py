@@ -11,9 +11,12 @@ import asyncio
 import builtins
 import sys
 from dataclasses import dataclass
-from typing import Protocol, TextIO, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TextIO, runtime_checkable
 
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from app.schemas.log import IntermediateStep
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,15 @@ class PromptSink(Protocol):
         Called by interactive harness executors immediately before each
         ``conn.prompt(...)`` so the terminal UI can bracket each turn
         with a divider. Sinks that don't render visually may no-op.
+        """
+        ...
+
+    async def display_step(self, step: IntermediateStep) -> None:
+        """Optional: show an intermediate step (thinking, tool call, tool result).
+
+        Called by harness executors when ``live_stream=True`` to surface
+        agent progress as it happens. Sinks that don't render visually
+        may no-op.
         """
         ...
 
@@ -130,6 +142,18 @@ class TerminalPromptSink:
             answer = await asyncio.to_thread(builtins.input)
             self._console.print(f"[green]›[/green] {answer}")
         return answer
+
+    async def display_step(self, step: IntermediateStep) -> None:
+        from app.schemas.log import StepKind
+
+        if step.kind == StepKind.thinking:
+            text = step.text[:120] + ("..." if len(step.text) > 120 else "")
+            self._console.print(f"[dim]\\[thinking] {text}[/dim]")
+        elif step.kind == StepKind.tool_call:
+            loc = f" {step.locations[0]}" if step.locations else ""
+            self._console.print(f"[dim]\\[tool] {step.tool_name}{loc}[/dim]")
+        elif step.kind == StepKind.tool_result:
+            self._console.print(f"[dim]  -> {step.tool_status}[/dim]")
 
     async def request_permission(
         self, summary: str, options: list[PermissionOption]
