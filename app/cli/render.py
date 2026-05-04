@@ -14,6 +14,34 @@ from app.schemas.progress import FlowStatus, Progress, TaskStatus
 from app.services.scheduler import PlannedJob
 
 
+def _render_step(step: IntermediateStep) -> Text:
+    """Render a single intermediate step as a compact Rich Text line.
+
+    - Thinking: ``  💭 {text[:120]}...`` dim italic
+    - Tool call: ``  🔧 {tool_name}  {location}`` bold dim + dim
+    - Tool result: ``     ✓ status`` or ``     ✗ status`` green/red
+    """
+    t = Text()
+    if step.kind == StepKind.thinking:
+        truncated = step.text[:120] + ("..." if len(step.text) > 120 else "")
+        t.append("  💭 ", style="dim italic")
+        t.append(truncated, style="dim italic")
+    elif step.kind == StepKind.tool_call:
+        loc = f"  {step.locations[0]}" if step.locations else ""
+        t.append("  🔧 ", style="dim")
+        t.append(step.tool_name, style="bold dim")
+        if loc:
+            t.append(loc, style="dim")
+    elif step.kind == StepKind.tool_result:
+        if step.tool_status == "failed":
+            t.append("     ✗ ", style="red")
+            t.append(step.tool_status, style="red")
+        else:
+            t.append("     ✓ ", style="green")
+            t.append(step.tool_status, style="green")
+    return t
+
+
 def _truncate_tail(text: str, max_lines: int = 20) -> tuple[str, int]:
     """Return ``(displayed_text, dropped_line_count)``.
 

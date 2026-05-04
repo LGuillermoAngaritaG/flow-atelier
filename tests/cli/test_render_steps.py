@@ -4,8 +4,9 @@ from __future__ import annotations
 import io
 
 from rich.console import Console
+from rich.text import Text
 
-from app.cli.render import _render_log_entry, _render_task_event
+from app.cli.render import _render_log_entry, _render_step, _render_task_event
 from app.schemas.log import IntermediateStep, LogEntry, StepKind, TaskEvent
 from app.schemas.progress import TaskStatus
 
@@ -14,6 +15,99 @@ def _console() -> tuple[Console, io.StringIO]:
     buf = io.StringIO()
     c = Console(file=buf, no_color=True, width=120)
     return c, buf
+
+
+# ─── Tests for _render_step() shared function ─────────────────────────────
+
+
+class TestRenderStep:
+    def test_returns_rich_text(self) -> None:
+        step = IntermediateStep(kind=StepKind.thinking, text="hello")
+        result = _render_step(step)
+        assert isinstance(result, Text)
+
+    def test_thinking_glyph(self) -> None:
+        step = IntermediateStep(kind=StepKind.thinking, text="some thought")
+        result = _render_step(step)
+        plain = result.plain
+        assert "💭" in plain
+
+    def test_thinking_text_truncated_at_120(self) -> None:
+        long_text = "a" * 200
+        step = IntermediateStep(kind=StepKind.thinking, text=long_text)
+        result = _render_step(step)
+        plain = result.plain
+        # Should contain only 120 chars of text plus "..."
+        assert "a" * 120 in plain
+        assert "..." in plain
+        assert "a" * 121 not in plain
+
+    def test_thinking_short_text_no_ellipsis(self) -> None:
+        step = IntermediateStep(kind=StepKind.thinking, text="short")
+        result = _render_step(step)
+        plain = result.plain
+        assert "..." not in plain
+        assert "short" in plain
+
+    def test_tool_call_glyph(self) -> None:
+        step = IntermediateStep(kind=StepKind.tool_call, tool_name="Read")
+        result = _render_step(step)
+        plain = result.plain
+        assert "🔧" in plain
+
+    def test_tool_call_shows_name(self) -> None:
+        step = IntermediateStep(kind=StepKind.tool_call, tool_name="Read")
+        result = _render_step(step)
+        plain = result.plain
+        assert "Read" in plain
+
+    def test_tool_call_with_location(self) -> None:
+        step = IntermediateStep(
+            kind=StepKind.tool_call,
+            tool_name="Read",
+            locations=["/src/main.py"],
+        )
+        result = _render_step(step)
+        plain = result.plain
+        assert "/src/main.py" in plain
+
+    def test_tool_call_without_location(self) -> None:
+        step = IntermediateStep(kind=StepKind.tool_call, tool_name="Task")
+        result = _render_step(step)
+        plain = result.plain
+        assert "Task" in plain
+
+    def test_tool_result_success_glyph(self) -> None:
+        step = IntermediateStep(kind=StepKind.tool_result, tool_status="completed")
+        result = _render_step(step)
+        plain = result.plain
+        assert "✓" in plain
+        assert "completed" in plain
+
+    def test_tool_result_failure_glyph(self) -> None:
+        step = IntermediateStep(kind=StepKind.tool_result, tool_status="failed")
+        result = _render_step(step)
+        plain = result.plain
+        assert "✗" in plain
+        assert "failed" in plain
+
+    def test_thinking_indented_2_spaces(self) -> None:
+        step = IntermediateStep(kind=StepKind.thinking, text="hi")
+        result = _render_step(step)
+        plain = result.plain
+        assert plain.startswith("  ")
+
+    def test_tool_call_indented_2_spaces(self) -> None:
+        step = IntermediateStep(kind=StepKind.tool_call, tool_name="Read")
+        result = _render_step(step)
+        plain = result.plain
+        assert plain.startswith("  ")
+
+    def test_tool_result_indented_5_spaces(self) -> None:
+        step = IntermediateStep(kind=StepKind.tool_result, tool_status="completed")
+        result = _render_step(step)
+        plain = result.plain
+        assert plain.startswith("     ")
 
 
 class TestRenderTaskEventStepSummary:
