@@ -208,6 +208,7 @@ class Engine:
                     success=result.success,
                     status=TaskStatus.completed if result.success else TaskStatus.failed,
                     live_streamed=t.interactive,
+                    steps=result.steps,
                 )
             )
 
@@ -365,6 +366,7 @@ class Engine:
                                 started_at=started,
                                 finished_at=finished,
                                 duration_seconds=round(duration, 3),
+                                steps=result.steps,
                             ),
                         )
                         emit_event(t, iteration, result, duration)
