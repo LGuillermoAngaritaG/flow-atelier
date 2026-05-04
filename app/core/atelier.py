@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.settings import AtelierSettings
-from app.modules.engine import Engine, FlowStartedCallback, TaskEventCallback
+from app.modules.engine import Engine, FlowStartedCallback, TaskEventCallback, TaskStartingCallback
 from app.schemas.api import (
     CreateConduitInput,
     CreateScheduleInput,
@@ -116,6 +116,8 @@ class Atelier:
         inputs: dict[str, Any],
         on_task_event: TaskEventCallback | None = None,
         on_flow_started: FlowStartedCallback | None = None,
+        on_task_starting: TaskStartingCallback | None = None,
+        show_steps: bool = True,
     ) -> str:
         """Start a new flow for the named conduit.
 
@@ -128,6 +130,12 @@ class Atelier:
         :param on_flow_started: optional callback invoked once with the
             new flow id, before any task runs. Lets the caller record the
             id and surface it on failure as well as on success.
+        :param on_task_starting: optional callback invoked with
+            ``(task_name, tool)`` when a task begins its first iteration.
+        :param show_steps: stream intermediate harness steps (thinking,
+            tool calls, tool results) to the executor's prompt sink as
+            they happen. Defaults to ``True``; the CLI exposes
+            ``--hide-steps`` to opt out.
         :returns: the newly created flow id
         """
         conduit = self.store.read_conduit(name)
@@ -136,6 +144,8 @@ class Atelier:
             inputs,
             on_task_event=on_task_event,
             on_flow_started=on_flow_started,
+            on_task_starting=on_task_starting,
+            show_steps=show_steps,
         )
 
     def get_status(self, flow_id: str) -> Progress:

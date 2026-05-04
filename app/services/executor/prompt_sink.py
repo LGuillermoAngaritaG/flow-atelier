@@ -11,9 +11,12 @@ import asyncio
 import builtins
 import sys
 from dataclasses import dataclass
-from typing import Protocol, TextIO, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TextIO, runtime_checkable
 
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from app.schemas.log import IntermediateStep
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,15 @@ class PromptSink(Protocol):
         Called by interactive harness executors immediately before each
         ``conn.prompt(...)`` so the terminal UI can bracket each turn
         with a divider. Sinks that don't render visually may no-op.
+        """
+        ...
+
+    async def display_step(self, step: IntermediateStep) -> None:
+        """Optional: show an intermediate step (thinking, tool call, tool result).
+
+        Called by harness executors when ``stream_steps=True`` to surface
+        agent progress as it happens. Sinks that don't render visually
+        may no-op.
         """
         ...
 
@@ -125,11 +137,18 @@ class TerminalPromptSink:
         if prompt and prompt.strip():
             self._console.print(f"[dim]{prompt.strip()}[/dim]")
         if sys.stdin.isatty():
-            answer = await asyncio.to_thread(builtins.input, "› ")
+            from app.cli.multiline_input import multiline_input
+
+            answer = await multiline_input("› ", hint="Alt+Enter to submit")
         else:
             answer = await asyncio.to_thread(builtins.input)
             self._console.print(f"[green]›[/green] {answer}")
         return answer
+
+    async def display_step(self, step: IntermediateStep) -> None:
+        from app.cli.render import _render_step
+
+        self._console.print(_render_step(step))
 
     async def request_permission(
         self, summary: str, options: list[PermissionOption]

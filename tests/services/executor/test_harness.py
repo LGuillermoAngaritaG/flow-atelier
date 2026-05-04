@@ -311,8 +311,8 @@ class TestInteractive:
         assert "<<FIN>>" not in result.output
         assert "done" in result.output
 
-    async def test_permission_routed_to_sink(self) -> None:
-        sink = RecordingSink(perm_choice="allow")
+    async def test_permission_auto_approved_without_sink(self) -> None:
+        sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
                 {
@@ -321,8 +321,8 @@ class TestInteractive:
                             "ask_permission": {
                                 "summary": "run rm?",
                                 "options": [
-                                    {"id": "allow", "label": "Allow"},
-                                    {"id": "deny", "label": "Deny"},
+                                    {"id": "allow", "label": "Allow", "kind": "allow_once"},
+                                    {"id": "deny", "label": "Deny", "kind": "reject_once"},
                                 ],
                             },
                             "chunks": [" [ATELIER_DONE]"],
@@ -337,8 +337,134 @@ class TestInteractive:
             _task("x", interactive=True), "x", _ctx()
         )
         assert result.exit_code == 0
-        assert sink.perm_log == ["run rm?"]
+        assert sink.perm_log == []
         assert "[perm:allow]" in result.output
+
+    async def test_permission_prefers_allow_always(self) -> None:
+        sink = RecordingSink()
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {
+                    "turns": [
+                        {
+                            "ask_permission": {
+                                "summary": "run rm?",
+                                "options": [
+                                    {"id": "once", "label": "Once", "kind": "allow_once"},
+                                    {"id": "always", "label": "Always", "kind": "allow_always"},
+                                ],
+                            },
+                            "chunks": [" [ATELIER_DONE]"],
+                            "stop": "end_turn",
+                        }
+                    ]
+                }
+            ),
+            sink=sink,
+        )
+        result = await executor.execute(
+            _task("x", interactive=True), "x", _ctx()
+        )
+        assert result.exit_code == 0
+        assert "[perm:always]" in result.output
+
+    async def test_permission_denies_when_only_reject_options(self) -> None:
+        sink = RecordingSink()
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {
+                    "turns": [
+                        {
+                            "ask_permission": {
+                                "summary": "run rm?",
+                                "options": [
+                                    {"id": "no", "label": "No", "kind": "reject_once"},
+                                ],
+                            },
+                            "chunks": [" [ATELIER_DONE]"],
+                            "stop": "end_turn",
+                        }
+                    ]
+                }
+            ),
+            sink=sink,
+        )
+        result = await executor.execute(
+            _task("x", interactive=True), "x", _ctx()
+        )
+        assert result.exit_code == 0
+        assert sink.perm_log == []
+        # Empty option_id from DeniedOutcome echoes as [perm:].
+        assert "[perm:]" in result.output
+
+    async def test_session_mode_switched_to_bypass(self) -> None:
+        sink = RecordingSink()
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {
+                    "modes": {
+                        "current": "default",
+                        "available": [
+                            {"id": "default", "name": "Default"},
+                            {"id": "bypassPermissions", "name": "Bypass"},
+                        ],
+                    },
+                    "turns": [
+                        {"chunks": ["done [ATELIER_DONE]"], "stop": "end_turn"},
+                    ],
+                }
+            ),
+            sink=sink,
+        )
+        result = await executor.execute(
+            _task("x", interactive=True), "x", _ctx()
+        )
+        assert result.exit_code == 0
+        assert "[mode_set:bypassPermissions]" in result.output
+        assert sink.perm_log == []
+
+    async def test_session_mode_unchanged_when_no_permissive_option(self) -> None:
+        sink = RecordingSink()
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {
+                    "modes": {
+                        "current": "default",
+                        "available": [
+                            {"id": "default", "name": "Default"},
+                            {"id": "plan", "name": "Plan"},
+                        ],
+                    },
+                    "turns": [
+                        {"chunks": ["done [ATELIER_DONE]"], "stop": "end_turn"},
+                    ],
+                }
+            ),
+            sink=sink,
+        )
+        result = await executor.execute(
+            _task("x", interactive=True), "x", _ctx()
+        )
+        assert result.exit_code == 0
+        assert "[mode_set:" not in result.output
+
+    async def test_session_mode_absent_is_no_op(self) -> None:
+        sink = RecordingSink()
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {
+                    "turns": [
+                        {"chunks": ["done [ATELIER_DONE]"], "stop": "end_turn"},
+                    ],
+                }
+            ),
+            sink=sink,
+        )
+        result = await executor.execute(
+            _task("x", interactive=True), "x", _ctx()
+        )
+        assert result.exit_code == 0
+        assert "[mode_set:" not in result.output
 
 
 class TestPreset:

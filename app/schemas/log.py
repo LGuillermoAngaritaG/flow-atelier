@@ -1,11 +1,40 @@
 """Log and execution result schemas."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from app.schemas.progress import TaskStatus
+
+
+class StepKind(str, Enum):
+    thinking = "thinking"
+    tool_call = "tool_call"
+    tool_result = "tool_result"
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class IntermediateStep(BaseModel):
+    """One intermediate step captured during execution."""
+
+    kind: StepKind
+    timestamp: str = Field(default_factory=_now_iso)
+    # thinking
+    text: str = ""
+    # tool_call / tool_result
+    tool_call_id: str = ""
+    tool_name: str = ""
+    tool_kind: str = ""
+    tool_status: str = ""
+    tool_input: str = ""
+    tool_output: str = ""
+    locations: list[str] = Field(default_factory=list)
 
 
 class ExecutionResult(BaseModel):
@@ -23,6 +52,7 @@ class ExecutionResult(BaseModel):
     ``tool:conduit`` tasks when evaluating the per-iteration loop
     predicate.
     """
+    steps: list[IntermediateStep] = Field(default_factory=list)
 
     @property
     def success(self) -> bool:
@@ -45,6 +75,7 @@ class LogEntry(BaseModel):
     finished_at: str
     duration_seconds: float = 0.0
     extra: dict[str, Any] = Field(default_factory=dict)
+    steps: list[IntermediateStep] = Field(default_factory=list)
 
 
 class TaskEvent(BaseModel):
@@ -73,3 +104,4 @@ class TaskEvent(BaseModel):
     status: TaskStatus = TaskStatus.completed
     reason: str = ""
     live_streamed: bool = False
+    steps: list[IntermediateStep] = Field(default_factory=list)

@@ -8,10 +8,45 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from app.cli._shared import _format_duration_seconds, _format_clock, _format_next_fire
-from app.schemas.log import TaskEvent
+from app.cli._shared import _format_clock, _format_clock_short, _format_duration_seconds, _format_next_fire
+from app.schemas.log import IntermediateStep, StepKind, TaskEvent
 from app.schemas.progress import FlowStatus, Progress, TaskStatus
 from app.services.scheduler import PlannedJob
+
+
+def _render_step(step: IntermediateStep) -> Text:
+    """Render a single intermediate step as a compact Rich Text line.
+
+    - Thinking: ``  💭 {text[:120]}...`` dim italic
+    - Tool call: ``  🔧 {tool_name}  {location}`` bold dim + dim
+    - Tool result: ``     ✓ status`` or ``     ✗ status`` green/red
+    """
+    t = Text()
+    if step.kind == StepKind.thinking:
+        truncated = step.text[:120] + ("..." if len(step.text) > 120 else "")
+        t.append("  💭 ", style="dim italic")
+        t.append(truncated, style="dim italic")
+    elif step.kind == StepKind.tool_call:
+        loc = f"  {step.locations[0]}" if step.locations else ""
+        t.append("  🔧 ", style="dim")
+        t.append(step.tool_name, style="bold dim")
+        if loc:
+            t.append(loc, style="dim")
+    elif step.kind == StepKind.tool_result:
+        if step.tool_status == "failed":
+            t.append("     ✗ ", style="red")
+            t.append(step.tool_status, style="red")
+        else:
+            t.append("     ✓ ", style="green")
+            t.append(step.tool_status, style="green")
+    return t
+
+
+def _render_orchestration_msg(text: str) -> Text:
+    """Render an orchestration lifecycle message: ``· {text}`` in dim."""
+    t = Text()
+    t.append(f"· {text}", style="dim")
+    return t
 
 
 def _truncate_tail(text: str, max_lines: int = 20) -> tuple[str, int]:
@@ -69,6 +104,35 @@ def _build_failure_body(stdout: str, stderr: str) -> Text:
     body.append("\n\n")
     body.append("stderr:\n", style="bold red")
     body.append(_truncated_section(stderr))
+    return body
+
+
+def _step_summary_line(steps: list[IntermediateStep]) -> str | None:
+    """Return a dim summary like ``thinking(3) tools(7)`` or None if empty."""
+    if not steps:
+        return None
+    thinking = sum(1 for s in steps if s.kind == StepKind.thinking)
+    tools = sum(1 for s in steps if s.kind in (StepKind.tool_call, StepKind.tool_result))
+    parts = []
+    if thinking:
+        parts.append(f"thinking({thinking})")
+    if tools:
+        parts.append(f"tools({tools})")
+    return " ".join(parts) if parts else None
+
+
+def _render_steps_timeline(steps: list[IntermediateStep]) -> Text:
+    """Render each step as a compact timestamped line with short HH:MM times."""
+    body = Text()
+    for step in steps:
+        if step.kind == StepKind.tool_result:
+            # Tool results indent under the preceding tool call (no timestamp).
+            body.append("       ", style="dim")
+        else:
+            ts = _format_clock_short(step.timestamp)
+            body.append(f"{ts}  ", style="dim")
+        body.append(_render_step(step))
+        body.append("\n")
     return body
 
 
@@ -131,7 +195,11 @@ def _render_task_event(event: TaskEvent, console: Console) -> None:
                 f"[dim]{subtitle}  (streamed live above)[/dim]"
             )
             return
-        body_text = _truncated_section(body_source)
+        summary = _step_summary_line(event.steps)
+        body_text = Text()
+        if summary:
+            body_text.append(f"{summary}\n", style="dim")
+        body_text.append(_truncated_section(body_source))
     else:
         border_style = "red"
         title = Text(f"✗ {title_core}", style="bold red")
@@ -223,8 +291,18 @@ def _render_log_entry(entry, show: str, console: Console) -> None:
         f"{entry.duration_seconds}s"
     )
 
-    if show == "all":
+    if show == "steps":
+        steps = getattr(entry, "steps", [])
+        if steps:
+            body = _render_steps_timeline(steps)
+        else:
+            body = Text("(no steps)")
+    elif show == "all":
         body = Text()
+        steps = getattr(entry, "steps", [])
+        if steps:
+            body.append(_render_steps_timeline(steps))
+            body.append("\n")
         if entry.stdout:
             body.append("stdout:\n", style="dim bold")
             body.append(entry.stdout)
@@ -233,7 +311,7 @@ def _render_log_entry(entry, show: str, console: Console) -> None:
         if entry.stderr:
             body.append("stderr:\n", style="bold red")
             body.append(entry.stderr)
-        if not entry.stdout and not entry.stderr:
+        if not steps and not entry.stdout and not entry.stderr:
             body = Text("(empty)")
     else:
         raw = {

@@ -106,6 +106,16 @@ async def _spawn_run(
     )
 
     async def _on_task_event(event: TaskEvent) -> None:
+        # Emit intermediate steps as individual StepMessage envelopes
+        for step in event.steps:
+            await broker.send(
+                {
+                    "type": "step",
+                    "flow_id": message.flow_id,
+                    "task": event.task,
+                    "step": step.model_dump(mode="json"),
+                }
+            )
         await broker.send(
             {
                 "type": "step_status",

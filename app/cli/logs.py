@@ -12,7 +12,7 @@ from app.cli.render import _render_log_entry
 from app.core.atelier import Atelier
 from app.schemas.progress import FlowStatus
 
-_LOG_SHOW_CHOICES = ("output", "stdout", "stderr", "all")
+_LOG_SHOW_CHOICES = ("output", "stdout", "stderr", "steps", "all")
 
 
 @app.command(
@@ -28,7 +28,7 @@ def logs_cmd(
         "output",
         "--show",
         "-s",
-        help="Which channel to print: output | stdout | stderr | all.",
+        help="Which channel to print: output | stdout | stderr | steps | all.",
     ),
     last: int | None = typer.Option(
         None, "--last", "-n", help="Show only the last N entries."

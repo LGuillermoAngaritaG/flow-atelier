@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import typer
 
 from app.cli._shared import _parse_inputs, console
 from app.cli.main import app
-from app.cli.render import _render_run_footer, _render_task_event
+from app.cli.render import _render_orchestration_msg, _render_run_footer, _render_task_event
 from app.core.atelier import Atelier
 from app.schemas.log import TaskEvent
 
@@ -24,10 +25,32 @@ def run_cmd(
         "-i",
         help="key=value input (repeatable).",
     ),
+    show_steps: bool = typer.Option(
+        True,
+        "--show-steps/--hide-steps",
+        help="Stream intermediate thinking and tool activity live (default: on).",
+    ),
 ) -> None:
     """Start a new flow for the named conduit."""
     inputs = _parse_inputs(inputs_raw)
     atelier = Atelier()
+
+    # Prompt for missing inputs when running interactively.
+    conduit = atelier.store.read_conduit(conduit_name)
+    missing = [k for k in conduit.inputs if k not in inputs]
+    if missing and sys.stdin.isatty():
+        from app.cli.multiline_input import multiline_input_sync
+
+        try:
+            for key in missing:
+                value = multiline_input_sync(
+                    f"  {key} ({conduit.inputs[key]}): ",
+                    hint="Alt+Enter to submit",
+                )
+                inputs[key] = value
+        except KeyboardInterrupt:
+            print()
+            raise typer.Exit(code=130)
 
     collected_events: list[TaskEvent] = []
 
@@ -39,6 +62,12 @@ def run_cmd(
 
     def _on_started(fid: str) -> None:
         captured_flow_id["id"] = fid
+        console.print(_render_orchestration_msg(f'starting flow {fid}'))
+
+    def _on_task_starting(task_name: str, tool: str) -> None:
+        console.print(_render_orchestration_msg(f'running task "{task_name}" [{tool}]'))
+
+    console.print(_render_orchestration_msg(f'loading conduit "{conduit_name}"'))
 
     try:
         flow_id = asyncio.run(
@@ -47,6 +76,8 @@ def run_cmd(
                 inputs,
                 on_task_event=_on_event,
                 on_flow_started=_on_started,
+                on_task_starting=_on_task_starting,
+                show_steps=show_steps,
             )
         )
     except Exception as e:  # noqa: BLE001

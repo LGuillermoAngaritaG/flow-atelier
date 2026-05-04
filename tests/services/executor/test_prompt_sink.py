@@ -13,6 +13,11 @@ from app.services.executor.prompt_sink import (
 )
 
 
+async def _coro(value: str) -> str:
+    """Trivial awaitable returning *value* — stands in for async helpers."""
+    return value
+
+
 class TestTerminalPromptSink:
     async def test_display_writes_to_stream(self) -> None:
         stream = io.StringIO()
@@ -96,9 +101,13 @@ class TestTerminalPromptSink:
         """When the user is actually typing, the terminal already echoes
         keystrokes — we must not write the answer back ourselves."""
         import sys as _sys
+        import app.cli.multiline_input as _ml
+
         stream = io.StringIO()
         sink = TerminalPromptSink(out=stream)
-        monkeypatch.setattr(builtins, "input", lambda _prompt="": "typed live")
+        monkeypatch.setattr(
+            _ml, "multiline_input", lambda *a, **kw: _coro("typed live")
+        )
         monkeypatch.setattr(_sys.stdin, "isatty", lambda: True)
         await sink.request_input("reply?")
         # The TTY branch must NOT print the answer; only the prompt label.

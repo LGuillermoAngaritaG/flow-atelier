@@ -5,6 +5,13 @@ Reads a scripted behavior from ``--script <json>`` on argv.
 Script schema::
 
     {
+        "modes": null | {
+            "current": "default",
+            "available": [
+                {"id": "default", "name": "Default"},
+                {"id": "bypassPermissions", "name": "Bypass"}
+            ]
+        },
         "turns": [
             {
                 "chunks": ["text ", "more text"],
@@ -21,6 +28,10 @@ Script schema::
 
 Each call to ``prompt`` pops the next turn. If turns run out, the agent
 returns ``stop_reason="end_turn"`` with no chunks.
+
+When ``modes`` is set, ``new_session`` advertises them to the client and
+``set_session_mode`` emits a ``[mode_set:<mode_id>]`` chunk so tests can
+assert which mode the harness selected by inspecting the run output.
 """
 from __future__ import annotations
 
@@ -41,14 +52,24 @@ from acp.schema import (
     PermissionOption as AcpPermissionOption,
     PromptCapabilities,
     PromptResponse,
+    SessionMode,
+    SessionModeState,
+    SetSessionModeResponse,
     TextContentBlock,
     ToolCallUpdate,
 )
 
 
 class FakeAgent:
-    def __init__(self, turns: list[dict[str, Any]]) -> None:
+    SESSION_ID = "fake-session-1"
+
+    def __init__(
+        self,
+        turns: list[dict[str, Any]],
+        modes: dict[str, Any] | None = None,
+    ) -> None:
         self._turns = list(turns)
+        self._modes_spec = modes
         self._conn: acp.Client | None = None
 
     def on_connect(self, conn: acp.Client) -> None:
@@ -70,7 +91,17 @@ class FakeAgent:
         )
 
     async def new_session(self, cwd: str, mcp_servers=None, **kwargs) -> NewSessionResponse:
-        return NewSessionResponse(session_id="fake-session-1")
+        modes = None
+        if self._modes_spec:
+            available = [
+                SessionMode(id=m["id"], name=m["name"], description=m.get("description"))
+                for m in self._modes_spec["available"]
+            ]
+            modes = SessionModeState(
+                available_modes=available,
+                current_mode_id=self._modes_spec["current"],
+            )
+        return NewSessionResponse(session_id=self.SESSION_ID, modes=modes)
 
     async def prompt(self, prompt, session_id: str, **kwargs) -> PromptResponse:
         if not self._turns:
@@ -136,8 +167,21 @@ class FakeAgent:
     async def list_sessions(self, *args, **kwargs):
         raise NotImplementedError
 
-    async def set_session_mode(self, *args, **kwargs):
-        return None
+    async def set_session_mode(
+        self, mode_id: str, session_id: str, **kwargs
+    ) -> SetSessionModeResponse:
+        del kwargs
+        if self._conn is not None:
+            await self._conn.session_update(
+                session_id=session_id,
+                update=AgentMessageChunk(
+                    session_update="agent_message_chunk",
+                    content=TextContentBlock(
+                        type="text", text=f"[mode_set:{mode_id}]"
+                    ),
+                ),
+            )
+        return SetSessionModeResponse()
 
     async def set_session_model(self, *args, **kwargs):
         return None
@@ -166,7 +210,7 @@ async def _main() -> None:
     parser.add_argument("--script", required=True)
     args = parser.parse_args()
     script = json.loads(args.script)
-    agent = FakeAgent(turns=script.get("turns", []))
+    agent = FakeAgent(turns=script.get("turns", []), modes=script.get("modes"))
     await acp.run_agent(agent)
 
 

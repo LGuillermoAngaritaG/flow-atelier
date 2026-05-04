@@ -94,6 +94,14 @@ def _format_clock(ts: str | None) -> str:
     return dt.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
+def _format_clock_short(ts: str | None) -> str:
+    """Return short-form ``HH:MM`` timestamp for timeline display."""
+    dt = _parse_iso(ts)
+    if dt is None:
+        return "—"
+    return dt.astimezone().strftime("%H:%M")
+
+
 def _format_next_fire(value: datetime | None) -> str:
     if value is None:
         return "—"

@@ -1,8 +1,6 @@
 """tool:hitl executor — prompts the user for named inputs on stdin."""
 from __future__ import annotations
 
-import asyncio
-import builtins
 import sys
 
 import yaml
@@ -45,9 +43,11 @@ class HitlExecutor(ExecutorBase):
         preamble_text = "\n".join(preamble_lines) + "\n"
         print(preamble_text, file=sys.stdout, flush=True)
 
+        from app.cli.multiline_input import multiline_input
+
         for name, description in task.inputs.items():
             prompt = f"  {name} ({description}): "
-            response = await asyncio.to_thread(builtins.input, prompt)
+            response = await multiline_input(prompt, hint="Alt+Enter to submit")
             # Piped stdin doesn't echo keystrokes nor add a newline; print
             # the consumed value so scripted transcripts read like a real
             # terminal session instead of two prompts smashed together.
