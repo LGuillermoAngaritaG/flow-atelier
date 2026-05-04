@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import typer
 
@@ -28,6 +29,18 @@ def run_cmd(
     """Start a new flow for the named conduit."""
     inputs = _parse_inputs(inputs_raw)
     atelier = Atelier()
+
+    # Prompt for missing inputs when running interactively.
+    conduit = atelier.store.read_conduit(conduit_name)
+    missing = [k for k in conduit.inputs if k not in inputs]
+    if missing and sys.stdin.isatty():
+        try:
+            for key in missing:
+                value = input(f"  {key} ({conduit.inputs[key]}): ")
+                inputs[key] = value
+        except KeyboardInterrupt:
+            print()
+            raise typer.Exit(code=130)
 
     collected_events: list[TaskEvent] = []
 

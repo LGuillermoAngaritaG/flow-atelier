@@ -737,3 +737,165 @@ def test_render_iteration_shown_when_repeat_gt_one():
     )
     out = _capture(event)
     assert "(2/3)" in out
+
+
+# ---------------------------------------------------------------------------
+# Interactive input prompting tests
+# ---------------------------------------------------------------------------
+
+PROMPTED_CONDUIT_YAML = """
+name: prompted
+description: Conduit with declared inputs
+inputs:
+  alpha: First input
+  beta: Second input
+tasks:
+  - step:
+      description: echo inputs
+      task: "echo {{inputs.alpha}} {{inputs.beta}}"
+      tool: tool:bash
+      depends_on: []
+"""
+
+
+@pytest.fixture
+def prompted_workdir(tmp_path, monkeypatch):
+    atelier_dir = tmp_path / ".atelier"
+    (atelier_dir / "conduits" / "prompted").mkdir(parents=True)
+    (atelier_dir / "conduits" / "prompted" / "conduit.yaml").write_text(
+        PROMPTED_CONDUIT_YAML
+    )
+    monkeypatch.chdir(tmp_path)
+    for k in list(os.environ):
+        if k.startswith("ATELIER_") and k != "ATELIER_GLOBAL_ATELIER_DIR":
+            monkeypatch.delenv(k, raising=False)
+    return tmp_path
+
+
+def _patch_tty(monkeypatch, *, isatty: bool = True):
+    """Make ``sys.stdin.isatty()`` inside ``app.cli.run`` return *isatty*.
+
+    The CliRunner replaces ``sys.stdin`` during ``invoke()``, so we need to
+    patch the ``sys`` reference held by the *module* itself.
+    """
+    import app.cli.run as _run_mod
+
+    _real_sys = _run_mod.sys
+
+    class _FakeStdin:
+        def isatty(self):
+            return isatty
+
+    class _FakeSys:
+        stdin = _FakeStdin()
+
+    # Delegate everything else to the real sys module.
+    def __getattr__(name):
+        return getattr(_real_sys, name)
+
+    _FakeSys.__getattr__ = __getattr__
+    monkeypatch.setattr(_run_mod, "sys", _FakeSys())
+
+
+def test_prompt_partial_inputs_only_missing(prompted_workdir, monkeypatch):
+    """Pass alpha via --input; only beta should be prompted."""
+    prompted_keys: list[str] = []
+
+    def fake_input(prompt=""):
+        prompted_keys.append(prompt)
+        return "val_beta"
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    _patch_tty(monkeypatch, isatty=True)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["run", "prompted", "-i", "alpha=val_alpha"])
+    assert result.exit_code == 0, result.output
+    # Only beta was prompted
+    assert len(prompted_keys) == 1
+    assert "beta" in prompted_keys[0]
+    assert "alpha" not in "".join(prompted_keys)
+
+
+def test_prompt_all_inputs_when_none_given(prompted_workdir, monkeypatch):
+    """No --input flags → both alpha and beta prompted, in declaration order."""
+    prompted_keys: list[str] = []
+    answers = iter(["val_alpha", "val_beta"])
+
+    def fake_input(prompt=""):
+        prompted_keys.append(prompt)
+        return next(answers)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    _patch_tty(monkeypatch, isatty=True)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["run", "prompted"])
+    assert result.exit_code == 0, result.output
+    assert len(prompted_keys) == 2
+    # Declaration order: alpha first, then beta
+    assert "alpha" in prompted_keys[0]
+    assert "beta" in prompted_keys[1]
+
+
+def test_no_prompt_when_all_inputs_provided(prompted_workdir, monkeypatch):
+    """All inputs via --input → no prompting at all."""
+    prompted_keys: list[str] = []
+
+    def fake_input(prompt=""):
+        prompted_keys.append(prompt)
+        return "should_not_be_called"
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    _patch_tty(monkeypatch, isatty=True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["run", "prompted", "-i", "alpha=a", "-i", "beta=b"]
+    )
+    assert result.exit_code == 0, result.output
+    assert len(prompted_keys) == 0
+
+
+def test_no_prompt_when_stdin_not_tty(prompted_workdir, monkeypatch):
+    """Non-TTY stdin → prompting skipped, engine raises ValueError."""
+    _patch_tty(monkeypatch, isatty=False)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["run", "prompted"])
+    assert result.exit_code != 0
+    assert "missing required inputs" in result.output
+
+
+def test_ctrl_c_during_prompt_exits_130(prompted_workdir, monkeypatch):
+    """KeyboardInterrupt during prompting → exit code 130, no traceback."""
+
+    def fake_input(prompt=""):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    _patch_tty(monkeypatch, isatty=True)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["run", "prompted"])
+    assert result.exit_code == 130
+    # No Python traceback in output
+    assert "Traceback" not in result.output
+
+
+def test_no_prompt_for_conduit_without_inputs(workdir, monkeypatch):
+    """Conduit with inputs: {} → no prompting."""
+    prompted_keys: list[str] = []
+
+    def fake_input(prompt=""):
+        prompted_keys.append(prompt)
+        return "should_not_be_called"
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    _patch_tty(monkeypatch, isatty=True)
+
+    runner = CliRunner()
+    # 'hello' conduit has no declared inputs
+    result = runner.invoke(app, ["run", "hello", "-i", "name=world"])
+    assert result.exit_code == 0, result.output
+    assert len(prompted_keys) == 0
