@@ -64,7 +64,7 @@ class PromptSink(Protocol):
     async def display_step(self, step: IntermediateStep) -> None:
         """Optional: show an intermediate step (thinking, tool call, tool result).
 
-        Called by harness executors when ``live_stream=True`` to surface
+        Called by harness executors when ``stream_steps=True`` to surface
         agent progress as it happens. Sinks that don't render visually
         may no-op.
         """
@@ -137,7 +137,9 @@ class TerminalPromptSink:
         if prompt and prompt.strip():
             self._console.print(f"[dim]{prompt.strip()}[/dim]")
         if sys.stdin.isatty():
-            answer = await asyncio.to_thread(builtins.input, "› ")
+            from app.cli.multiline_input import multiline_input
+
+            answer = await multiline_input("› ", hint="Alt+Enter to submit")
         else:
             answer = await asyncio.to_thread(builtins.input)
             self._console.print(f"[green]›[/green] {answer}")
