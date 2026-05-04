@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.log import LogEntry
+from app.schemas.log import IntermediateStep, LogEntry
 
 
 class _WsBase(BaseModel):
@@ -76,6 +76,15 @@ class StepStatusMessage(_WsBase):
     status: str
 
 
+class StepMessage(_WsBase):
+    """Server emits an intermediate step from a running task."""
+
+    type: Literal["step"] = "step"
+    flow_id: str
+    task: str
+    step: IntermediateStep
+
+
 class HitlRequestMessage(_WsBase):
     """Server requests human input for a paused HITL gate."""
 
@@ -111,6 +120,7 @@ ServerMessage = Annotated[
     StartedMessage
     | LogMessage
     | StepStatusMessage
+    | StepMessage
     | HitlRequestMessage
     | FlowCompleteMessage
     | FlowFailedMessage

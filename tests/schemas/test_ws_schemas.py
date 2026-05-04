@@ -16,6 +16,7 @@ from app.schemas.ws import (
     RunMessage,
     ServerMessage,
     StartedMessage,
+    StepMessage,
     StepStatusMessage,
 )
 
@@ -129,6 +130,35 @@ def test_server_error_with_flow_id():
     msg = _server({"type": "error", "flow_id": "T-1", "message": "oops"})
     assert isinstance(msg, ErrorMessage)
     assert msg.flow_id == "T-1"
+
+
+def test_server_step_message_validates():
+    msg = _server(
+        {
+            "type": "step",
+            "flow_id": "T-1",
+            "task": "build",
+            "step": {
+                "kind": "thinking",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "text": "analyzing code",
+            },
+        }
+    )
+    assert isinstance(msg, StepMessage)
+    assert msg.flow_id == "T-1"
+    assert msg.task == "build"
+    assert msg.step.kind == "thinking"
+
+
+def test_step_message_dump():
+    from app.schemas.log import IntermediateStep, StepKind
+
+    step = IntermediateStep(kind=StepKind.tool_call, tool_name="Read")
+    msg = StepMessage(flow_id="f1", task="t1", step=step)
+    dumped = msg.model_dump()
+    assert dumped["type"] == "step"
+    assert dumped["step"]["kind"] == "tool_call"
 
 
 def test_run_message_dump_uses_snake_case():
