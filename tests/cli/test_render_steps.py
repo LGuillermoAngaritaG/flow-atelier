@@ -213,9 +213,35 @@ class TestRenderLogEntrySteps:
         c, buf = _console()
         _render_log_entry(entry, "steps", c)
         output = buf.getvalue()
-        assert "thinking" in output
+        # New format uses emoji glyphs
+        assert "💭" in output
         assert "Read" in output
+        assert "✓" in output
         assert "completed" in output
+
+    def test_show_steps_uses_short_timestamps(self) -> None:
+        entry = self._entry_with_steps()
+        c, buf = _console()
+        _render_log_entry(entry, "steps", c)
+        output = buf.getvalue()
+        # Should NOT contain full date format, only HH:MM
+        assert "2026-01-01" not in output
+
+    def test_show_steps_tool_result_indented(self) -> None:
+        """Tool results should be indented under their tool call (no timestamp)."""
+        entry = self._entry_with_steps()
+        c, buf = _console()
+        _render_log_entry(entry, "steps", c)
+        output = buf.getvalue()
+        # Tool result line should NOT have a HH:MM timestamp prefix
+        for line in output.splitlines():
+            if "✓" in line and "completed" in line:
+                # Should not contain a time like "19:00" before the glyph
+                before_check = line.split("✓")[0]
+                # No digit:digit pattern in the indent area
+                import re
+                assert not re.search(r"\d{2}:\d{2}", before_check)
+                break
 
     def test_show_all_includes_steps(self) -> None:
         entry = self._entry_with_steps()
@@ -223,7 +249,7 @@ class TestRenderLogEntrySteps:
         _render_log_entry(entry, "all", c)
         output = buf.getvalue()
         # "all" should include both stdout/stderr AND steps
-        assert "thinking" in output or "done" in output
+        assert "💭" in output or "done" in output
 
     def test_show_output_does_not_include_steps(self) -> None:
         entry = self._entry_with_steps()

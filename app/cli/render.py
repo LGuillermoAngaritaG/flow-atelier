@@ -8,7 +8,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from app.cli._shared import _format_duration_seconds, _format_clock, _format_next_fire
+from app.cli._shared import _format_clock, _format_clock_short, _format_duration_seconds, _format_next_fire
 from app.schemas.log import IntermediateStep, StepKind, TaskEvent
 from app.schemas.progress import FlowStatus, Progress, TaskStatus
 from app.services.scheduler import PlannedJob
@@ -115,22 +115,17 @@ def _step_summary_line(steps: list[IntermediateStep]) -> str | None:
 
 
 def _render_steps_timeline(steps: list[IntermediateStep]) -> Text:
-    """Render each step as a compact timestamped line."""
+    """Render each step as a compact timestamped line with short HH:MM times."""
     body = Text()
     for step in steps:
-        ts = _format_clock(step.timestamp)
-        if step.kind == StepKind.thinking:
-            body.append(f"[{ts}] ", style="dim")
-            body.append("[thinking] ", style="dim bold")
-            body.append(f"{step.text[:120]}\n", style="dim")
-        elif step.kind == StepKind.tool_call:
-            loc = f" {step.locations[0]}" if step.locations else ""
-            body.append(f"[{ts}] ", style="dim")
-            body.append("[tool] ", style="dim bold")
-            body.append(f"{step.tool_name}{loc}\n")
-        elif step.kind == StepKind.tool_result:
-            body.append(f"[{ts}] ", style="dim")
-            body.append(f"  -> {step.tool_status}\n")
+        if step.kind == StepKind.tool_result:
+            # Tool results indent under the preceding tool call (no timestamp).
+            body.append("       ", style="dim")
+        else:
+            ts = _format_clock_short(step.timestamp)
+            body.append(f"{ts}  ", style="dim")
+        body.append(_render_step(step))
+        body.append("\n")
     return body
 
 
