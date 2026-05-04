@@ -113,6 +113,7 @@ class Engine:
         on_task_event: TaskEventCallback | None = None,
         on_flow_started: FlowStartedCallback | None = None,
         on_task_starting: TaskStartingCallback | None = None,
+        show_steps: bool = True,
     ) -> str:
         """Execute a conduit to completion, returning the flow id.
 
@@ -317,7 +318,10 @@ class Engine:
                     inputs=runtime_inputs,
                     task_outputs=outputs,
                     timeout=conduit.timeout,
-                    run_nested_conduit=self._make_nested_runner(on_task_event),
+                    show_steps=show_steps,
+                    run_nested_conduit=self._make_nested_runner(
+                        on_task_event, show_steps=show_steps
+                    ),
                 )
 
                 # Pre-parse the loop predicate once per task. Schema enforces
@@ -510,7 +514,9 @@ class Engine:
     # ------------------------------------------------------------------ helpers
 
     def _make_nested_runner(
-        self, on_task_event: TaskEventCallback | None = None
+        self,
+        on_task_event: TaskEventCallback | None = None,
+        show_steps: bool = True,
     ):
         async def _run_nested(conduit_name: str, child_inputs, parent_flow_id):
             child_conduit = self.store.read_conduit(conduit_name)
@@ -519,6 +525,7 @@ class Engine:
                 child_inputs,
                 parent_flow_id,
                 on_task_event=on_task_event,
+                show_steps=show_steps,
             )
 
         return _run_nested

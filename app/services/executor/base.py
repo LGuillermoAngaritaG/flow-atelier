@@ -22,6 +22,10 @@ class FlowContext:
     inputs: dict[str, Any]
     task_outputs: dict[str, str] = field(default_factory=dict)
     timeout: int = 3600
+    show_steps: bool = True
+    """Stream intermediate steps (thinking, tool calls, tool results) to the
+    executor's :class:`PromptSink` as they happen. Independent of
+    ``task.interactive`` (which gates raw message-chunk streaming)."""
     run_nested_conduit: Callable[[str, dict[str, Any], str], Awaitable[str]] | None = None
     """Callback: (conduit_name, inputs, parent_flow_id) -> child flow_id."""
 

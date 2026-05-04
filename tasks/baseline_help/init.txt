@@ -1,9 +1,0 @@
-                                                                                
- Usage: atelier init [OPTIONS]                                                  
-                                                                                
- Scaffold a local .atelier/ directory with a hello-world conduit.               
-                                                                                
-╭─ Options ────────────────────────────────────────────────────────────────────╮
-│ --help          Show this message and exit.                                  │
-╰──────────────────────────────────────────────────────────────────────────────╯
-

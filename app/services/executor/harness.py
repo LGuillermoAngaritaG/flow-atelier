@@ -19,6 +19,7 @@ when the marker appears or when :attr:`MAX_INTERACTIVE_TURNS` is reached.
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from acp.schema import (
     AllowedOutcome,
     DeniedOutcome,
     RequestPermissionResponse,
+    SessionModeState,
     TextContentBlock,
     ToolCallProgress,
     ToolCallStart,
@@ -38,14 +40,46 @@ from app.schemas.conduit import TaskDefinition
 from app.schemas.log import ExecutionResult, IntermediateStep, StepKind
 from app.services.executor.base import ExecutorBase, FlowContext
 from app.services.executor.prompt_sink import (
-    PermissionOption,
     PromptSink,
     TerminalPromptSink,
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 DEFAULT_DONE_MARKER = "[ATELIER_DONE]"
 MAX_INTERACTIVE_TURNS = 20
+
+# Mode-id keyword tiers in descending permissiveness. Each ACP agent
+# advertises its own mode ids; we pick the most permissive one available so
+# the agent never has to ask for tool permission. Keyword matched against
+# ``id`` case-insensitively.
+PERMISSIVE_MODE_KEYWORDS: tuple[str, ...] = (
+    "bypass",      # claude-code-acp's bypassPermissions
+    "yolo",
+    "danger",      # codex-acp's danger-full-access family
+    "full-auto",
+    "full_auto",
+    "accept",      # claude-code-acp's acceptEdits (weaker, but still skips edit prompts)
+    "auto",
+)
+
+
+def _pick_permissive_mode(state: SessionModeState | None) -> str | None:
+    """Return the most permissive mode id from ``state``, or ``None``.
+
+    Walks :data:`PERMISSIVE_MODE_KEYWORDS` and returns the first
+    available mode whose ``id`` contains a keyword (case-insensitive).
+    """
+    if state is None or not state.available_modes:
+        return None
+    available = state.available_modes
+    for keyword in PERMISSIVE_MODE_KEYWORDS:
+        for mode in available:
+            if keyword in mode.id.lower():
+                return mode.id
+    return None
 
 CLAUDE_ACP_LAUNCH = [
     "npx",
@@ -88,23 +122,30 @@ class _BufferingClient:
     :class:`NotImplementedError`.
 
     :param sink: surface for permission requests and (when enabled) live
-        chunk streaming
-    :param live_stream: when ``True`` (interactive turns), agent message
+        chunk / step streaming
+    :param stream_messages: when ``True`` (interactive turns), agent message
         chunks are mirrored to ``sink.display`` as they arrive so the user
         can follow the agent before deciding their next reply. When
         ``False`` (single-turn / non-interactive), chunks are only buffered
         for the result — the caller renders them once when the turn ends,
         avoiding double-rendering of the same text.
+    :param stream_steps: when ``True``, intermediate steps (thinking, tool
+        calls, tool results) are mirrored to ``sink.display_step`` as they
+        arrive. Independent of ``stream_messages`` so non-interactive runs
+        can surface tool/thinking activity live without dumping the agent's
+        full prose mid-flow.
     """
 
     def __init__(
         self,
         sink: PromptSink,
-        live_stream: bool = False,
+        stream_messages: bool = False,
+        stream_steps: bool = False,
         done_marker: str = DEFAULT_DONE_MARKER,
     ) -> None:
         self._sink = sink
-        self._live_stream = live_stream
+        self._stream_messages = stream_messages
+        self._stream_steps = stream_steps
         self._done_marker = done_marker
         self.buffer: list[str] = []
         self.steps: list[IntermediateStep] = []
@@ -116,13 +157,13 @@ class _BufferingClient:
             text = getattr(content, "text", None)
             if text:
                 self.buffer.append(text)
-                if self._live_stream:
+                if self._stream_messages:
                     await self._sink.display(text.replace(self._done_marker, ""))
         elif isinstance(update, AgentThoughtChunk):
             text = getattr(update.content, "text", "") or ""
             step = IntermediateStep(kind=StepKind.thinking, text=text)
             self.steps.append(step)
-            if self._live_stream and hasattr(self._sink, "display_step"):
+            if self._stream_steps and hasattr(self._sink, "display_step"):
                 await self._sink.display_step(step)
         elif isinstance(update, ToolCallStart):
             step = IntermediateStep(
@@ -135,7 +176,7 @@ class _BufferingClient:
                 locations=[loc.path for loc in (update.locations or [])],
             )
             self.steps.append(step)
-            if self._live_stream and hasattr(self._sink, "display_step"):
+            if self._stream_steps and hasattr(self._sink, "display_step"):
                 await self._sink.display_step(step)
         elif isinstance(update, ToolCallProgress):
             if update.status in ("completed", "failed"):
@@ -146,22 +187,27 @@ class _BufferingClient:
                     tool_output=str(update.raw_output)[:500] if update.raw_output else "",
                 )
                 self.steps.append(step)
-                if self._live_stream and hasattr(self._sink, "display_step"):
+                if self._stream_steps and hasattr(self._sink, "display_step"):
                     await self._sink.display_step(step)
 
     async def request_permission(
         self, options, session_id: str, tool_call, **kwargs
     ) -> RequestPermissionResponse:
-        del session_id, kwargs
+        # Backstop for any agent that still asks despite the permissive
+        # session mode: silently pick the most permissive allow option.
+        # Tool activity is still surfaced to the user via display_step.
+        del session_id, tool_call, kwargs
         if not options:
             return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
-        sink_opts = [
-            PermissionOption(id=o.option_id, label=o.name) for o in options
-        ]
-        summary = getattr(tool_call, "title", None) or "agent requests permission"
-        chosen = await self._sink.request_permission(summary, sink_opts)
+        chosen = (
+            next((o for o in options if (o.kind or "") == "allow_always"), None)
+            or next((o for o in options if (o.kind or "") == "allow_once"), None)
+            or next((o for o in options if (o.kind or "").startswith("allow")), None)
+        )
+        if chosen is None:
+            return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
         return RequestPermissionResponse(
-            outcome=AllowedOutcome(outcome="selected", option_id=chosen)
+            outcome=AllowedOutcome(outcome="selected", option_id=chosen.option_id)
         )
 
     # ---- capabilities we don't advertise: safe stubs ----
@@ -243,7 +289,8 @@ class AcpHarnessExecutor(ExecutorBase):
         cwd = str(Path.cwd())
         client = _BufferingClient(
             self.sink,
-            live_stream=task.interactive,
+            stream_messages=task.interactive,
+            stream_steps=(task.interactive or context.show_steps),
             done_marker=self.done_marker,
         )
 
@@ -292,6 +339,7 @@ class AcpHarnessExecutor(ExecutorBase):
         ):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
             sess = await conn.new_session(cwd=cwd)
+            await self._maybe_switch_to_permissive_mode(conn, sess)
 
             if not interactive:
                 return await self._run_single_turn(
@@ -300,6 +348,29 @@ class AcpHarnessExecutor(ExecutorBase):
             return await self._run_interactive(
                 conn, sess.session_id, initial_prompt, client
             )
+
+    @staticmethod
+    async def _maybe_switch_to_permissive_mode(conn, sess) -> None:
+        """Switch the session into the most permissive mode the agent offers.
+
+        ACP session modes are the upstream "skip permissions" knob (see
+        https://agentclientprotocol.com/protocol/session-modes). Each agent
+        advertises its own mode ids (e.g. claude-code-acp's
+        ``bypassPermissions``, codex-acp's ``danger-full-access``) under
+        ``new_session.modes``. We pick the most permissive one and switch
+        before the first prompt so the agent never has to call
+        ``session/request_permission``. A bad mode switch is non-fatal —
+        the auto-approve backstop in :meth:`_BufferingClient.request_permission`
+        still catches any residual prompts.
+        """
+        modes = getattr(sess, "modes", None)
+        picked = _pick_permissive_mode(modes)
+        if picked is None or picked == modes.current_mode_id:
+            return
+        try:
+            await conn.set_session_mode(mode_id=picked, session_id=sess.session_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("set_session_mode(%s) failed: %s", picked, exc)
 
     async def _run_single_turn(
         self,
