@@ -1,87 +1,135 @@
-"""JSON-backed schedule store (per SPEC §7).
+"""YAML-backed schedule store.
 
-Two files in ``<atelier>/``:
+Layout under ``<atelier>/``:
 
-- ``schedules.json``: array of :class:`ScheduledJob` records. Soft-delete
-  via ``status="deleted"``; the file never shrinks, but :meth:`list` only
-  surfaces active rows.
+- ``schedules/<slug(name)>.yaml``: one file per :class:`ScheduledJob`.
+  Deletes remove the file. The original ``schedule.name`` is preserved
+  inside the YAML; the filename is a filesystem-safe slug of that name.
 - ``scheduler_state.json``: fired-once markers keyed by schedule ``id``.
 
-Atomic writes via ``os.replace``. The store does not migrate legacy
-``.atelier/schedules/*.yaml`` files — those are silently ignored.
+Atomic writes via ``os.replace``.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from app.schemas.api import CreateScheduleInput, ScheduledJob
 
 
+_SLUG_RE = re.compile(r"[^a-z0-9._-]+")
+
+
+def _slug(name: str) -> str:
+    """Reduce ``name`` to a filesystem-safe lowercase slug.
+
+    :param name: human-readable schedule name
+    :raises ValueError: when the slug would be empty
+    """
+    slug = _SLUG_RE.sub("-", name.strip().lower()).strip("-")
+    if not slug:
+        raise ValueError(f"schedule name has no filesystem-safe characters: {name!r}")
+    return slug
+
+
 class ScheduleStore:
-    """JSON-backed CRUD for :class:`ScheduledJob` records.
+    """YAML-backed CRUD for :class:`ScheduledJob` records.
 
     :param atelier_dir: project ``.atelier/`` directory; created if missing
     """
 
     def __init__(self, atelier_dir: Path | str) -> None:
+        """Initialise the store rooted at ``atelier_dir``.
+
+        :param atelier_dir: project ``.atelier/`` directory; created if missing
+        """
         self.atelier_dir = Path(atelier_dir)
         self.atelier_dir.mkdir(parents=True, exist_ok=True)
-        self.schedules_path = self.atelier_dir / "schedules.json"
+        self.schedules_dir = self.atelier_dir / "schedules"
+        self.schedules_dir.mkdir(parents=True, exist_ok=True)
         self.state_path = self.atelier_dir / "scheduler_state.json"
 
     # --------------------------------------------------------------- internals
 
-    def _read_all(self) -> list[ScheduledJob]:
-        if not self.schedules_path.exists():
-            return []
-        try:
-            raw = json.loads(self.schedules_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            return []
-        if not isinstance(raw, dict):
-            return []
-        items = raw.get("schedules", [])
-        if not isinstance(items, list):
-            return []
-        out: list[ScheduledJob] = []
-        for entry in items:
-            try:
-                out.append(ScheduledJob.model_validate(entry))
-            except Exception:  # noqa: BLE001 — skip malformed rows
-                continue
-        return out
+    def _path_for_name(self, name: str) -> Path:
+        """Return the YAML path for ``name``.
 
-    def _write_all(self, jobs: list[ScheduledJob]) -> None:
-        payload = {"schedules": [j.model_dump(mode="json") for j in jobs]}
-        tmp = self.schedules_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, indent=2))
-        os.replace(tmp, self.schedules_path)
+        :param name: schedule name
+        """
+        return self.schedules_dir / f"{_slug(name)}.yaml"
+
+    def _load_file(self, path: Path) -> ScheduledJob | None:
+        """Load and validate one schedule YAML; return None on failure.
+
+        :param path: path to a ``*.yaml`` schedule file
+        """
+        try:
+            raw = yaml.safe_load(path.read_text())
+        except (yaml.YAMLError, OSError):
+            return None
+        if not isinstance(raw, dict):
+            return None
+        try:
+            return ScheduledJob.model_validate(raw)
+        except Exception:  # noqa: BLE001 — skip malformed rows
+            return None
+
+    def _save_job(self, job: ScheduledJob) -> None:
+        """Atomically write ``job`` to its YAML file.
+
+        :param job: schedule to persist
+        """
+        path = self._path_for_name(job.schedule.name)
+        payload = job.model_dump(mode="json", exclude_none=True)
+        tmp = path.with_suffix(".yaml.tmp")
+        tmp.write_text(yaml.safe_dump(payload, sort_keys=False))
+        os.replace(tmp, path)
+
+    def _iter_jobs(self) -> list[ScheduledJob]:
+        """Return every persisted schedule, sorted by ``created_at`` ascending."""
+        if not self.schedules_dir.exists():
+            return []
+        jobs: list[ScheduledJob] = []
+        for path in self.schedules_dir.glob("*.yaml"):
+            job = self._load_file(path)
+            if job is not None:
+                jobs.append(job)
+        jobs.sort(key=lambda j: j.created_at)
+        return jobs
 
     # --------------------------------------------------------------- list / get
 
     def list(self) -> list[ScheduledJob]:
         """Return all schedules with ``status == 'active'``."""
-        return [j for j in self._read_all() if j.status == "active"]
+        return [j for j in self._iter_jobs() if j.status == "active"]
 
     def list_all(self) -> list[ScheduledJob]:
-        """Return every persisted schedule (including soft-deleted)."""
-        return self._read_all()
+        """Return every persisted schedule."""
+        return self._iter_jobs()
 
     def get(self, schedule_id: str) -> ScheduledJob | None:
-        """Return the active schedule matching ``schedule_id`` or ``None``."""
-        for job in self._read_all():
+        """Return the active schedule matching ``schedule_id`` or ``None``.
+
+        :param schedule_id: schedule identifier
+        """
+        for job in self._iter_jobs():
             if job.id == schedule_id and job.status == "active":
                 return job
         return None
 
     def get_by_name(self, name: str) -> ScheduledJob | None:
-        """Find the first active schedule whose ``schedule.name`` matches."""
-        for job in self._read_all():
+        """Find the first active schedule whose ``schedule.name`` matches.
+
+        :param name: schedule name to look up
+        """
+        for job in self._iter_jobs():
             if job.status == "active" and job.schedule.name == name:
                 return job
         return None
@@ -89,7 +137,20 @@ class ScheduleStore:
     # --------------------------------------------------------------- create / delete
 
     def create(self, payload: CreateScheduleInput) -> ScheduledJob:
-        """Persist a new :class:`ScheduledJob` derived from ``payload``."""
+        """Persist a new :class:`ScheduledJob` derived from ``payload``.
+
+        :param payload: validated input describing the new schedule
+        :raises ValueError: if ``payload.schedule.name`` is empty
+        :raises FileExistsError: if a schedule with the same slug already exists
+        """
+        name = payload.schedule.name
+        if not name.strip():
+            raise ValueError("schedule.name must be non-empty")
+        path = self._path_for_name(name)
+        if path.exists():
+            raise FileExistsError(
+                f"schedule already exists for name {name!r} ({path.name})"
+            )
         job = ScheduledJob(
             id=f"SCH-{uuid.uuid4().hex[:12]}",
             conduit_name=payload.conduit_name,
@@ -100,40 +161,41 @@ class ScheduleStore:
             status="active",
             runs_completed=0,
         )
-        all_jobs = self._read_all()
-        all_jobs.append(job)
-        self._write_all(all_jobs)
+        self._save_job(job)
         return job
 
     def delete(self, schedule_id: str) -> ScheduledJob:
-        """Soft-delete the schedule (sets ``status='deleted'``).
+        """Remove the schedule's YAML file and clear its fired marker.
 
+        :param schedule_id: schedule identifier
         :raises KeyError: if no schedule exists for ``schedule_id``
+        :returns: the deleted job with ``status='deleted'`` set in-memory
         """
-        all_jobs = self._read_all()
-        for i, job in enumerate(all_jobs):
+        for job in self._iter_jobs():
             if job.id == schedule_id:
-                updated = job.model_copy(update={"status": "deleted"})
-                all_jobs[i] = updated
-                self._write_all(all_jobs)
+                path = self._path_for_name(job.schedule.name)
+                if path.exists():
+                    path.unlink()
                 self.clear_fired(schedule_id)
-                return updated
+                return job.model_copy(update={"status": "deleted"})
         raise KeyError(f"schedule not found: {schedule_id}")
 
     def increment_runs(self, schedule_id: str) -> None:
-        """Bump ``runs_completed`` for ``schedule_id`` if it still exists."""
-        all_jobs = self._read_all()
-        for i, job in enumerate(all_jobs):
+        """Bump ``runs_completed`` for ``schedule_id`` if it still exists.
+
+        :param schedule_id: schedule identifier
+        """
+        for job in self._iter_jobs():
             if job.id == schedule_id:
-                all_jobs[i] = job.model_copy(
-                    update={"runs_completed": job.runs_completed + 1}
+                self._save_job(
+                    job.model_copy(update={"runs_completed": job.runs_completed + 1})
                 )
-                self._write_all(all_jobs)
                 return
 
     # --------------------------------------------------------------- fired state
 
     def _read_state(self) -> dict[str, Any]:
+        """Load the ``scheduler_state.json`` payload, returning a safe default."""
         if not self.state_path.exists():
             return {"schedules": {}}
         try:
@@ -145,12 +207,19 @@ class ScheduleStore:
         return data
 
     def _write_state(self, data: dict[str, Any]) -> None:
+        """Atomically replace ``scheduler_state.json`` with ``data``.
+
+        :param data: full state payload to persist
+        """
         tmp = self.state_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
         os.replace(tmp, self.state_path)
 
     def fired_at(self, schedule_id: str) -> str | None:
-        """Return the ISO timestamp recorded for the last fire, or ``None``."""
+        """Return the ISO timestamp recorded for the last fire, or ``None``.
+
+        :param schedule_id: schedule identifier
+        """
         data = self._read_state()
         entry = data["schedules"].get(schedule_id)
         if not isinstance(entry, dict):
@@ -175,6 +244,10 @@ class ScheduleStore:
         self._write_state(data)
 
     def clear_fired(self, schedule_id: str) -> None:
+        """Drop the fired-once marker for ``schedule_id`` if present.
+
+        :param schedule_id: schedule identifier
+        """
         data = self._read_state()
         if schedule_id in data["schedules"]:
             del data["schedules"][schedule_id]

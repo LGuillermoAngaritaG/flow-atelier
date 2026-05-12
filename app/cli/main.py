@@ -18,7 +18,7 @@ list_app = typer.Typer(
 app.add_typer(list_app, name="list")
 
 schedule_app = typer.Typer(
-    help="Manage scheduled conduit runs (.atelier/schedules.json).",
+    help="Manage scheduled conduit runs (.atelier/schedules/).",
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
