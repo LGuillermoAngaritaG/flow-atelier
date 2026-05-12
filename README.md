@@ -34,21 +34,14 @@ marker appears in the agent's output.
 
 ## Install
 
-Requires Python 3.13+ and [uv](https://docs.astral.sh/uv/).
+### From PyPI
 
-Install `atelier` globally on your PATH so it runs from any directory
-(similar to how `claude` and `codex` run anywhere):
-
-```bash
-git clone <this-repo> flow-atelier
-cd flow-atelier
-uv tool install .
-```
-
-You can also install directly from a remote:
+Requires Python 3.13+. Install with [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/):
 
 ```bash
-uv tool install git+<repo-url>
+uv tool install flow-atelier
+# or
+pipx install flow-atelier
 ```
 
 To upgrade or uninstall later:
@@ -56,6 +49,36 @@ To upgrade or uninstall later:
 ```bash
 uv tool upgrade flow-atelier
 uv tool uninstall flow-atelier
+```
+
+### Standalone binary (no Python required)
+
+Download the appropriate file from the
+[latest release](https://github.com/LGuillermoAngaritaG/flow-atelier/releases/latest):
+
+- `atelier-linux-x86_64`
+- `atelier-macos-arm64`
+- `atelier-windows-x86_64.exe`
+
+Make it executable (Linux/macOS) and put it on your `PATH`:
+
+```bash
+chmod +x atelier-linux-x86_64
+sudo mv atelier-linux-x86_64 /usr/local/bin/atelier
+```
+
+### From source
+
+```bash
+git clone <this-repo> flow-atelier
+cd flow-atelier
+uv tool install .
+```
+
+Or directly from a remote:
+
+```bash
+uv tool install git+<repo-url>
 ```
 
 For local development inside the repo, a plain `uv sync` + `uv run atelier`
