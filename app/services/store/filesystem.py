@@ -19,14 +19,14 @@ import asyncio
 import json
 import os
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from app.schemas.conduit import Conduit
-from app.schemas.flow import new_flow_id
+from app.schemas.flow import new_flow_id, parse_flow_id
 from app.schemas.log import LogEntry
 from app.schemas.progress import Progress
 from app.services.store.base import ConduitSource, StoreBase
@@ -208,7 +208,7 @@ class FilesystemStore(StoreBase):
                     "status": "running",
                     "current_tasks": [],
                     "tasks": {},
-                    "started_at": datetime.now(timezone.utc)
+                    "started_at": datetime.now(UTC)
                     .isoformat()
                     .replace("+00:00", "Z"),
                     "finished_at": None,
@@ -219,18 +219,27 @@ class FilesystemStore(StoreBase):
         return flow_id
 
     def list_flows(self, conduit_name: str | None = None) -> list[str]:
-        """List top-level flow ids, optionally filtered by conduit prefix.
+        """List top-level flow ids, optionally filtered by conduit name.
 
-        :param conduit_name: when set, only flows starting with ``<name>_`` are returned
+        :param conduit_name: when set, only flows whose parsed conduit equals
+            ``conduit_name`` are returned.
         """
         root = self.base_dir / "flows"
         if not root.exists():
             return []
         ids: list[str] = []
         for p in root.iterdir():
-            if p.is_dir():
-                if conduit_name is None or p.name.startswith(conduit_name + "_"):
-                    ids.append(p.name)
+            if not p.is_dir():
+                continue
+            if conduit_name is None:
+                ids.append(p.name)
+                continue
+            try:
+                flow_conduit, _, _ = parse_flow_id(p.name)
+            except ValueError:
+                continue
+            if flow_conduit == conduit_name:
+                ids.append(p.name)
         return sorted(ids)
 
     # ------------------------------------------------------------------ logs

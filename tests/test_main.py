@@ -1,6 +1,7 @@
 """CLI smoke tests via Typer's CliRunner."""
 import io
 import os
+from datetime import UTC, datetime
 
 import pytest
 from rich.console import Console
@@ -131,7 +132,7 @@ def test_list_flows(workdir):
     runner.invoke(app, ["run", "hello", "--input", "name=a"])
     result = runner.invoke(app, ["list", "flows"])
     assert result.exit_code == 0
-    assert "hello_" in result.output
+    assert "_hello" in result.output
     # New table-based output includes per-flow status and conduit columns.
     assert "status" in result.output
     assert "completed" in result.output
@@ -315,10 +316,11 @@ def test_status_ambiguous_prefix(workdir):
     """
     _write_multi(workdir)
     runner = CliRunner()
-    # Two flows from the same conduit → "multi_" is ambiguous.
+    # Two flows on the same UTC date → the date prefix is ambiguous.
     _run_and_id(runner, "multi")
     _run_and_id(runner, "multi")
-    result = runner.invoke(app, ["status", "multi_"])
+    today = datetime.now(UTC).strftime("%Y%m%d")
+    result = runner.invoke(app, ["status", today])
     assert result.exit_code != 0
     assert "ambiguous" in result.output.lower()
 
@@ -660,8 +662,8 @@ def test_run_failure_prints_flow_id_and_status_hint(tmp_path, monkeypatch):
     assert "flow_id" in result.output
     # Hint should point the user at how to investigate.
     assert "atelier status" in result.output
-    # The id should match the failing_<...> shape.
-    assert "failing_" in result.output
+    # The id should match the <date>_<uid>_failing shape.
+    assert "_failing" in result.output
 
 
 # ---------------------------------------------------------------- renderer
