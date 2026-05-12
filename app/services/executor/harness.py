@@ -50,6 +50,12 @@ logger = logging.getLogger(__name__)
 DEFAULT_DONE_MARKER = "[ATELIER_DONE]"
 MAX_INTERACTIVE_TURNS = 20
 
+# Group consecutive AgentThoughtChunk updates into one IntermediateStep
+# until the merged text reaches this many characters or hits a newline.
+# Some agents (notably opencode) emit one thought chunk per token; without
+# grouping the UI shows one rendered line per word.
+THINKING_FLUSH_CHARS = 200
+
 # Mode-id keyword tiers in descending permissiveness. Each ACP agent
 # advertises its own mode ids; we pick the most permissive one available so
 # the agent never has to ask for tool permission. Keyword matched against
@@ -163,6 +169,33 @@ class _BufferingClient:
         self._done_marker = done_marker
         self.buffer: list[str] = []
         self.steps: list[IntermediateStep] = []
+        self._pending_thinking: list[str] = []
+        self._pending_thinking_len: int = 0
+
+    async def _flush_thinking(self) -> None:
+        """Emit any buffered thought chunks as one merged ``thinking`` step.
+
+        No-op when the buffer is empty or contains only whitespace.
+        """
+        if not self._pending_thinking:
+            return
+        text = "".join(self._pending_thinking).strip()
+        self._pending_thinking.clear()
+        self._pending_thinking_len = 0
+        if not text:
+            return
+        step = IntermediateStep(kind=StepKind.thinking, text=text)
+        self.steps.append(step)
+        if self._stream_steps and hasattr(self._sink, "display_step"):
+            await self._sink.display_step(step)
+
+    async def flush_pending(self) -> None:
+        """Flush any partial thought-chunk buffer at a turn boundary.
+
+        Called by the driver after each ``conn.prompt`` round so the last
+        group of thinking does not get stuck pending until the next update.
+        """
+        await self._flush_thinking()
 
     async def session_update(self, session_id: str, update, **kwargs) -> None:
         """Handle a session update notification from the ACP agent.
@@ -173,6 +206,7 @@ class _BufferingClient:
         """
         del session_id, kwargs
         if isinstance(update, AgentMessageChunk):
+            await self._flush_thinking()
             content = update.content
             text = getattr(content, "text", None)
             if text:
@@ -181,11 +215,14 @@ class _BufferingClient:
                     await self._sink.display(text.replace(self._done_marker, ""))
         elif isinstance(update, AgentThoughtChunk):
             text = getattr(update.content, "text", "") or ""
-            step = IntermediateStep(kind=StepKind.thinking, text=text)
-            self.steps.append(step)
-            if self._stream_steps and hasattr(self._sink, "display_step"):
-                await self._sink.display_step(step)
+            if not text:
+                return
+            self._pending_thinking.append(text)
+            self._pending_thinking_len += len(text)
+            if self._pending_thinking_len >= THINKING_FLUSH_CHARS or "\n" in text:
+                await self._flush_thinking()
         elif isinstance(update, ToolCallStart):
+            await self._flush_thinking()
             step = IntermediateStep(
                 kind=StepKind.tool_call,
                 tool_call_id=update.tool_call_id,
@@ -200,6 +237,7 @@ class _BufferingClient:
                 await self._sink.display_step(step)
         elif isinstance(update, ToolCallProgress):
             if update.status in ("completed", "failed"):
+                await self._flush_thinking()
                 step = IntermediateStep(
                     kind=StepKind.tool_result,
                     tool_call_id=update.tool_call_id,
@@ -394,6 +432,7 @@ class AcpHarnessExecutor(ExecutorBase):
                 timeout=context.timeout,
             )
         except TimeoutError:
+            await client.flush_pending()
             return ExecutionResult(
                 exit_code=124,
                 stdout="".join(client.buffer),
@@ -402,6 +441,7 @@ class AcpHarnessExecutor(ExecutorBase):
                 steps=client.steps,
             )
         except Exception as exc:  # noqa: BLE001
+            await client.flush_pending()
             return ExecutionResult(
                 exit_code=1,
                 stdout="".join(client.buffer),
@@ -498,6 +538,7 @@ class AcpHarnessExecutor(ExecutorBase):
             session_id=session_id,
         )
         await self._drain_pending_notifications(client)
+        await client.flush_pending()
         return self._result_for_turn(client, resp.stop_reason)
 
     @staticmethod
@@ -560,6 +601,7 @@ class AcpHarnessExecutor(ExecutorBase):
                 session_id=session_id,
             )
             await self._drain_pending_notifications(client)
+            await client.flush_pending()
             last_stop = resp.stop_reason
             buffer_text = "".join(client.buffer)
             if self.done_marker in buffer_text:

@@ -35,13 +35,14 @@ class RecordingSink:
 
         :param label: turn label (ignored).
         """
-        pass
+        del label
 
     async def request_input(self, prompt: str) -> str:
         """Refuse input by raising EOFError.
 
         :param prompt: prompt text (ignored).
         """
+        del prompt
         raise EOFError
 
     async def request_permission(
@@ -52,6 +53,7 @@ class RecordingSink:
         :param summary: permission request summary (ignored).
         :param options: available permission options.
         """
+        del summary
         return options[0].id
 
     async def display_step(self, step: IntermediateStep) -> None:
@@ -64,7 +66,8 @@ class RecordingSink:
 
 class TestBufferingClientSteps:
     async def test_thinking_chunk_captured(self) -> None:
-        """Verify agent thought chunks become thinking steps."""
+        """Verify a single thought chunk yields one merged thinking step
+        once the driver flushes at the turn boundary."""
         sink = RecordingSink()
         client = _BufferingClient(sink, stream_steps=False)
         update = AgentThoughtChunk(
@@ -72,9 +75,113 @@ class TestBufferingClientSteps:
             content=TextContentBlock(type="text", text="Let me think about this"),
         )
         await client.session_update("s1", update)
+        # Short chunks sit pending until flush — emulate end-of-turn.
+        await client.flush_pending()
         assert len(client.steps) == 1
         assert client.steps[0].kind == StepKind.thinking
         assert client.steps[0].text == "Let me think about this"
+
+    async def test_thinking_chunks_grouped_until_flush(self) -> None:
+        """Word-per-chunk streams (e.g. opencode) coalesce into one step
+        per turn boundary instead of one step per token."""
+        sink = RecordingSink()
+        client = _BufferingClient(sink, stream_steps=True)
+        tokens = ["Let", " me", " think", " about", " this", "."]
+        for tok in tokens:
+            await client.session_update(
+                "s1",
+                AgentThoughtChunk(
+                    sessionUpdate="agent_thought_chunk",
+                    content=TextContentBlock(type="text", text=tok),
+                ),
+            )
+        # Below the length threshold and no newlines — nothing emitted yet.
+        assert client.steps == []
+        assert sink.step_log == []
+        await client.flush_pending()
+        assert len(client.steps) == 1
+        assert client.steps[0].text == "Let me think about this."
+        assert len(sink.step_log) == 1
+
+    async def test_thinking_flushes_on_length(self) -> None:
+        """Once the buffered thought text reaches the threshold the client
+        emits a step without waiting for a turn boundary; remaining text
+        continues to accumulate in a fresh group."""
+        sink = RecordingSink()
+        client = _BufferingClient(sink, stream_steps=False)
+        chunk = "x" * 50
+        for _ in range(5):  # 250 chars total > 200 threshold
+            await client.session_update(
+                "s1",
+                AgentThoughtChunk(
+                    sessionUpdate="agent_thought_chunk",
+                    content=TextContentBlock(type="text", text=chunk),
+                ),
+            )
+        # First flush fires when the buffer reaches 200; the trailing 50
+        # chars stay pending until the next flush.
+        assert len(client.steps) == 1
+        assert client.steps[0].text == "x" * 200
+        await client.flush_pending()
+        assert len(client.steps) == 2
+        assert client.steps[1].text == "x" * 50
+
+    async def test_thinking_flushes_on_newline(self) -> None:
+        """A chunk containing a newline closes the current thought group."""
+        sink = RecordingSink()
+        client = _BufferingClient(sink, stream_steps=False)
+        await client.session_update(
+            "s1",
+            AgentThoughtChunk(
+                sessionUpdate="agent_thought_chunk",
+                content=TextContentBlock(type="text", text="first thought"),
+            ),
+        )
+        await client.session_update(
+            "s1",
+            AgentThoughtChunk(
+                sessionUpdate="agent_thought_chunk",
+                content=TextContentBlock(type="text", text="\n"),
+            ),
+        )
+        await client.session_update(
+            "s1",
+            AgentThoughtChunk(
+                sessionUpdate="agent_thought_chunk",
+                content=TextContentBlock(type="text", text="second thought"),
+            ),
+        )
+        await client.flush_pending()
+        assert [s.text for s in client.steps] == [
+            "first thought",
+            "second thought",
+        ]
+
+    async def test_message_chunk_flushes_pending_thinking(self) -> None:
+        """When prose arrives, any partial thought group is emitted first
+        so the recorded order matches what the agent actually said."""
+        sink = RecordingSink()
+        client = _BufferingClient(
+            sink, stream_messages=False, stream_steps=False
+        )
+        await client.session_update(
+            "s1",
+            AgentThoughtChunk(
+                sessionUpdate="agent_thought_chunk",
+                content=TextContentBlock(type="text", text="brief plan"),
+            ),
+        )
+        await client.session_update(
+            "s1",
+            AgentMessageChunk(
+                sessionUpdate="agent_message_chunk",
+                content=TextContentBlock(type="text", text="answer"),
+            ),
+        )
+        assert len(client.steps) == 1
+        assert client.steps[0].kind == StepKind.thinking
+        assert client.steps[0].text == "brief plan"
+        assert "".join(client.buffer) == "answer"
 
     async def test_tool_call_start_captured(self) -> None:
         """Verify ToolCallStart updates become tool_call steps with metadata."""
@@ -150,6 +257,7 @@ class TestBufferingClientSteps:
             content=TextContentBlock(type="text", text="thinking"),
         )
         await client.session_update("s1", update)
+        await client.flush_pending()
         assert len(sink.step_log) == 1
         assert sink.step_log[0].kind == StepKind.thinking
 
@@ -162,6 +270,7 @@ class TestBufferingClientSteps:
             content=TextContentBlock(type="text", text="thinking"),
         )
         await client.session_update("s1", update)
+        await client.flush_pending()
         # Steps captured, but not sent to sink
         assert len(client.steps) == 1
         assert len(sink.step_log) == 0
