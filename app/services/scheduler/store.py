@@ -16,13 +16,13 @@ import os
 import re
 import time
 import uuid
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from app.schemas.api import CreateScheduleInput, ScheduledJob
-
 
 _SLUG_RE = re.compile(r"[^a-z0-9._-]+")
 
@@ -234,10 +234,10 @@ class ScheduleStore:
         :param scheduled_at_iso: optional ISO timestamp; defaults to now
         """
         if scheduled_at_iso is None:
-            from datetime import datetime, timezone
+            from datetime import datetime
 
             scheduled_at_iso = (
-                datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                datetime.now(UTC).isoformat().replace("+00:00", "Z")
             )
         data = self._read_state()
         data["schedules"][schedule_id] = {"fired_at_iso": scheduled_at_iso}

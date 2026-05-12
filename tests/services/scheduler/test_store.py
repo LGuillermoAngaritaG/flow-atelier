@@ -7,7 +7,6 @@ import yaml
 from app.schemas.api import CreateScheduleInput
 from app.services.scheduler.store import ScheduleStore
 
-
 # ----------------------------------------------------------- fixtures / helpers
 
 

@@ -22,7 +22,6 @@ from app.services.api.base import get_atelier
 from app.services.api.ws_hitl import WsHitlExecutor
 from app.services.api.ws_manager import WebSocketBroker
 
-
 logger = logging.getLogger(__name__)
 router = APIRouter()
 _client_message_adapter = TypeAdapter(ClientMessage)

@@ -1,7 +1,6 @@
 """/ws/run-conduit end-to-end tests."""
 from __future__ import annotations
 
-import asyncio
 import json
 
 import pytest
@@ -9,7 +8,6 @@ from starlette.testclient import TestClient
 
 from app.core.atelier import Atelier
 from app.services.api.app import FastApiServer
-
 
 HELLO_YAML = """name: hello
 description: Say hello

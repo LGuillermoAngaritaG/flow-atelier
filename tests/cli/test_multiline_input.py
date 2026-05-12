@@ -4,8 +4,6 @@ from __future__ import annotations
 import builtins
 import sys
 
-import pytest
-
 
 class TestMultilineInputNonTTY:
     """Non-TTY fallback delegates to builtins.input()."""

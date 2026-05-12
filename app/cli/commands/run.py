@@ -8,7 +8,11 @@ import typer
 
 from app.cli._shared import _parse_inputs, console
 from app.cli.main import app
-from app.cli.rendering.render import _render_orchestration_msg, _render_run_footer, _render_task_event
+from app.cli.rendering.render import (
+    _render_orchestration_msg,
+    _render_run_footer,
+    _render_task_event,
+)
 from app.core.atelier import Atelier
 from app.schemas.log import TaskEvent
 

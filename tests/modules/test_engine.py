@@ -6,10 +6,10 @@ import pytest
 import yaml
 
 from app.modules.engine import ConduitValidationError, Engine
-from app.schemas.conduit import Conduit, TaskDefinition, ToolType
+from app.schemas.conduit import Conduit
 from app.schemas.log import ExecutionResult
 from app.schemas.progress import FlowStatus, TaskStatus
-from app.services.executor.base import ExecutorBase, FlowContext
+from app.services.executor.base import ExecutorBase
 from app.services.store.filesystem import FilesystemStore
 
 
@@ -222,7 +222,7 @@ async def test_fail_fast_cancels_siblings(store):
     engine = Engine({"tool:bash": fake}, store)
     with pytest.raises(RuntimeError):
         await engine.run(conduit, {})
-    p = store.read_progress(fake_flow := store.list_flows()[0])
+    p = store.read_progress(store.list_flows()[0])
     assert p.status == FlowStatus.failed
     assert p.tasks["fail"].status == TaskStatus.failed
     assert p.tasks["slow"].status in (TaskStatus.cancelled, TaskStatus.failed)

@@ -6,8 +6,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from app.schemas.conduit import TaskDefinition, ToolType
 from app.services.executor.base import FlowContext
 from app.services.executor.harness import (
@@ -21,7 +19,6 @@ from app.services.executor.harness import (
     build_interactive_suffix,
 )
 from app.services.executor.prompt_sink import PermissionOption
-
 
 FAKE_AGENT = Path(__file__).resolve().parents[2] / "fixtures" / "fake_acp_agent.py"
 

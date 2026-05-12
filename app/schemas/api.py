@@ -129,7 +129,7 @@ class ScheduleConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _check_mode_fields(self) -> "ScheduleConfig":
+    def _check_mode_fields(self) -> ScheduleConfig:
         """Ensure required fields are present for the selected ``mode``.
 
         :returns: the validated ``ScheduleConfig`` instance.

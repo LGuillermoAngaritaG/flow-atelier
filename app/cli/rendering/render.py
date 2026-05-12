@@ -8,7 +8,12 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from app.cli._shared import _format_clock, _format_clock_short, _format_duration_seconds, _format_next_fire
+from app.cli._shared import (
+    _format_clock,
+    _format_clock_short,
+    _format_duration_seconds,
+    _format_next_fire,
+)
 from app.schemas.log import IntermediateStep, StepKind, TaskEvent
 from app.schemas.progress import FlowStatus, Progress, TaskStatus
 from app.services.scheduler import PlannedJob
@@ -324,10 +329,7 @@ def _render_log_entry(entry, show: str, console: Console) -> None:
 
     if show == "steps":
         steps = getattr(entry, "steps", [])
-        if steps:
-            body = _render_steps_timeline(steps)
-        else:
-            body = Text("(no steps)")
+        body = _render_steps_timeline(steps) if steps else Text("(no steps)")
     elif show == "all":
         body = Text()
         steps = getattr(entry, "steps", [])

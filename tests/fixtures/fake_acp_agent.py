@@ -49,7 +49,6 @@ from acp.schema import (
     Implementation,
     InitializeResponse,
     NewSessionResponse,
-    PermissionOption as AcpPermissionOption,
     PromptCapabilities,
     PromptResponse,
     SessionMode,
@@ -57,6 +56,9 @@ from acp.schema import (
     SetSessionModeResponse,
     TextContentBlock,
     ToolCallUpdate,
+)
+from acp.schema import (
+    PermissionOption as AcpPermissionOption,
 )
 
 

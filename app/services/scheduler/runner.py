@@ -5,10 +5,10 @@ import asyncio
 import logging
 import signal
 import sys
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -17,7 +17,6 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.schemas.api import ScheduledJob
 from app.services.scheduler.store import ScheduleStore
 from app.services.scheduler.triggers import default_local_zone, to_trigger
-
 
 logger = logging.getLogger(__name__)
 
@@ -167,14 +166,13 @@ class SchedulerDaemon:
             logger.info("removed schedule %s (not active)", stale)
 
         for sid, job in active.items():
-            if job.schedule.mode == "once":
+            if job.schedule.mode == "once" and self.store.fired_at(sid):
                 # Skip already-fired one-shots (regardless of whether the
                 # daemon was previously running).
-                if self.store.fired_at(sid):
-                    if sid in live_ids:
-                        self._scheduler.remove_job(sid)
-                    self._planned.pop(sid, None)
-                    continue
+                if sid in live_ids:
+                    self._scheduler.remove_job(sid)
+                self._planned.pop(sid, None)
+                continue
             self._register(job)
 
     def _register(self, job: ScheduledJob) -> None:

@@ -11,7 +11,6 @@ from apscheduler.triggers.date import DateTrigger
 
 from app.schemas.api import ScheduledJob
 
-
 # ISO 8601 day-of-week (1=Mon..7=Sun) → APScheduler cron day_of_week names.
 _ISO_DAY_TO_CRON = {
     1: "mon",

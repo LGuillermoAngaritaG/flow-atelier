@@ -54,7 +54,7 @@ class TaskDefinition(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _validate_loop_predicates(self) -> "TaskDefinition":
+    def _validate_loop_predicates(self) -> TaskDefinition:
         """Validate ``until``/``while`` mutual exclusion and predicate syntax.
 
         :returns: the validated ``TaskDefinition`` instance.
@@ -118,7 +118,7 @@ class Conduit(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def _validate_unique_task_names(self) -> "Conduit":
+    def _validate_unique_task_names(self) -> Conduit:
         """Ensure no two tasks in the conduit share the same ``name``.
 
         :returns: the validated ``Conduit`` instance.

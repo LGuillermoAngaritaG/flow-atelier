@@ -8,7 +8,6 @@ from app.schemas.log import LogEntry
 from app.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
 from app.services.store.filesystem import FilesystemStore
 
-
 CONDUIT_YAML = """
 name: hello
 description: Say hello
