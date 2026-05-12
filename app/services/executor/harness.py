@@ -89,7 +89,7 @@ CLAUDE_ACP_LAUNCH = [
 CODEX_ACP_LAUNCH = [
     "npx",
     "-y",
-    "@zed-industries/codex-acp@0.11.1",
+    "@zed-industries/codex-acp@0.14.0",
 ]
 OPENCODE_ACP_LAUNCH = ["opencode", "acp"]
 COPILOT_ACP_LAUNCH = ["copilot", "--acp"]
