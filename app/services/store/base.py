@@ -64,14 +64,48 @@ class StoreBase(ABC):
 
     # --- progress ---
     @abstractmethod
-    def write_progress(self, flow_id: str, progress: Progress) -> None: ...
+    def write_progress(self, flow_id: str, progress: Progress) -> None:
+        """Persist the progress snapshot for ``flow_id``.
+
+        :param flow_id: flow identifier
+        :param progress: progress snapshot to persist
+        """
+        ...
 
     @abstractmethod
-    def read_progress(self, flow_id: str) -> Progress: ...
+    def read_progress(self, flow_id: str) -> Progress:
+        """Return the ``Progress`` snapshot for ``flow_id``.
+
+        :param flow_id: flow identifier
+        """
+        ...
+
+    # --- outputs.yaml ---
+    @abstractmethod
+    def write_outputs(self, flow_id: str, outputs: dict[str, Any]) -> None:
+        """Persist the per-task output map for ``flow_id``.
+
+        :param flow_id: flow identifier
+        :param outputs: mapping of task name to final output (``None`` for tasks
+            that did not complete)
+        """
+        ...
 
     # --- input.yaml ---
     @abstractmethod
-    def read_input(self, flow_id: str) -> dict[str, Any]: ...
+    def read_input(self, flow_id: str) -> dict[str, Any]:
+        """Return the input map persisted for ``flow_id``.
+
+        :param flow_id: flow identifier
+        """
+        ...
 
     @abstractmethod
-    def append_input(self, flow_id: str, key: str, value: Any) -> None: ...
+    def append_input(self, flow_id: str, key: str, value: Any) -> None:
+        """Set ``key=value`` in the flow's input map.
+
+        :param flow_id: flow identifier
+        :param key: input key to add or overwrite
+        :param value: value to store under ``key``
+        """
+        ...

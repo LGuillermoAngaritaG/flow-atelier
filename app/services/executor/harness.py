@@ -429,6 +429,7 @@ class AcpHarnessExecutor(ExecutorBase):
         for _ in range(MAX_INTERACTIVE_TURNS):
             if start_turn is not None:
                 await start_turn()
+            prev_buffer_len = len(client.buffer)
             resp = await conn.prompt(
                 prompt=[TextContentBlock(type="text", text=next_prompt)],
                 session_id=session_id,
@@ -440,11 +441,17 @@ class AcpHarnessExecutor(ExecutorBase):
                 # Strip the protocol sentinel from anything we hand back to
                 # the user — it's an internal coordination marker, not content.
                 cleaned = buffer_text.replace(self.done_marker, "").rstrip()
+                last_turn = (
+                    "".join(client.buffer[prev_buffer_len:])
+                    .replace(self.done_marker, "")
+                    .rstrip()
+                )
                 return ExecutionResult(
                     exit_code=0,
                     stdout=cleaned,
                     stderr="",
                     output=cleaned,
+                    last_turn_output=last_turn,
                     steps=client.steps,
                 )
             if resp.stop_reason not in ("end_turn", "max_tokens"):

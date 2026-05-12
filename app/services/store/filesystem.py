@@ -228,24 +228,57 @@ class FilesystemStore(StoreBase):
     # ------------------------------------------------------------------ progress
 
     def write_progress(self, flow_id: str, progress: Progress) -> None:
+        """Atomically write ``progress.json`` for ``flow_id``.
+
+        :param flow_id: flow identifier
+        :param progress: progress snapshot to persist
+        """
         path = self._flow_dir(flow_id) / "progress.json"
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(progress.model_dump_json(indent=2))
         os.replace(tmp, path)
 
     def read_progress(self, flow_id: str) -> Progress:
+        """Load and return the ``Progress`` snapshot for ``flow_id``.
+
+        :param flow_id: flow identifier
+        """
         path = self._flow_dir(flow_id) / "progress.json"
         return Progress.model_validate_json(path.read_text())
+
+    # ------------------------------------------------------------------ outputs.yaml
+
+    def write_outputs(self, flow_id: str, outputs: dict[str, Any]) -> None:
+        """Atomically write ``outputs.yaml`` for ``flow_id``.
+
+        :param flow_id: flow identifier
+        :param outputs: mapping of task name to final output (``None`` for tasks
+            that did not complete)
+        """
+        path = self._flow_dir(flow_id) / "outputs.yaml"
+        tmp = path.with_suffix(".yaml.tmp")
+        tmp.write_text(yaml.safe_dump(outputs, sort_keys=False))
+        os.replace(tmp, path)
 
     # ------------------------------------------------------------------ input.yaml
 
     def read_input(self, flow_id: str) -> dict[str, Any]:
+        """Return the parsed ``input.yaml`` map for ``flow_id`` (empty if missing).
+
+        :param flow_id: flow identifier
+        """
         path = self._flow_dir(flow_id) / "input.yaml"
         if not path.exists():
             return {}
         return yaml.safe_load(path.read_text()) or {}
 
     def append_input(self, flow_id: str, key: str, value: Any) -> None:
+        """Set ``key=value`` in the flow's ``input.yaml``.
+
+        :param flow_id: flow identifier
+        :param key: input key to add or overwrite
+        :param value: value to store under ``key``
+        """
         path = self._flow_dir(flow_id) / "input.yaml"
         existing: dict[str, Any] = {}
         if path.exists():

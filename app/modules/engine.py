@@ -390,7 +390,11 @@ class Engine:
                             )
                             state_changed.set()
                             return
-                        last_output = result.output
+                        last_output = (
+                            result.last_turn_output
+                            if result.last_turn_output is not None
+                            else result.output
+                        )
                         if loop_predicate is not None:
                             # Conduit tasks evaluate the predicate against the
                             # outputs of every nested sub-task (any-match),
@@ -498,6 +502,12 @@ class Engine:
             progress.finished_at = _now()
             progress.status = FlowStatus.failed if failed else FlowStatus.completed
             self.store.write_progress(flow_id, progress)
+
+            if not failed:
+                self.store.write_outputs(
+                    flow_id,
+                    {name: outputs.get(name) for name in task_map},
+                )
 
             if failed:
                 raise failure_error or RuntimeError("flow failed")
