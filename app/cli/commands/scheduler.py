@@ -9,7 +9,7 @@ import typer
 
 from app.cli._shared import _schedule_store, console
 from app.cli.main import scheduler_app
-from app.cli.schedule import schedule_list_cmd
+from app.cli.commands.schedule import schedule_list_cmd
 from app.services.scheduler import SchedulerDaemon, default_local_zone
 
 
@@ -27,6 +27,11 @@ def scheduler_start_cmd(
         help="Logging level for the daemon (DEBUG, INFO, WARNING, ERROR)."
     ),
 ) -> None:
+    """Run the scheduler daemon in the foreground until interrupted.
+
+    :param reload_interval: seconds between schedule store rescans.
+    :param log_level: logging level for the daemon (DEBUG/INFO/WARNING/ERROR).
+    """
     logging.basicConfig(
         level=getattr(logging, log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)-7s %(name)s — %(message)s",
@@ -41,7 +46,7 @@ def scheduler_start_cmd(
     console.print(
         f"[green]scheduler running[/green] "
         f"(tz={daemon.default_zone}, reload={reload_interval}s, "
-        f"schedules={store.schedules_path})"
+        f"schedules={store.schedules_dir})"
     )
     try:
         asyncio.run(daemon.run_forever())
@@ -59,4 +64,8 @@ def scheduler_status_cmd(
         False, "--json", help="Emit machine-readable JSON instead of a table."
     ),
 ) -> None:
+    """Show registered schedules and their next fire times.
+
+    :param json_mode: when true, emit machine-readable JSON instead of a table.
+    """
     schedule_list_cmd(json_mode=json_mode)

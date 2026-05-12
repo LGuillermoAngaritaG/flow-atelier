@@ -14,7 +14,7 @@ from app.cli._shared import (
     console,
 )
 from app.cli.main import list_app
-from app.cli.render import _FLOW_STATUS_STYLE, _task_status_summary
+from app.cli.rendering.render import _FLOW_STATUS_STYLE, _task_status_summary
 from app.core.atelier import Atelier
 from app.schemas.flow import parse_flow_id
 from app.schemas.progress import Progress
@@ -26,7 +26,10 @@ def list_conduits_cmd(
         False, "--json", help="Emit machine-readable JSON instead of a table."
     ),
 ) -> None:
-    """List all available conduits (project and global)."""
+    """List all available conduits (project and global).
+
+    :param json_mode: when true, emit machine-readable JSON instead of a table.
+    """
     atelier = Atelier()
     entries = atelier.store.list_conduits_with_source()
 
@@ -94,7 +97,11 @@ def list_flows_cmd(
         False, "--json", help="Emit machine-readable JSON instead of a table."
     ),
 ) -> None:
-    """List all flows, optionally filtered by conduit."""
+    """List all flows, optionally filtered by conduit.
+
+    :param conduit: optional conduit name to filter flows by.
+    :param json_mode: when true, emit machine-readable JSON instead of a table.
+    """
     atelier = Atelier()
     flows = atelier.list_flows(conduit)
 

@@ -20,6 +20,8 @@ def _render_step(step: IntermediateStep) -> Text:
     - Thinking: ``  💭 {text[:120]}...`` dim italic
     - Tool call: ``  🔧 {tool_name}  {location}`` bold dim + dim
     - Tool result: ``     ✓ status`` or ``     ✗ status`` green/red
+
+    :param step: the intermediate step to render.
     """
     t = Text()
     if step.kind == StepKind.thinking:
@@ -43,7 +45,10 @@ def _render_step(step: IntermediateStep) -> Text:
 
 
 def _render_orchestration_msg(text: str) -> Text:
-    """Render an orchestration lifecycle message: ``· {text}`` in dim."""
+    """Render an orchestration lifecycle message: ``· {text}`` in dim.
+
+    :param text: the message body to display after the dot prefix.
+    """
     t = Text()
     t.append(f"· {text}", style="dim")
     return t
@@ -73,6 +78,9 @@ def _truncate_tail(text: str, max_lines: int = 20) -> tuple[str, int]:
 def _truncated_section(text: str, max_lines: int = 20) -> Text:
     """Truncate ``text`` to its last ``max_lines`` lines and return a
     Rich :class:`Text` with an italic-dim header noting the dropped count.
+
+    :param text: raw text to truncate from the top.
+    :param max_lines: maximum number of trailing lines to keep.
     """
     displayed, dropped = _truncate_tail(text, max_lines=max_lines)
     body = Text()
@@ -89,6 +97,9 @@ def _build_failure_body(stdout: str, stderr: str) -> Text:
     - Only one populated → the existing single-body (truncated) form.
     - Both populated → labelled sections so the diagnostic stderr is
       visible alongside the stdout context.
+
+    :param stdout: captured stdout text from the failed task.
+    :param stderr: captured stderr text from the failed task.
     """
     has_stdout = bool(stdout)
     has_stderr = bool(stderr)
@@ -108,7 +119,10 @@ def _build_failure_body(stdout: str, stderr: str) -> Text:
 
 
 def _step_summary_line(steps: list[IntermediateStep]) -> str | None:
-    """Return a dim summary like ``thinking(3) tools(7)`` or None if empty."""
+    """Return a dim summary like ``thinking(3) tools(7)`` or None if empty.
+
+    :param steps: intermediate steps to count by kind.
+    """
     if not steps:
         return None
     thinking = sum(1 for s in steps if s.kind == StepKind.thinking)
@@ -122,7 +136,10 @@ def _step_summary_line(steps: list[IntermediateStep]) -> str | None:
 
 
 def _render_steps_timeline(steps: list[IntermediateStep]) -> Text:
-    """Render each step as a compact timestamped line with short HH:MM times."""
+    """Render each step as a compact timestamped line with short HH:MM times.
+
+    :param steps: ordered intermediate steps to render as a timeline.
+    """
     body = Text()
     for step in steps:
         if step.kind == StepKind.tool_result:
@@ -148,6 +165,9 @@ def _render_task_event(event: TaskEvent, console: Console) -> None:
 
     Long bodies are truncated to the last 20 lines with a dim
     ``… (N lines truncated)`` header so the terminal stays readable.
+
+    :param event: the task event to render.
+    :param console: Rich console to write the rendered output to.
     """
     iter_suffix = f" ({event.iteration}/{event.of})" if event.of > 1 else ""
     title_core = f"{event.task} [{event.tool}]{iter_suffix}"
@@ -235,7 +255,10 @@ _TASK_STATUS_GLYPHS: list[tuple[TaskStatus, str, str]] = [
 
 
 def _task_status_summary(progress: Progress) -> Text:
-    """Render `✓3 ✗1 ⏭2 ⊘0 ⏳1` with only non-zero entries."""
+    """Render `✓3 ✗1 ⏭2 ⊘0 ⏳1` with only non-zero entries.
+
+    :param progress: flow progress whose task statuses get tallied.
+    """
     counts: Counter[TaskStatus] = Counter(
         tp.status for tp in progress.tasks.values()
     )
@@ -255,7 +278,11 @@ def _task_status_summary(progress: Progress) -> Text:
 
 
 def _render_run_footer(events: list[TaskEvent], console: Console) -> None:
-    """One-line aggregate summary printed at the end of `atelier run`."""
+    """One-line aggregate summary printed at the end of `atelier run`.
+
+    :param events: task events collected during the run.
+    :param console: Rich console to write the summary line to.
+    """
     if not events:
         return
     counts: Counter[TaskStatus] = Counter(e.status for e in events)
@@ -278,6 +305,10 @@ def _render_log_entry(entry, show: str, console: Console) -> None:
     ``show`` controls which body channel is displayed:
     ``output`` (default), ``stdout``, ``stderr``, or ``all`` (both
     labelled when present).
+
+    :param entry: the log entry to render.
+    :param show: which channel to display (output/stdout/stderr/steps/all).
+    :param console: Rich console to write the panel to.
     """
     iter_suffix = f" ({entry.iteration}/{entry.of})" if entry.of > 1 else ""
     title_core = f"{entry.task} [{entry.tool}]{iter_suffix}"
@@ -335,6 +366,10 @@ def _render_log_entry(entry, show: str, console: Console) -> None:
 
 
 def _render_planned_table(planned: list[PlannedJob]) -> Table:
+    """Render planned scheduler jobs as a Rich table.
+
+    :param planned: planned jobs with computed next-fire times.
+    """
     table = Table("id", "name", "conduit", "kind", "next fire", "working_dir")
     for p in planned:
         kind_style = "cyan" if p.schedule_kind == "recurring" else "magenta"

@@ -43,7 +43,7 @@ class HitlExecutor(ExecutorBase):
         preamble_text = "\n".join(preamble_lines) + "\n"
         print(preamble_text, file=sys.stdout, flush=True)
 
-        from app.cli.multiline_input import multiline_input
+        from app.cli.rendering.multiline_input import multiline_input
 
         for name, description in task.inputs.items():
             prompt = f"  {name} ({description}): "

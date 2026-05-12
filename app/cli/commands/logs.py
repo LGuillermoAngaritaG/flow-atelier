@@ -8,7 +8,7 @@ import typer
 
 from app.cli._shared import _resolve_flow_id, console
 from app.cli.main import app
-from app.cli.render import _render_log_entry
+from app.cli.rendering.render import _render_log_entry
 from app.core.atelier import Atelier
 from app.schemas.progress import FlowStatus
 
@@ -43,7 +43,15 @@ def logs_cmd(
         False, "--json", help="Emit machine-readable JSON instead of panels."
     ),
 ) -> None:
-    """Show recorded stdout/stderr/output for each task iteration in a flow."""
+    """Show recorded stdout/stderr/output for each task iteration in a flow.
+
+    :param flow_id: flow id (or unique prefix) to inspect.
+    :param task: when set, restrict output to entries for this task.
+    :param show: which channel to print (output/stdout/stderr/steps/all).
+    :param last: when set, show only the last N entries.
+    :param follow: when true, tail the logs until the flow finishes.
+    :param json_mode: when true, emit machine-readable JSON instead of panels.
+    """
     if show not in _LOG_SHOW_CHOICES:
         console.print(
             f"[red]invalid --show value:[/red] {show}  "
@@ -105,10 +113,20 @@ def _follow_logs(
 
     Exits cleanly when the flow's progress.json reports a terminal status
     (``completed`` or ``failed``). Exits 130 on KeyboardInterrupt.
+
+    :param atelier: Atelier instance used to read logs and progress.
+    :param flow_id: full flow id to follow.
+    :param task: when set, restrict tailing to entries for this task.
+    :param show: which channel to print for each entry.
+    :param poll_seconds: delay between polls for new entries.
     """
     rendered = 0
 
     def _read() -> list:
+        """Read all log entries for the flow, filtered by task when requested.
+
+        :returns: list of LogEntry objects optionally filtered by task name.
+        """
         try:
             entries = atelier.store.read_logs(flow_id)
         except FileNotFoundError:
@@ -119,6 +137,7 @@ def _follow_logs(
         return entries
 
     def _drain_and_render() -> None:
+        """Render any log entries written since the last render pass."""
         nonlocal rendered
         entries = _read()
         for entry in entries[rendered:]:

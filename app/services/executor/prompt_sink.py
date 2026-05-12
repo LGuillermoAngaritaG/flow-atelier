@@ -137,7 +137,7 @@ class TerminalPromptSink:
         if prompt and prompt.strip():
             self._console.print(f"[dim]{prompt.strip()}[/dim]")
         if sys.stdin.isatty():
-            from app.cli.multiline_input import multiline_input
+            from app.cli.rendering.multiline_input import multiline_input
 
             answer = await multiline_input("› ", hint="Alt+Enter to submit")
         else:
@@ -146,13 +146,23 @@ class TerminalPromptSink:
         return answer
 
     async def display_step(self, step: IntermediateStep) -> None:
-        from app.cli.render import _render_step
+        """Render an intermediate step via the CLI step renderer.
+
+        :param step: the :class:`IntermediateStep` to render.
+        """
+        from app.cli.rendering.render import _render_step
 
         self._console.print(_render_step(step))
 
     async def request_permission(
         self, summary: str, options: list[PermissionOption]
     ) -> str:
+        """Prompt the user to choose one of ``options`` and return its id.
+
+        :param summary: human-readable description of the pending action.
+        :param options: list of selectable :class:`PermissionOption` choices.
+        :returns: the ``id`` of the option the user selected.
+        """
         if not options:
             raise ValueError("request_permission requires at least one option")
         self._console.rule(

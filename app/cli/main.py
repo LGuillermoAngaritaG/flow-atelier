@@ -34,7 +34,7 @@ app.add_typer(scheduler_app, name="scheduler")
 # Side-effect imports: each command module decorates its handler against
 # the appropriate Typer instance above. Order matches the original
 # decoration order in app/main.py so --help layout stays byte-identical.
-from app.cli import (  # noqa: E402, F401
+from app.cli.commands import (  # noqa: E402, F401
     init,
     run,
     status,

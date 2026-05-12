@@ -8,7 +8,7 @@ import typer
 
 from app.cli._shared import _parse_inputs, console
 from app.cli.main import app
-from app.cli.render import _render_orchestration_msg, _render_run_footer, _render_task_event
+from app.cli.rendering.render import _render_orchestration_msg, _render_run_footer, _render_task_event
 from app.core.atelier import Atelier
 from app.schemas.log import TaskEvent
 
@@ -31,7 +31,12 @@ def run_cmd(
         help="Stream intermediate thinking and tool activity live (default: on).",
     ),
 ) -> None:
-    """Start a new flow for the named conduit."""
+    """Start a new flow for the named conduit.
+
+    :param conduit_name: name of the conduit to execute.
+    :param inputs_raw: list of ``key=value`` input strings collected from ``--input``.
+    :param show_steps: when true, stream intermediate thinking and tool activity live.
+    """
     inputs = _parse_inputs(inputs_raw)
     atelier = Atelier()
 
@@ -39,7 +44,7 @@ def run_cmd(
     conduit = atelier.store.read_conduit(conduit_name)
     missing = [k for k in conduit.inputs if k not in inputs]
     if missing and sys.stdin.isatty():
-        from app.cli.multiline_input import multiline_input_sync
+        from app.cli.rendering.multiline_input import multiline_input_sync
 
         try:
             for key in missing:
@@ -55,16 +60,29 @@ def run_cmd(
     collected_events: list[TaskEvent] = []
 
     def _on_event(event: TaskEvent) -> None:
+        """Collect the task event and render it to the console.
+
+        :param event: the emitted task event to record and display.
+        """
         collected_events.append(event)
         _render_task_event(event, console)
 
     captured_flow_id: dict[str, str | None] = {"id": None}
 
     def _on_started(fid: str) -> None:
+        """Capture the flow id and print a start banner.
+
+        :param fid: the flow id assigned when the run begins.
+        """
         captured_flow_id["id"] = fid
         console.print(_render_orchestration_msg(f'starting flow {fid}'))
 
     def _on_task_starting(task_name: str, tool: str) -> None:
+        """Announce that a task is about to run.
+
+        :param task_name: name of the task starting.
+        :param tool: tool identifier used to execute the task.
+        """
         console.print(_render_orchestration_msg(f'running task "{task_name}" [{tool}]'))
 
     console.print(_render_orchestration_msg(f'loading conduit "{conduit_name}"'))

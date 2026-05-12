@@ -37,6 +37,14 @@ def serve_cmd(
         help="Logging level for the server."
     ),
 ) -> None:
+    """Run the FastAPI HTTP and WebSocket server with the embedded scheduler.
+
+    :param host: bind host for the HTTP server.
+    :param port: bind port (use 0 for an ephemeral port).
+    :param reload_interval: seconds between schedule store rescans.
+    :param cors_origin: allowed CORS origins (defaults to ``*`` when empty).
+    :param log_level: logging level for uvicorn and the daemon.
+    """
     import uvicorn
 
     logging.basicConfig(
@@ -57,6 +65,10 @@ def serve_cmd(
 
     @asynccontextmanager
     async def _lifespan(app):
+        """FastAPI lifespan context that starts and stops the scheduler daemon.
+
+        :param app: the FastAPI application receiving the lifespan event.
+        """
         await daemon.start()
         try:
             yield
@@ -77,6 +89,7 @@ def serve_cmd(
     server = uvicorn.Server(config)
 
     async def _run() -> None:
+        """Start uvicorn and print the actual bind address once it is ready."""
         serve_task = asyncio.create_task(server.serve())
         # Wait for uvicorn to bind so we can print the actual port.
         loop = asyncio.get_running_loop()
