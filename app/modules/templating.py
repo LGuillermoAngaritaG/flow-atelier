@@ -27,6 +27,10 @@ class SkipSignal(Exception):
     """
 
     def __init__(self, reason: str):
+        """Store the human-readable reason on the exception instance.
+
+        :param reason: short explanation of why the skip was signalled.
+        """
         super().__init__(reason)
         self.reason = reason
 
@@ -50,6 +54,11 @@ def resolve(
     unavailable = unavailable_tasks or set()
 
     def _sub(match: re.Match[str]) -> str:
+        """Replace a single ``{{...}}`` occurrence with its resolved value.
+
+        :param match: regex match for one template expression.
+        :returns: the resolved replacement string.
+        """
         expr = match.group(1).strip()
         if expr.startswith("inputs."):
             key = expr[len("inputs."):]

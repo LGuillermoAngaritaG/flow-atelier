@@ -14,12 +14,16 @@ from app.services.executor.prompt_sink import (
 
 
 async def _coro(value: str) -> str:
-    """Trivial awaitable returning *value* — stands in for async helpers."""
+    """Trivial awaitable returning *value* — stands in for async helpers.
+
+    :param value: value to return from the coroutine.
+    """
     return value
 
 
 class TestTerminalPromptSink:
     async def test_display_writes_to_stream(self) -> None:
+        """Verify display() writes text verbatim to the configured stream."""
         stream = io.StringIO()
         sink = TerminalPromptSink(out=stream)
         await sink.display("hello world")
@@ -39,6 +43,7 @@ class TestTerminalPromptSink:
         assert stream.getvalue() == "What is your name?"
 
     async def test_display_preserves_agent_newlines(self) -> None:
+        """Verify display() preserves newline characters from the agent."""
         stream = io.StringIO()
         sink = TerminalPromptSink(out=stream)
         await sink.display("line one\n")
@@ -48,6 +53,10 @@ class TestTerminalPromptSink:
     async def test_request_input_reads_stdin_line(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Verify request_input reads a line from stdin.
+
+        :param monkeypatch: pytest monkeypatch fixture.
+        """
         stream = io.StringIO()
         sink = TerminalPromptSink(out=stream)
         monkeypatch.setattr(builtins, "input", lambda _prompt="": "175 cm")
@@ -62,6 +71,8 @@ class TestTerminalPromptSink:
         the turn-over prompt; otherwise the prompt gets glued onto the last
         agent token. The styled "you" rule lives on its own line after a
         compensating newline.
+
+        :param monkeypatch: pytest monkeypatch fixture.
         """
         stream = io.StringIO()
         sink = TerminalPromptSink(out=stream)
@@ -84,7 +95,10 @@ class TestTerminalPromptSink:
     ) -> None:
         """Piped stdin doesn't echo keystrokes — the sink must echo the
         consumed line back so scripted transcripts read like a real
-        terminal session."""
+        terminal session.
+
+        :param monkeypatch: pytest monkeypatch fixture.
+        """
         import sys as _sys
         stream = io.StringIO()
         sink = TerminalPromptSink(out=stream)
@@ -99,9 +113,12 @@ class TestTerminalPromptSink:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """When the user is actually typing, the terminal already echoes
-        keystrokes — we must not write the answer back ourselves."""
+        keystrokes — we must not write the answer back ourselves.
+
+        :param monkeypatch: pytest monkeypatch fixture.
+        """
         import sys as _sys
-        import app.cli.multiline_input as _ml
+        import app.cli.rendering.multiline_input as _ml
 
         stream = io.StringIO()
         sink = TerminalPromptSink(out=stream)
@@ -137,6 +154,10 @@ class TestTerminalPromptSink:
     async def test_request_permission_returns_selected_option_id(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Verify request_permission returns the id of the chosen option.
+
+        :param monkeypatch: pytest monkeypatch fixture.
+        """
         stream = io.StringIO()
         sink = TerminalPromptSink(out=stream)
         options = [
@@ -154,6 +175,10 @@ class TestTerminalPromptSink:
     async def test_request_permission_defaults_first_on_blank(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Verify a blank reply defaults to the first option.
+
+        :param monkeypatch: pytest monkeypatch fixture.
+        """
         stream = io.StringIO()
         sink = TerminalPromptSink(out=stream)
         options = [
@@ -167,6 +192,10 @@ class TestTerminalPromptSink:
     async def test_request_permission_rejects_out_of_range(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Verify out-of-range indices are rejected and re-prompted.
+
+        :param monkeypatch: pytest monkeypatch fixture.
+        """
         stream = io.StringIO()
         sink = TerminalPromptSink(out=stream)
         options = [PermissionOption(id="allow", label="Allow")]
@@ -178,6 +207,7 @@ class TestTerminalPromptSink:
 
 class TestPromptSinkProtocol:
     def test_terminal_sink_satisfies_protocol(self) -> None:
+        """Verify TerminalPromptSink exposes the PromptSink protocol surface."""
         sink: PromptSink = TerminalPromptSink()
         assert hasattr(sink, "display")
         assert hasattr(sink, "request_input")

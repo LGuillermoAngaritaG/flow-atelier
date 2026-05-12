@@ -39,17 +39,29 @@ class PromptSink(Protocol):
     """
 
     async def display(self, text: str) -> None:
-        """Show text to the user (streamed agent output, system messages)."""
+        """Show text to the user (streamed agent output, system messages).
+
+        :param text: text to render to the user.
+        """
         ...
 
     async def request_input(self, prompt: str) -> str:
-        """Ask the user for a free-form reply and return their response."""
+        """Ask the user for a free-form reply and return their response.
+
+        :param prompt: prompt label shown to the user.
+        :returns: the user's reply.
+        """
         ...
 
     async def request_permission(
         self, summary: str, options: list[PermissionOption]
     ) -> str:
-        """Ask the user to pick one of ``options``; return the chosen ``id``."""
+        """Ask the user to pick one of ``options``; return the chosen ``id``.
+
+        :param summary: human-readable description of the pending action.
+        :param options: list of selectable :class:`PermissionOption` choices.
+        :returns: the ``id`` of the option the user picked.
+        """
         ...
 
     async def start_agent_turn(self, label: str = "agent") -> None:
@@ -58,6 +70,8 @@ class PromptSink(Protocol):
         Called by interactive harness executors immediately before each
         ``conn.prompt(...)`` so the terminal UI can bracket each turn
         with a divider. Sinks that don't render visually may no-op.
+
+        :param label: label shown in the turn divider (default ``"agent"``).
         """
         ...
 
@@ -67,6 +81,8 @@ class PromptSink(Protocol):
         Called by harness executors when ``stream_steps=True`` to surface
         agent progress as it happens. Sinks that don't render visually
         may no-op.
+
+        :param step: the :class:`IntermediateStep` to render.
         """
         ...
 
@@ -90,6 +106,12 @@ class TerminalPromptSink:
         out: TextIO | None = None,
         console: Console | None = None,
     ) -> None:
+        """Initialize the terminal prompt sink.
+
+        :param out: optional output stream; defaults to ``sys.stdout``.
+        :param console: optional Rich console override; defaults to a new
+            console writing to ``out``.
+        """
         self._out = out if out is not None else sys.stdout
         self._console = (
             console
@@ -103,6 +125,8 @@ class TerminalPromptSink:
         Agent output arrives as token-sized chunks, so this is a raw
         passthrough: no newline insertion, no prefix. Callers are
         responsible for any terminal formatting.
+
+        :param text: text to write to the output stream.
         """
         self._out.write(text)
         self._out.flush()
@@ -112,6 +136,8 @@ class TerminalPromptSink:
 
         Always prefixed with a blank line so the rule is cleanly
         separated from any previous raw stream output.
+
+        :param label: label shown inside the rule (default ``"agent"``).
         """
         self._out.write("\n")
         self._out.flush()
@@ -128,6 +154,9 @@ class TerminalPromptSink:
           user's keystrokes naturally.
         - When stdin is piped (scripted runs): the consumed line is
           echoed back as ``› <answer>`` so transcripts read cleanly.
+
+        :param prompt: dim hint text shown above the input cursor.
+        :returns: the user's reply.
         """
         self._out.write("\n")
         self._out.flush()

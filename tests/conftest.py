@@ -30,6 +30,9 @@ def _isolate_global_atelier_dir(tmp_path_factory, monkeypatch):
     """Point the global atelier dir at a throwaway tmp path for every test.
 
     Prevents tests from reading or writing the real ``~/.atelier``.
+
+    :param tmp_path_factory: pytest tmp_path_factory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
     """
     global_dir = tmp_path_factory.mktemp("global_atelier")
     monkeypatch.setenv("ATELIER_GLOBAL_ATELIER_DIR", str(global_dir))

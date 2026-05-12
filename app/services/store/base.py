@@ -16,10 +16,17 @@ class StoreBase(ABC):
 
     # --- conduits ---
     @abstractmethod
-    def read_conduit(self, name: str) -> Conduit: ...
+    def read_conduit(self, name: str) -> Conduit:
+        """Load conduit ``name`` from the store.
+
+        :param name: conduit name
+        """
+        ...
 
     @abstractmethod
-    def list_conduits(self) -> list[str]: ...
+    def list_conduits(self) -> list[str]:
+        """Return all visible conduit names."""
+        ...
 
     @abstractmethod
     def list_conduits_with_source(self) -> list[tuple[str, ConduitSource]]:
@@ -28,12 +35,18 @@ class StoreBase(ABC):
 
     @abstractmethod
     def write_conduit(self, conduit: Conduit) -> None:
-        """Persist ``conduit`` to the project store, overwriting if present."""
+        """Persist ``conduit`` to the project store, overwriting if present.
+
+        :param conduit: validated conduit to persist
+        """
         ...
 
     @abstractmethod
     def delete_conduit(self, name: str) -> bool:
-        """Delete a project-level conduit. Returns False if it didn't exist."""
+        """Delete a project-level conduit. Returns False if it didn't exist.
+
+        :param name: conduit name
+        """
         ...
 
     # --- flows ---
@@ -44,14 +57,30 @@ class StoreBase(ABC):
         inputs: dict[str, Any],
         parent_flow_id: str | None = None,
     ) -> str:
-        """Returns the new flow_id."""
+        """Returns the new flow_id.
+
+        :param conduit_name: conduit being run
+        :param inputs: initial input map persisted with the flow
+        :param parent_flow_id: optional parent flow for nested runs
+        """
 
     @abstractmethod
-    def list_flows(self, conduit_name: str | None = None) -> list[str]: ...
+    def list_flows(self, conduit_name: str | None = None) -> list[str]:
+        """List top-level flow ids, optionally filtered by conduit.
+
+        :param conduit_name: when set, only flows for this conduit are returned
+        """
+        ...
 
     # --- logs ---
     @abstractmethod
-    async def append_log(self, flow_id: str, entry: LogEntry) -> None: ...
+    async def append_log(self, flow_id: str, entry: LogEntry) -> None:
+        """Append a log entry for ``flow_id``.
+
+        :param flow_id: flow identifier
+        :param entry: log entry to append
+        """
+        ...
 
     @abstractmethod
     def read_logs(self, flow_id: str) -> list[LogEntry]:

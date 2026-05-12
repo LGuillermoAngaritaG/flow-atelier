@@ -13,12 +13,22 @@ router = APIRouter(prefix="/schedules", tags=["schedules"])
 
 
 def _error(message: str, code: int) -> JSONResponse:
+    """Build a uniform ``{"error": message}`` JSON response.
+
+    :param message: human-readable error message.
+    :param code: HTTP status code to return.
+    :returns: a :class:`JSONResponse` with the given status and body.
+    """
     return JSONResponse(status_code=code, content={"error": message})
 
 
 @router.get("")
 async def list_schedules(atelier: Atelier = Depends(get_atelier)) -> list[dict]:
-    """Return active :class:`ScheduledJob` records."""
+    """Return active :class:`ScheduledJob` records.
+
+    :param atelier: injected :class:`Atelier` facade.
+    :returns: JSON-serializable dicts for each scheduled job.
+    """
     return [job.model_dump(mode="json") for job in atelier.list_schedules()]
 
 
@@ -26,6 +36,12 @@ async def list_schedules(atelier: Atelier = Depends(get_atelier)) -> list[dict]:
 async def create_schedule(
     payload: CreateScheduleInput, atelier: Atelier = Depends(get_atelier)
 ):
+    """Create a scheduled job and hot-sync the embedded daemon if attached.
+
+    :param payload: parsed :class:`CreateScheduleInput` body.
+    :param atelier: injected :class:`Atelier` facade.
+    :returns: JSON-serializable dict of the created job.
+    """
     job = atelier.create_schedule(payload)
     # Hot-register with the embedded daemon if one is attached.
     daemon = getattr(atelier, "scheduler_daemon", None)
@@ -41,6 +57,12 @@ async def create_schedule(
 async def delete_schedule(
     schedule_id: str, atelier: Atelier = Depends(get_atelier)
 ):
+    """Delete a scheduled job and hot-sync the embedded daemon if attached.
+
+    :param schedule_id: identifier of the scheduled job from the URL path.
+    :param atelier: injected :class:`Atelier` facade.
+    :returns: JSON-serializable dict of the deleted job or an error response.
+    """
     try:
         job = atelier.delete_schedule(schedule_id)
     except KeyError as e:

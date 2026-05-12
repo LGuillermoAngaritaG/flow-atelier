@@ -20,12 +20,22 @@ router = APIRouter(prefix="/conduits", tags=["conduits"])
 
 
 def _error(message: str, code: int) -> JSONResponse:
+    """Build a uniform ``{"error": message}`` JSON response.
+
+    :param message: human-readable error message.
+    :param code: HTTP status code to return.
+    :returns: a :class:`JSONResponse` with the given status and body.
+    """
     return JSONResponse(status_code=code, content={"error": message})
 
 
 @router.get("")
 async def list_conduits(atelier: Atelier = Depends(get_atelier)) -> list[dict]:
-    """List every conduit visible to the facade (project + global)."""
+    """List every conduit visible to the facade (project + global).
+
+    :param atelier: injected :class:`Atelier` facade.
+    :returns: serialized :class:`ConduitDTO` dicts for each readable conduit.
+    """
     out: list[dict] = []
     for name in atelier.list_conduits():
         try:
@@ -38,6 +48,12 @@ async def list_conduits(atelier: Atelier = Depends(get_atelier)) -> list[dict]:
 
 @router.get("/{name}")
 async def get_conduit(name: str, atelier: Atelier = Depends(get_atelier)):
+    """Return one conduit by name or 404 if missing.
+
+    :param name: conduit identifier from the URL path.
+    :param atelier: injected :class:`Atelier` facade.
+    :returns: serialized :class:`ConduitDTO` dict or an error response.
+    """
     try:
         conduit = atelier.store.read_conduit(name)
     except FileNotFoundError as e:
@@ -49,6 +65,12 @@ async def get_conduit(name: str, atelier: Atelier = Depends(get_atelier)):
 async def create_conduit(
     payload: CreateConduitInput, atelier: Atelier = Depends(get_atelier)
 ):
+    """Create a new conduit, mapping known errors to HTTP status codes.
+
+    :param payload: parsed :class:`CreateConduitInput` body.
+    :param atelier: injected :class:`Atelier` facade.
+    :returns: serialized :class:`ConduitDTO` dict or an error response.
+    """
     try:
         conduit = atelier.create_conduit(payload)
     except FileExistsError as e:
@@ -64,6 +86,13 @@ async def update_conduit(
     payload: UpdateConduitInput,
     atelier: Atelier = Depends(get_atelier),
 ):
+    """Patch an existing conduit, mapping known errors to HTTP status codes.
+
+    :param name: conduit identifier from the URL path.
+    :param payload: parsed :class:`UpdateConduitInput` body.
+    :param atelier: injected :class:`Atelier` facade.
+    :returns: serialized :class:`ConduitDTO` dict or an error response.
+    """
     try:
         conduit = atelier.update_conduit(name, payload)
     except FileNotFoundError as e:
@@ -75,6 +104,12 @@ async def update_conduit(
 
 @router.delete("/{name}")
 async def delete_conduit(name: str, atelier: Atelier = Depends(get_atelier)):
+    """Delete a conduit by name, returning 204 on success or 404 if missing.
+
+    :param name: conduit identifier from the URL path.
+    :param atelier: injected :class:`Atelier` facade.
+    :returns: empty 204 response or an error response.
+    """
     if not atelier.delete_conduit(name):
         return _error(f"conduit not found: {name}", 404)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -84,5 +119,11 @@ async def delete_conduit(name: str, atelier: Atelier = Depends(get_atelier)):
 async def open_path(
     payload: OpenPathInput, atelier: Atelier = Depends(get_atelier)
 ) -> dict[str, Any]:
+    """Open a conduit-relative path in the host OS and report what was opened.
+
+    :param payload: parsed :class:`OpenPathInput` body.
+    :param atelier: injected :class:`Atelier` facade.
+    :returns: ``{"opened": <path>}`` echoing the resolved target.
+    """
     opened = atelier.open_conduit_path(payload.conduit_name, payload.run_path)
     return {"opened": opened}

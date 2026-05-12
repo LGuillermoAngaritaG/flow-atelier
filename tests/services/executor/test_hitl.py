@@ -12,6 +12,10 @@ from app.services.store.filesystem import FilesystemStore
 
 @pytest.fixture
 def store(tmp_path):
+    """Filesystem-backed store fixture pre-seeded with a hello conduit.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     s = FilesystemStore(tmp_path / ".atelier")
     conduit_dir = s.base_dir / "conduits" / "hello"
     conduit_dir.mkdir(parents=True)
@@ -22,6 +26,7 @@ def store(tmp_path):
 
 
 def _task() -> TaskDefinition:
+    """Build a HITL TaskDefinition that asks for two inputs."""
     return TaskDefinition(
         name="ask",
         description="d",
@@ -33,6 +38,12 @@ def _task() -> TaskDefinition:
 
 
 async def test_hitl_collects_and_persists(store, monkeypatch, capsys):
+    """Verify HITL collects answers, persists them, and prints the prompt.
+
+    :param store: filesystem store fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    :param capsys: pytest stdout/stderr capture fixture.
+    """
     flow_id = store.create_flow("hello", {"env": "staging"})
     ctx = FlowContext(flow_id=flow_id, store=store, inputs={"env": "staging"})
 
@@ -60,6 +71,11 @@ async def test_hitl_collects_and_persists(store, monkeypatch, capsys):
 
 
 async def test_hitl_overwrite_collision(store, monkeypatch):
+    """Verify a new HITL answer overwrites a prior value for the same key.
+
+    :param store: filesystem store fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     flow_id = store.create_flow("hello", {"confirm": "previous"})
     ctx = FlowContext(flow_id=flow_id, store=store, inputs={"confirm": "previous"})
     monkeypatch.setattr(builtins, "input", lambda prompt="": "new")

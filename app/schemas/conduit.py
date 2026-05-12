@@ -44,12 +44,21 @@ class TaskDefinition(BaseModel):
     @field_validator("repeat")
     @classmethod
     def _repeat_positive(cls, v: int) -> int:
+        """Ensure ``repeat`` is at least one iteration.
+
+        :param v: the proposed ``repeat`` value.
+        :returns: the validated ``repeat`` value unchanged.
+        """
         if v < 1:
             raise ValueError("repeat must be >= 1")
         return v
 
     @model_validator(mode="after")
     def _validate_loop_predicates(self) -> "TaskDefinition":
+        """Validate ``until``/``while`` mutual exclusion and predicate syntax.
+
+        :returns: the validated ``TaskDefinition`` instance.
+        """
         if self.until is not None and self.while_ is not None:
             raise ValueError(
                 "until and while are mutually exclusive — set only one"
@@ -85,7 +94,11 @@ class Conduit(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_tasks(cls, data: Any) -> Any:
-        """Accept YAML's list-of-single-key-dicts form for tasks."""
+        """Accept YAML's list-of-single-key-dicts form for tasks.
+
+        :param data: raw input passed to the model; only ``dict`` payloads are normalized.
+        :returns: ``data`` with its ``tasks`` list flattened into plain task dicts.
+        """
         if not isinstance(data, dict):
             return data
         raw_tasks = data.get("tasks")
@@ -106,6 +119,10 @@ class Conduit(BaseModel):
 
     @model_validator(mode="after")
     def _validate_unique_task_names(self) -> "Conduit":
+        """Ensure no two tasks in the conduit share the same ``name``.
+
+        :returns: the validated ``Conduit`` instance.
+        """
         names = [t.name for t in self.tasks]
         if len(names) != len(set(names)):
             dupes = sorted({n for n in names if names.count(n) > 1})

@@ -12,12 +12,14 @@ from app.schemas.progress import TaskStatus
 
 
 def test_parse_plain():
+    """Verify parse_dependency() returns a PlainDependency for bare task names."""
     dep = parse_dependency("clone_repo")
     assert isinstance(dep, PlainDependency)
     assert dep.task == "clone_repo"
 
 
 def test_parse_match():
+    """Verify parse_dependency() parses an output.match(...) conditional."""
     dep = parse_dependency("review.output.match(VERDICT:\\s*APPROVE)")
     assert isinstance(dep, ConditionalDependency)
     assert dep.task == "review"
@@ -26,12 +28,14 @@ def test_parse_match():
 
 
 def test_parse_not_match():
+    """Verify parse_dependency() parses an output.not_match(...) conditional."""
     dep = parse_dependency("review.output.not_match(VERDICT:\\s*APPROVE)")
     assert isinstance(dep, ConditionalDependency)
     assert dep.negate is True
 
 
 def test_parse_regex_with_inner_parens():
+    """Verify parse_dependency() preserves inner parens in the regex pattern."""
     # final closing paren delimits; inner `)` is part of the regex
     dep = parse_dependency("x.output.match(foo(bar))")
     assert isinstance(dep, ConditionalDependency)
@@ -39,32 +43,38 @@ def test_parse_regex_with_inner_parens():
 
 
 def test_parse_invalid_regex():
+    """Verify parse_dependency() rejects an invalid regex."""
     with pytest.raises(DependencyParseError):
         parse_dependency("x.output.match([unclosed)")
 
 
 def test_parse_missing_close_paren():
+    """Verify parse_dependency() rejects a missing close paren."""
     with pytest.raises(DependencyParseError):
         parse_dependency("x.output.match(foo")
 
 
 def test_parse_empty():
+    """Verify parse_dependency() rejects the empty string."""
     with pytest.raises(DependencyParseError):
         parse_dependency("")
 
 
 def test_evaluate_plain_completed():
+    """Verify evaluate() returns satisfied for a completed plain dep."""
     dep = parse_dependency("a")
     status = {"a": TaskStatus.completed}
     assert evaluate(dep, status, {"a": "ok"}) == ("satisfied", None)
 
 
 def test_evaluate_plain_running():
+    """Verify evaluate() returns wait for a running plain dep."""
     dep = parse_dependency("a")
     assert evaluate(dep, {"a": TaskStatus.running}, {}) == ("wait", None)
 
 
 def test_evaluate_plain_failed():
+    """Verify evaluate() returns skip with a 'failed' reason for failed dep."""
     dep = parse_dependency("a")
     result, reason = evaluate(dep, {"a": TaskStatus.failed}, {})
     assert result == "skip"
@@ -72,6 +82,7 @@ def test_evaluate_plain_failed():
 
 
 def test_evaluate_plain_skipped():
+    """Verify evaluate() returns skip with a 'skipped' reason for skipped dep."""
     dep = parse_dependency("a")
     result, reason = evaluate(dep, {"a": TaskStatus.skipped}, {})
     assert result == "skip"
@@ -79,6 +90,7 @@ def test_evaluate_plain_skipped():
 
 
 def test_evaluate_conditional_match_satisfied():
+    """Verify evaluate() returns satisfied when the match pattern hits."""
     dep = parse_dependency("a.output.match(VERDICT:\\s*APPROVE)")
     assert evaluate(
         dep,
@@ -88,6 +100,7 @@ def test_evaluate_conditional_match_satisfied():
 
 
 def test_evaluate_conditional_match_not_met_skips():
+    """Verify evaluate() skips when the match pattern is absent."""
     dep = parse_dependency("a.output.match(VERDICT:\\s*APPROVE)")
     result, reason = evaluate(
         dep,
@@ -99,6 +112,7 @@ def test_evaluate_conditional_match_not_met_skips():
 
 
 def test_evaluate_not_match_satisfied():
+    """Verify evaluate() returns satisfied when the not_match pattern is absent."""
     dep = parse_dependency("a.output.not_match(CRITICAL)")
     assert evaluate(
         dep,
@@ -108,6 +122,7 @@ def test_evaluate_not_match_satisfied():
 
 
 def test_evaluate_not_match_triggers_skip():
+    """Verify evaluate() skips when not_match pattern is present."""
     dep = parse_dependency("a.output.not_match(CRITICAL)")
     result, _ = evaluate(
         dep,
@@ -118,6 +133,7 @@ def test_evaluate_not_match_triggers_skip():
 
 
 def test_evaluate_unknown_task_skips():
+    """Verify evaluate() skips when the dependency target is unknown."""
     dep = parse_dependency("ghost")
     result, reason = evaluate(dep, {"a": TaskStatus.completed}, {})
     assert result == "skip"
@@ -128,6 +144,7 @@ def test_evaluate_unknown_task_skips():
 
 
 def test_parse_output_predicate_match():
+    """Verify parse_output_predicate() parses output.match(...) expressions."""
     from app.modules.conditions import parse_output_predicate
 
     pattern, negate = parse_output_predicate("output.match(DONE)")
@@ -137,6 +154,7 @@ def test_parse_output_predicate_match():
 
 
 def test_parse_output_predicate_not_match():
+    """Verify parse_output_predicate() parses output.not_match(...) expressions."""
     from app.modules.conditions import parse_output_predicate
 
     pattern, negate = parse_output_predicate("output.not_match(RETRY)")
@@ -145,6 +163,7 @@ def test_parse_output_predicate_not_match():
 
 
 def test_parse_output_predicate_inner_parens():
+    """Verify parse_output_predicate() preserves inner parens."""
     from app.modules.conditions import parse_output_predicate
 
     pattern, negate = parse_output_predicate("output.match(foo(bar))")
@@ -153,6 +172,7 @@ def test_parse_output_predicate_inner_parens():
 
 
 def test_parse_output_predicate_bare_regex_rejected():
+    """Verify parse_output_predicate() rejects bare regex expressions."""
     from app.modules.conditions import parse_output_predicate
 
     with pytest.raises(DependencyParseError):
@@ -160,6 +180,7 @@ def test_parse_output_predicate_bare_regex_rejected():
 
 
 def test_parse_output_predicate_invalid_regex_rejected():
+    """Verify parse_output_predicate() rejects an invalid regex."""
     from app.modules.conditions import parse_output_predicate
 
     with pytest.raises(DependencyParseError):
@@ -167,6 +188,7 @@ def test_parse_output_predicate_invalid_regex_rejected():
 
 
 def test_parse_output_predicate_missing_close_paren():
+    """Verify parse_output_predicate() rejects missing close paren."""
     from app.modules.conditions import parse_output_predicate
 
     with pytest.raises(DependencyParseError):
@@ -174,6 +196,7 @@ def test_parse_output_predicate_missing_close_paren():
 
 
 def test_parse_output_predicate_empty_rejected():
+    """Verify parse_output_predicate() rejects the empty string."""
     from app.modules.conditions import parse_output_predicate
 
     with pytest.raises(DependencyParseError):
@@ -184,6 +207,10 @@ def test_parse_output_predicate_empty_rejected():
 
 
 def _pred(expr: str):
+    """Build a parsed output predicate for tests.
+
+    :param expr: predicate expression to parse.
+    """
     from app.modules.conditions import parse_output_predicate
 
     return parse_output_predicate(expr)
@@ -206,6 +233,12 @@ def _pred(expr: str):
     ],
 )
 def test_evaluate_loop_predicate_until(expr, outputs, expected):
+    """Verify evaluate_loop_predicate() in until mode for parametrized cases.
+
+    :param expr: predicate expression under test.
+    :param outputs: list of task outputs to evaluate against.
+    :param expected: expected boolean result.
+    """
     from app.modules.conditions import evaluate_loop_predicate
 
     assert evaluate_loop_predicate(_pred(expr), outputs, "until") is expected
@@ -228,12 +261,19 @@ def test_evaluate_loop_predicate_until(expr, outputs, expected):
     ],
 )
 def test_evaluate_loop_predicate_while(expr, outputs, expected):
+    """Verify evaluate_loop_predicate() in while mode for parametrized cases.
+
+    :param expr: predicate expression under test.
+    :param outputs: list of task outputs to evaluate against.
+    :param expected: expected boolean result.
+    """
     from app.modules.conditions import evaluate_loop_predicate
 
     assert evaluate_loop_predicate(_pred(expr), outputs, "while") is expected
 
 
 def test_evaluate_loop_predicate_empty_outputs_does_not_break():
+    """Verify evaluate_loop_predicate() returns False on empty outputs."""
     from app.modules.conditions import evaluate_loop_predicate
 
     assert evaluate_loop_predicate(_pred("output.match(x)"), [], "until") is False
@@ -243,6 +283,7 @@ def test_evaluate_loop_predicate_empty_outputs_does_not_break():
 
 
 def test_evaluate_loop_predicate_invalid_mode_raises():
+    """Verify evaluate_loop_predicate() raises on an unknown mode."""
     from app.modules.conditions import evaluate_loop_predicate
 
     with pytest.raises(ValueError):

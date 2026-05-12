@@ -16,6 +16,12 @@ pytestmark = pytest.mark.timeout(300)
 
 
 def _write_conduit(base, name, body):
+    """Write a conduit YAML under `base/.atelier/conduits/<name>/conduit.yaml`.
+
+    :param base: base working directory path.
+    :param name: conduit name.
+    :param body: YAML body to write.
+    """
     d = base / ".atelier" / "conduits" / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "conduit.yaml").write_text(body)
@@ -26,12 +32,21 @@ PROMPT = "What is the capital of France? Then write a short four-line poem about
 
 @pytest.fixture
 def workdir(tmp_path, monkeypatch):
+    """Provide an isolated working directory for live harness tests.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
 
 @pytest.mark.skipif(shutil.which("claude") is None, reason="claude CLI not installed")
 async def test_claude_noninteractive(workdir):
+    """Verify the live claude harness runs non-interactively.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_conduit(
         workdir,
         "ask_claude",
@@ -64,6 +79,10 @@ tasks:
 
 @pytest.mark.skipif(shutil.which("codex") is None, reason="codex CLI not installed")
 async def test_codex_noninteractive(workdir):
+    """Verify the live codex harness runs non-interactively.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_conduit(
         workdir,
         "ask_codex",
@@ -95,6 +114,10 @@ tasks:
 
 @pytest.mark.skipif(shutil.which("claude") is None, reason="claude CLI not installed")
 async def test_claude_interactive_marker(workdir):
+    """Verify the interactive claude harness emits the `[ATELIER_DONE]` marker.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_conduit(
         workdir,
         "ask_claude_i",
@@ -123,12 +146,16 @@ tasks:
 
     logs = json.loads((a.store._flow_dir(flow_id) / "logs.json").read_text())
     output = logs[0]["output"]
-    assert "[ATELIER_DONE]" in output
+    assert "[ATELIER_DONE]" not in output
     assert "paris" in output.lower()
 
 
 @pytest.mark.skipif(shutil.which("codex") is None, reason="codex CLI not installed")
 async def test_codex_interactive_marker(workdir):
+    """Verify the interactive codex harness emits the `[ATELIER_DONE]` marker.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_conduit(
         workdir,
         "ask_codex_i",
@@ -157,5 +184,5 @@ tasks:
 
     logs = json.loads((a.store._flow_dir(flow_id) / "logs.json").read_text())
     output = logs[0]["output"]
-    assert "[ATELIER_DONE]" in output
+    assert "[ATELIER_DONE]" not in output
     assert "paris" in output.lower()

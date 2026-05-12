@@ -53,6 +53,7 @@ tasks:
 
 
 def test_parse_sample_conduit():
+    """Verify the sample YAML parses into a Conduit with expected fields."""
     data = yaml.safe_load(SAMPLE_YAML)
     conduit = Conduit.model_validate(data)
     assert conduit.name == "deploy_pipeline"
@@ -73,6 +74,7 @@ def test_parse_sample_conduit():
 
 
 def test_defaults():
+    """Verify default Conduit and task fields when not provided."""
     c = Conduit.model_validate(
         {
             "name": "x",
@@ -89,6 +91,7 @@ def test_defaults():
 
 
 def test_duplicate_task_names_rejected():
+    """Verify duplicate task names cause Conduit validation to fail."""
     with pytest.raises(Exception):
         Conduit.model_validate(
             {
@@ -107,6 +110,10 @@ def test_duplicate_task_names_rejected():
     ["harness:opencode", "harness:copilot", "harness:cursor"],
 )
 def test_new_harness_tool_strings_validate(tool_str):
+    """Verify new harness tool identifiers validate on Conduit tasks.
+
+    :param tool_str: parametrized tool identifier string under test.
+    """
     c = Conduit.model_validate(
         {
             "name": "x",
@@ -127,6 +134,7 @@ def test_new_harness_tool_strings_validate(tool_str):
 
 
 def test_repeat_must_be_positive():
+    """Verify a task with repeat=0 is rejected by validation."""
     with pytest.raises(Exception):
         Conduit.model_validate(
             {
@@ -140,6 +148,10 @@ def test_repeat_must_be_positive():
 
 
 def _task_with_until(**overrides):
+    """Build a Conduit payload with an `until` task, applying overrides.
+
+    :param overrides: keyword overrides merged into the base task body.
+    """
     base = {
         "description": "d",
         "task": "x",
@@ -157,31 +169,37 @@ def _task_with_until(**overrides):
 
 
 def test_until_with_repeat_gt_1_ok():
+    """Verify `until` is accepted when repeat is greater than 1."""
     c = Conduit.model_validate(_task_with_until())
     assert c.tasks[0].until == "output.match(DONE)"
 
 
 def test_until_not_match_with_repeat_gt_1_ok():
+    """Verify `until` with not_match is accepted when repeat > 1."""
     c = Conduit.model_validate(_task_with_until(until="output.not_match(RETRY)"))
     assert c.tasks[0].until == "output.not_match(RETRY)"
 
 
 def test_until_with_repeat_1_rejected():
+    """Verify `until` is rejected when repeat is 1."""
     with pytest.raises(Exception, match="repeat"):
         Conduit.model_validate(_task_with_until(repeat=1))
 
 
 def test_until_with_invalid_dsl_rejected():
+    """Verify invalid DSL in `until` is rejected."""
     with pytest.raises(Exception):
         Conduit.model_validate(_task_with_until(until="DONE"))
 
 
 def test_until_with_invalid_regex_rejected():
+    """Verify invalid regex in `until` is rejected."""
     with pytest.raises(Exception):
         Conduit.model_validate(_task_with_until(until="output.match([unclosed)"))
 
 
 def test_task_without_until_still_validates():
+    """Verify a task with no `until` and repeat > 1 still validates."""
     c = Conduit.model_validate(
         {
             "name": "x",
@@ -199,6 +217,10 @@ def test_task_without_until_still_validates():
 
 
 def _task_with_while(**overrides):
+    """Build a Conduit payload with a `while` task, applying overrides.
+
+    :param overrides: keyword overrides merged into the base task body.
+    """
     base = {
         "description": "d",
         "task": "x",
@@ -216,21 +238,25 @@ def _task_with_while(**overrides):
 
 
 def test_while_yaml_key_loads_into_while_attr():
+    """Verify the YAML `while` key populates the `while_` attribute."""
     c = Conduit.model_validate(_task_with_while())
     assert c.tasks[0].while_ == "output.match(retry)"
 
 
 def test_while_not_match_with_repeat_gt_1_ok():
+    """Verify `while` with not_match is accepted when repeat > 1."""
     c = Conduit.model_validate(_task_with_while(**{"while": "output.not_match(ready)"}))
     assert c.tasks[0].while_ == "output.not_match(ready)"
 
 
 def test_while_with_repeat_1_rejected():
+    """Verify `while` is rejected when repeat is 1."""
     with pytest.raises(Exception, match="repeat"):
         Conduit.model_validate(_task_with_while(repeat=1))
 
 
 def test_while_and_until_mutually_exclusive():
+    """Verify `while` and `until` cannot be combined on a single task."""
     body = _task_with_while(until="output.match(DONE)")
     with pytest.raises(Exception) as exc:
         Conduit.model_validate(body)
@@ -239,16 +265,19 @@ def test_while_and_until_mutually_exclusive():
 
 
 def test_while_with_invalid_dsl_rejected():
+    """Verify invalid DSL in `while` is rejected."""
     with pytest.raises(Exception):
         Conduit.model_validate(_task_with_while(**{"while": "retry"}))
 
 
 def test_while_with_invalid_regex_rejected():
+    """Verify invalid regex in `while` is rejected."""
     with pytest.raises(Exception):
         Conduit.model_validate(_task_with_while(**{"while": "output.match([unclosed)"}))
 
 
 def test_while_round_trips_to_yaml_alias():
+    """Verify `while_` round-trips back to the `while` YAML alias."""
     c = Conduit.model_validate(_task_with_while())
     dumped = c.tasks[0].model_dump(by_alias=True)
     assert "while" in dumped
@@ -257,6 +286,7 @@ def test_while_round_trips_to_yaml_alias():
 
 
 def test_flow_id_roundtrip():
+    """Verify a generated flow id parses back into its components."""
     fid = new_flow_id("deploy_pipeline")
     assert FLOW_ID_RE.match(fid)
     conduit, uuid8, ts = parse_flow_id(fid)
@@ -266,11 +296,13 @@ def test_flow_id_roundtrip():
 
 
 def test_parse_flow_id_rejects_invalid():
+    """Verify parse_flow_id raises ValueError for malformed input."""
     with pytest.raises(ValueError):
         parse_flow_id("not-a-flow-id")
 
 
 def test_progress_roundtrip():
+    """Verify Progress serializes to JSON and round-trips faithfully."""
     p = Progress(
         status=FlowStatus.running,
         tasks={"a": TaskProgress(status=TaskStatus.completed, iteration=1, of=1)},

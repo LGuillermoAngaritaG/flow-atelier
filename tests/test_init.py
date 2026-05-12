@@ -11,11 +11,20 @@ from app.schemas.conduit import Conduit
 
 @pytest.fixture
 def fresh_cwd(tmp_path, monkeypatch):
+    """Provide a fresh working directory for `atelier init` tests.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
 
 def test_init_creates_hello_conduit(fresh_cwd):
+    """Verify `atelier init` creates the hello conduit on disk.
+
+    :param fresh_cwd: fresh working directory fixture.
+    """
     runner = CliRunner()
     result = runner.invoke(app, ["init"])
     assert result.exit_code == 0, result.output
@@ -31,12 +40,20 @@ def test_init_creates_hello_conduit(fresh_cwd):
 
 
 def test_init_does_not_create_flows(fresh_cwd):
+    """Verify `atelier init` does not create a flows directory.
+
+    :param fresh_cwd: fresh working directory fixture.
+    """
     runner = CliRunner()
     runner.invoke(app, ["init"])
     assert not (fresh_cwd / ".atelier" / "flows").exists()
 
 
 def test_init_is_idempotent_when_atelier_exists(fresh_cwd):
+    """Verify `atelier init` is a no-op when `.atelier` already exists.
+
+    :param fresh_cwd: fresh working directory fixture.
+    """
     (fresh_cwd / ".atelier").mkdir()
     (fresh_cwd / ".atelier" / "marker").write_text("keep me")
     runner = CliRunner()
@@ -49,6 +66,11 @@ def test_init_is_idempotent_when_atelier_exists(fresh_cwd):
 
 
 def test_init_does_not_touch_global(fresh_cwd, _isolate_global_atelier_dir):
+    """Verify `atelier init` does not write into the global atelier dir.
+
+    :param fresh_cwd: fresh working directory fixture.
+    :param _isolate_global_atelier_dir: isolated global atelier dir fixture.
+    """
     runner = CliRunner()
     runner.invoke(app, ["init"])
     global_dir: Path = _isolate_global_atelier_dir
@@ -56,6 +78,10 @@ def test_init_does_not_touch_global(fresh_cwd, _isolate_global_atelier_dir):
 
 
 def test_hello_conduit_runs_end_to_end(fresh_cwd):
+    """Verify the scaffolded hello conduit runs end-to-end.
+
+    :param fresh_cwd: fresh working directory fixture.
+    """
     runner = CliRunner()
     init_result = runner.invoke(app, ["init"])
     assert init_result.exit_code == 0

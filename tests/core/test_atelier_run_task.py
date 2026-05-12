@@ -9,11 +9,20 @@ from app.schemas.api import RunTaskInput, RunTaskOutput
 
 @pytest.fixture
 def atelier(tmp_path, monkeypatch):
+    """Construct an Atelier instance rooted under tmp_path.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     monkeypatch.delenv("ATELIER_GLOBAL_ATELIER_DIR", raising=False)
     return Atelier(base_dir=tmp_path / ".atelier")
 
 
 async def test_run_single_task_runs_bash_echo_and_returns_logs(atelier):
+    """Verify run_single_task runs bash echo and returns logs with exit 0.
+
+    :param atelier: Atelier facade fixture.
+    """
     payload = RunTaskInput(
         name="echo",
         description="ad-hoc echo",
@@ -31,6 +40,10 @@ async def test_run_single_task_runs_bash_echo_and_returns_logs(atelier):
 
 
 async def test_run_single_task_persists_flow_dir(atelier):
+    """Verify run_single_task writes the flow's logs.json to disk.
+
+    :param atelier: Atelier facade fixture.
+    """
     payload = RunTaskInput(
         name="echo",
         description="ad-hoc echo",
@@ -45,6 +58,10 @@ async def test_run_single_task_persists_flow_dir(atelier):
 
 
 async def test_run_single_task_failure_returns_non_zero_exit(atelier):
+    """Verify run_single_task returns a non-zero exit code on failure.
+
+    :param atelier: Atelier facade fixture.
+    """
     payload = RunTaskInput(
         name="boom",
         description="explode",

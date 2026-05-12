@@ -16,9 +16,19 @@ class StepsExecutor(ExecutorBase):
     """Executor that returns an ExecutionResult with pre-populated steps."""
 
     def __init__(self, steps: list[IntermediateStep]) -> None:
+        """Initialize the executor with a fixed list of steps to emit.
+
+        :param steps: intermediate steps returned with every execution.
+        """
         self._steps = steps
 
     async def execute(self, task, resolved_command, context):
+        """Return a successful ExecutionResult carrying the configured steps.
+
+        :param task: task definition being executed.
+        :param resolved_command: command string after template resolution.
+        :param context: flow context provided by the engine.
+        """
         return ExecutionResult(
             exit_code=0,
             output="done",
@@ -29,10 +39,19 @@ class StepsExecutor(ExecutorBase):
 
 @pytest.fixture
 def store(tmp_path):
+    """Provide a FilesystemStore rooted under the pytest temp path.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     return FilesystemStore(tmp_path / ".atelier")
 
 
 def _conduit(tasks: list[dict[str, Any]], **kw: Any) -> Conduit:
+    """Build a Conduit model from a list of task dicts plus optional fields.
+
+    :param tasks: task dicts each containing a ``name`` and task fields.
+    :param kw: extra top-level conduit fields (inputs, max_concurrency, ...).
+    """
     body = {
         "name": "test",
         "description": "d",
@@ -46,7 +65,10 @@ def _conduit(tasks: list[dict[str, Any]], **kw: Any) -> Conduit:
 
 
 async def test_steps_passed_to_log_entry(store) -> None:
-    """result.steps must appear in the persisted LogEntry."""
+    """result.steps must appear in the persisted LogEntry.
+
+    :param store: FilesystemStore fixture.
+    """
     steps = [
         IntermediateStep(kind=StepKind.thinking, text="analyzing"),
         IntermediateStep(kind=StepKind.tool_call, tool_name="Read"),
@@ -72,7 +94,10 @@ async def test_steps_passed_to_log_entry(store) -> None:
 
 
 async def test_steps_passed_to_task_event(store) -> None:
-    """result.steps must appear in the TaskEvent callback."""
+    """result.steps must appear in the TaskEvent callback.
+
+    :param store: FilesystemStore fixture.
+    """
     steps = [IntermediateStep(kind=StepKind.tool_result, tool_status="completed")]
     conduit = _conduit(
         [
@@ -96,7 +121,10 @@ async def test_steps_passed_to_task_event(store) -> None:
 
 
 async def test_empty_steps_when_executor_returns_none(store) -> None:
-    """Steps default to [] when the executor doesn't populate them."""
+    """Steps default to [] when the executor doesn't populate them.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {

@@ -18,17 +18,34 @@ class _FakeStore:
     def __init__(
         self, child_logs: list[LogEntry], child_status: FlowStatus
     ) -> None:
+        """Initialize the fake store with canned child outputs.
+
+        :param child_logs: log entries to return from read_logs.
+        :param child_status: flow status to return from read_progress.
+        """
         self._child_logs = child_logs
         self._child_status = child_status
 
     def read_logs(self, flow_id: str) -> list[LogEntry]:  # noqa: ARG002
+        """Return the canned child log entries.
+
+        :param flow_id: ignored — present only for interface compatibility.
+        """
         return list(self._child_logs)
 
     def read_progress(self, flow_id: str) -> Progress:  # noqa: ARG002
+        """Return a Progress snapshot with the canned status.
+
+        :param flow_id: ignored — present only for interface compatibility.
+        """
         return Progress(status=self._child_status, tasks={}, started_at="x")
 
 
 def _task(child_name: str = "child") -> TaskDefinition:
+    """Build a conduit TaskDefinition pointing at a nested conduit.
+
+    :param child_name: name of the nested conduit to invoke.
+    """
     return TaskDefinition(
         name="outer",
         description="d",
@@ -39,6 +56,12 @@ def _task(child_name: str = "child") -> TaskDefinition:
 
 
 def _log(task: str, output: str, exit_code: int = 0) -> LogEntry:
+    """Build a LogEntry stub for a child sub-task.
+
+    :param task: name of the sub-task.
+    :param output: captured stdout for the sub-task.
+    :param exit_code: process exit code.
+    """
     return LogEntry(
         task=task, tool="tool:bash", iteration=1, of=1, command="x",
         output=output, exit_code=exit_code,
@@ -49,9 +72,20 @@ def _log(task: str, output: str, exit_code: int = 0) -> LogEntry:
 async def _run(
     child_logs: list[LogEntry], status: FlowStatus = FlowStatus.completed
 ) -> ExecutionResult:
+    """Drive the ConduitExecutor against a fake nested conduit run.
+
+    :param child_logs: log entries the fake store will report for the child.
+    :param status: child FlowStatus to report from read_progress.
+    """
     store = _FakeStore(child_logs, status)
 
     async def run_nested(name: str, inputs: dict[str, Any], parent: str) -> str:
+        """Fake nested conduit launcher returning a stub flow id.
+
+        :param name: nested conduit name.
+        :param inputs: inputs passed to the nested conduit.
+        :param parent: parent flow id.
+        """
         return "child-flow-id"
 
     ctx = FlowContext(
@@ -64,6 +98,7 @@ async def _run(
 
 
 async def test_sub_outputs_collects_every_log_entry_in_order():
+    """Verify sub_outputs preserves the order of child log entries."""
     logs = [
         _log("step_a", "alpha"),
         _log("step_b", "beta"),
@@ -74,6 +109,7 @@ async def test_sub_outputs_collects_every_log_entry_in_order():
 
 
 async def test_sub_outputs_empty_when_child_has_no_logs():
+    """Verify sub_outputs is empty when the child produced no log entries."""
     result = await _run([])
     assert result.sub_outputs == []
 
@@ -90,6 +126,7 @@ async def test_sub_outputs_includes_failed_iterations():
 
 
 def test_execution_result_default_sub_outputs_is_empty_list():
+    """Verify ExecutionResult.sub_outputs defaults to a fresh empty list."""
     r = ExecutionResult()
     assert r.sub_outputs == []
     # mutating one instance must not affect a freshly-built one

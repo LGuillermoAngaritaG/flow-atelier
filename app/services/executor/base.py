@@ -44,4 +44,9 @@ class ExecutorBase(ABC):
 
         ``resolved_command`` is the ``task`` field with templates already
         resolved by the engine.
+
+        :param task: the task definition to execute.
+        :param resolved_command: the task command with templates resolved.
+        :param context: runtime :class:`FlowContext` for the execution.
+        :returns: :class:`ExecutionResult` describing the outcome.
         """

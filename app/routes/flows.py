@@ -13,6 +13,11 @@ router = APIRouter(prefix="/flows", tags=["flows"])
 
 @router.get("")
 async def list_flows(atelier: Atelier = Depends(get_atelier)) -> list[dict]:
+    """List prior flow runs known to the facade.
+
+    :param atelier: injected :class:`Atelier` facade.
+    :returns: JSON-serializable dicts for each prior flow.
+    """
     return [pf.model_dump(mode="json") for pf in atelier.list_prior_flows()]
 
 
@@ -20,6 +25,12 @@ async def list_flows(atelier: Atelier = Depends(get_atelier)) -> list[dict]:
 async def get_flow_logs(
     flow_id: str, atelier: Atelier = Depends(get_atelier)
 ):
+    """Return persisted log entries for ``flow_id`` or 404 if missing.
+
+    :param flow_id: flow identifier from the URL path.
+    :param atelier: injected :class:`Atelier` facade.
+    :returns: list of serialized log entries or an error response.
+    """
     try:
         logs = atelier.get_flow_logs(flow_id)
     except FileNotFoundError as e:

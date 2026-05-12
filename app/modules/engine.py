@@ -44,11 +44,19 @@ class ConduitValidationError(ValueError):
 
 
 def _now() -> str:
+    """Return the current UTC timestamp as an ISO-8601 ``Z`` suffixed string.
+
+    :returns: ISO-8601 timestamp ending with ``Z``.
+    """
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _validate_dag(conduit: Conduit) -> dict[str, list]:
-    """Return {task_name: [parsed deps]}. Raises on cycle/unknown/invalid regex."""
+    """Return {task_name: [parsed deps]}. Raises on cycle/unknown/invalid regex.
+
+    :param conduit: parsed conduit whose tasks/dependencies to validate.
+    :returns: mapping of task name to its list of parsed dependencies.
+    """
     task_names = {t.name for t in conduit.tasks}
     parsed: dict[str, list] = {}
     for t in conduit.tasks:
@@ -70,6 +78,11 @@ def _validate_dag(conduit: Conduit) -> dict[str, list]:
     color = {name: WHITE for name in parsed}
 
     def visit(name: str, stack: list[str]) -> None:
+        """DFS-visit ``name``, raising on grey-revisit cycles.
+
+        :param name: task name to visit next.
+        :param stack: current DFS stack used to render cycle paths.
+        """
         if color[name] == GREY:
             cycle = " -> ".join(stack[stack.index(name):] + [name])
             raise ConduitValidationError(f"circular dependency: {cycle}")
@@ -100,6 +113,11 @@ class Engine:
         executors: dict[str, ExecutorBase],
         store: StoreBase,
     ) -> None:
+        """Wire the engine with its executor registry and persistence store.
+
+        :param executors: mapping of tool string to :class:`ExecutorBase`.
+        :param store: :class:`StoreBase` used to read conduits and persist flow state.
+        """
         self.executors = executors
         self.store = store
 
@@ -120,10 +138,16 @@ class Engine:
         :param conduit: parsed :class:`Conduit` definition
         :param inputs: conduit input map (must cover all required keys)
         :param parent_flow_id: parent flow id for nested ``tool:conduit`` runs
+        :param on_task_event: optional callback invoked after each task
+            iteration with a :class:`TaskEvent`; used by the CLI renderer.
         :param on_flow_started: optional callback invoked exactly once with
             the new flow id, immediately after it is created and before any
             task runs. Lets callers (e.g. the CLI) record the id so they
             can surface it even if the flow later fails.
+        :param on_task_starting: optional callback invoked once per task as it
+            transitions to running for the first time, with ``(task_name, tool)``.
+        :param show_steps: whether nested executors should surface per-step
+            progress events.
         :returns: the new flow id on success
         :raises ConduitValidationError: DAG is invalid (cycle, unknown dep, bad regex)
         :raises ValueError: required inputs are missing
@@ -177,6 +201,10 @@ class Engine:
         state_changed.set()
 
         def _safe_emit(event: TaskEvent) -> None:
+            """Forward ``event`` to ``on_task_event``, swallowing callback errors.
+
+            :param event: :class:`TaskEvent` to dispatch to the renderer.
+            """
             if on_task_event is None:
                 return
             try:
@@ -196,7 +224,13 @@ class Engine:
             result: ExecutionResult,
             duration: float,
         ) -> None:
-            """Emit a TaskEvent for a completed/failed iteration."""
+            """Emit a TaskEvent for a completed/failed iteration.
+
+            :param t: task definition that just executed.
+            :param iteration: 1-based iteration index within ``t.repeat``.
+            :param result: :class:`ExecutionResult` returned by the executor.
+            :param duration: wall-clock duration of the iteration in seconds.
+            """
             _safe_emit(
                 TaskEvent(
                     task=t.name,
@@ -218,7 +252,12 @@ class Engine:
         def emit_disposition(
             name: str, status: TaskStatus, reason: str = ""
         ) -> None:
-            """Emit a TaskEvent for a non-running disposition (skip/cancel)."""
+            """Emit a TaskEvent for a non-running disposition (skip/cancel).
+
+            :param name: task name whose disposition is being reported.
+            :param status: terminal :class:`TaskStatus` (skipped or cancelled).
+            :param reason: optional human-readable reason for the disposition.
+            """
             t = task_map[name]
             _safe_emit(
                 TaskEvent(
@@ -232,6 +271,11 @@ class Engine:
             )
 
         def mark_skipped(name: str, reason: str) -> None:
+            """Mark a task as skipped, persist progress, and emit a disposition.
+
+            :param name: task name being skipped.
+            :param reason: human-readable explanation for the skip.
+            """
             statuses[name] = TaskStatus.skipped
             skip_reasons[name] = reason
             progress.tasks[name] = TaskProgress(
@@ -243,6 +287,11 @@ class Engine:
             emit_disposition(name, TaskStatus.skipped, reason)
 
         def mark_running(name: str, iteration: int) -> None:
+            """Transition a task to running state and persist progress.
+
+            :param name: task name entering the running state.
+            :param iteration: 1-based iteration number about to execute.
+            """
             statuses[name] = TaskStatus.running
             progress.tasks[name] = TaskProgress(
                 status=TaskStatus.running,
@@ -260,6 +309,11 @@ class Engine:
                     pass
 
         def mark_completed(name: str, iteration: int) -> None:
+            """Mark a task as completed at ``iteration`` and persist progress.
+
+            :param name: task name that has finished successfully.
+            :param iteration: 1-based iteration number that completed the task.
+            """
             statuses[name] = TaskStatus.completed
             progress.tasks[name] = TaskProgress(
                 status=TaskStatus.completed,
@@ -272,6 +326,10 @@ class Engine:
             self.store.write_progress(flow_id, progress)
 
         def mark_failed(name: str) -> None:
+            """Mark a task as failed and persist progress.
+
+            :param name: task name that has failed.
+            """
             statuses[name] = TaskStatus.failed
             progress.tasks[name] = TaskProgress(
                 status=TaskStatus.failed,
@@ -280,6 +338,10 @@ class Engine:
             self.store.write_progress(flow_id, progress)
 
         async def run_task(t: TaskDefinition) -> None:
+            """Execute one task end-to-end including repeats and loop predicates.
+
+            :param t: task definition to execute.
+            """
             nonlocal failed, failure_error
             try:
                 # Resolve {{task.output}} templates now (inputs resolved per-iteration)
@@ -528,7 +590,20 @@ class Engine:
         on_task_event: TaskEventCallback | None = None,
         show_steps: bool = True,
     ):
+        """Build the nested-conduit runner passed to executors via FlowContext.
+
+        :param on_task_event: optional task-event callback forwarded to the child run.
+        :param show_steps: whether the nested run should surface per-step progress.
+        :returns: an async callable ``(conduit_name, child_inputs, parent_flow_id)``
+            that loads and runs the named child conduit.
+        """
         async def _run_nested(conduit_name: str, child_inputs, parent_flow_id):
+            """Load and run a child conduit, returning its flow id.
+
+            :param conduit_name: name of the child conduit to load from the store.
+            :param child_inputs: input map passed to the child conduit.
+            :param parent_flow_id: flow id of the parent run, for linkage.
+            """
             child_conduit = self.store.read_conduit(conduit_name)
             return await self.run(
                 child_conduit,

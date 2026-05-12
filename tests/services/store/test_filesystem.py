@@ -23,6 +23,10 @@ tasks:
 
 @pytest.fixture
 def store(tmp_path):
+    """Provide a FilesystemStore seeded with a sample hello conduit.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     s = FilesystemStore(
         tmp_path / ".atelier", global_dir=tmp_path / "global_atelier"
     )
@@ -33,6 +37,10 @@ def store(tmp_path):
 
 
 def test_global_conduits_dir_created_lazily(tmp_path):
+    """Verify the global conduits dir is created lazily on store init.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     global_dir = tmp_path / "g_atelier"
     FilesystemStore(tmp_path / ".atelier", global_dir=global_dir)
     assert (global_dir / "conduits").is_dir()
@@ -40,22 +48,37 @@ def test_global_conduits_dir_created_lazily(tmp_path):
 
 
 def test_global_dir_none_is_allowed(tmp_path):
-    """Store works without a global dir (backwards-compatible path)."""
+    """Store works without a global dir (backwards-compatible path).
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     s = FilesystemStore(tmp_path / ".atelier")
     assert s.list_conduits() == []
 
 
 def test_read_conduit(store):
+    """Verify read_conduit returns the parsed conduit by name.
+
+    :param store: FilesystemStore fixture.
+    """
     c = store.read_conduit("hello")
     assert c.name == "hello"
     assert c.tasks[0].name == "greet"
 
 
 def test_list_conduits(store):
+    """Verify list_conduits returns the names of available conduits.
+
+    :param store: FilesystemStore fixture.
+    """
     assert store.list_conduits() == ["hello"]
 
 
 def test_create_flow_layout(store):
+    """Verify create_flow scaffolds the expected on-disk layout.
+
+    :param store: FilesystemStore fixture.
+    """
     flow_id = store.create_flow("hello", inputs={"a": 1})
     flow_dir = store._flow_dir(flow_id)
     assert (flow_dir / "input.yaml").exists()
@@ -67,6 +90,10 @@ def test_create_flow_layout(store):
 
 
 def test_list_flows(store):
+    """Verify list_flows returns ids for all created flows.
+
+    :param store: FilesystemStore fixture.
+    """
     fid1 = store.create_flow("hello", {})
     fid2 = store.create_flow("hello", {})
     listed = store.list_flows()
@@ -74,6 +101,10 @@ def test_list_flows(store):
 
 
 def test_nested_flow_under_parent(store):
+    """Verify child flows nest under the parent flow's flows directory.
+
+    :param store: FilesystemStore fixture.
+    """
     parent = store.create_flow("hello", {})
     child = store.create_flow("hello", {}, parent_flow_id=parent)
     child_dir = store._flow_dir(child)
@@ -82,6 +113,10 @@ def test_nested_flow_under_parent(store):
 
 
 async def test_append_log_and_read(store):
+    """Verify append_log appends entries and read returns them in order.
+
+    :param store: FilesystemStore fixture.
+    """
     fid = store.create_flow("hello", {})
     e1 = LogEntry(
         task="greet",
@@ -102,6 +137,10 @@ async def test_append_log_and_read(store):
 
 
 def test_progress_roundtrip(store):
+    """Verify write_progress and read_progress round-trip task state.
+
+    :param store: FilesystemStore fixture.
+    """
     fid = store.create_flow("hello", {})
     p = Progress(
         status=FlowStatus.running,
@@ -113,6 +152,10 @@ def test_progress_roundtrip(store):
 
 
 def test_append_input_overwrites(store):
+    """Verify append_input adds new keys and overwrites existing ones.
+
+    :param store: FilesystemStore fixture.
+    """
     fid = store.create_flow("hello", {"existing": "val"})
     store.append_input(fid, "new", "added")
     store.append_input(fid, "existing", "changed")
@@ -121,6 +164,10 @@ def test_append_input_overwrites(store):
 
 
 def test_read_unknown_conduit_raises(store):
+    """Verify read_conduit raises FileNotFoundError for unknown names.
+
+    :param store: FilesystemStore fixture.
+    """
     with pytest.raises(FileNotFoundError):
         store.read_conduit("nonexistent")
 
@@ -149,12 +196,22 @@ tasks:
 
 
 def _write_conduit(root, name, yaml_text):
+    """Write a conduit YAML file under root/conduits/name/conduit.yaml.
+
+    :param root: root directory containing the conduits folder.
+    :param name: conduit directory name.
+    :param yaml_text: YAML content to write.
+    """
     d = root / "conduits" / name
     d.mkdir(parents=True)
     (d / "conduit.yaml").write_text(yaml_text)
 
 
 def test_read_conduit_falls_back_to_global(tmp_path):
+    """Verify read_conduit falls back to the global directory.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     project = tmp_path / ".atelier"
     global_dir = tmp_path / "global_atelier"
     s = FilesystemStore(project, global_dir=global_dir)
@@ -165,6 +222,10 @@ def test_read_conduit_falls_back_to_global(tmp_path):
 
 
 def test_project_conduit_shadows_global(tmp_path):
+    """Verify a project-local conduit shadows a same-named global one.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     project = tmp_path / ".atelier"
     global_dir = tmp_path / "global_atelier"
     s = FilesystemStore(project, global_dir=global_dir)
@@ -175,6 +236,10 @@ def test_project_conduit_shadows_global(tmp_path):
 
 
 def test_list_conduits_unions_project_and_global(tmp_path):
+    """Verify list_conduits returns the union of project and global conduits.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     project = tmp_path / ".atelier"
     global_dir = tmp_path / "global_atelier"
     s = FilesystemStore(project, global_dir=global_dir)
@@ -184,6 +249,10 @@ def test_list_conduits_unions_project_and_global(tmp_path):
 
 
 def test_list_conduits_with_source_project_shadows_global(tmp_path):
+    """Verify list_conduits_with_source reports project shadowing for duplicates.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     project = tmp_path / ".atelier"
     global_dir = tmp_path / "global_atelier"
     s = FilesystemStore(project, global_dir=global_dir)
@@ -198,6 +267,10 @@ def test_list_conduits_with_source_project_shadows_global(tmp_path):
 
 
 def test_read_missing_from_both_raises(tmp_path):
+    """Verify read_conduit raises when missing from both project and global.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     project = tmp_path / ".atelier"
     global_dir = tmp_path / "global_atelier"
     s = FilesystemStore(project, global_dir=global_dir)
@@ -212,6 +285,11 @@ from app.schemas.conduit import Conduit
 
 
 def _build_conduit(name: str, description: str = "d") -> Conduit:
+    """Build a minimal Conduit fixture with a single echo task.
+
+    :param name: conduit name.
+    :param description: conduit description.
+    """
     return Conduit.model_validate(
         {
             "name": name,
@@ -230,6 +308,10 @@ def _build_conduit(name: str, description: str = "d") -> Conduit:
 
 
 def test_write_conduit_creates_yaml_and_round_trips(tmp_path):
+    """Verify write_conduit creates the YAML file and round-trips on read.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     s = FilesystemStore(tmp_path / ".atelier")
     c = _build_conduit("release_notes")
     s.write_conduit(c)
@@ -240,6 +322,10 @@ def test_write_conduit_creates_yaml_and_round_trips(tmp_path):
 
 
 def test_write_conduit_overwrites_existing(tmp_path):
+    """Verify write_conduit overwrites an existing conduit's YAML.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     s = FilesystemStore(tmp_path / ".atelier")
     s.write_conduit(_build_conduit("x", description="old"))
     s.write_conduit(_build_conduit("x", description="new"))
@@ -248,6 +334,10 @@ def test_write_conduit_overwrites_existing(tmp_path):
 
 
 def test_delete_conduit_removes_directory(tmp_path):
+    """Verify delete_conduit removes the conduit directory entirely.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     s = FilesystemStore(tmp_path / ".atelier")
     s.write_conduit(_build_conduit("x"))
     assert s.delete_conduit("x") is True
@@ -257,5 +347,9 @@ def test_delete_conduit_removes_directory(tmp_path):
 
 
 def test_delete_conduit_idempotent_returns_false(tmp_path):
+    """Verify delete_conduit returns False when the conduit does not exist.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     s = FilesystemStore(tmp_path / ".atelier")
     assert s.delete_conduit("nope") is False

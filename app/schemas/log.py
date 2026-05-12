@@ -17,6 +17,10 @@ class StepKind(str, Enum):
 
 
 def _now_iso() -> str:
+    """Return the current UTC time as an ISO 8601 string ending in ``Z``.
+
+    :returns: current UTC timestamp formatted as ISO 8601 with ``Z`` suffix.
+    """
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 

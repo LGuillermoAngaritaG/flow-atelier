@@ -10,6 +10,7 @@ from app.services.executor.prompt_sink import TerminalPromptSink
 
 
 def _make_sink() -> tuple[TerminalPromptSink, io.StringIO]:
+    """Build a TerminalPromptSink wired to a Rich Console writing to a buffer."""
     buf = io.StringIO()
     console = Console(file=buf, soft_wrap=True, no_color=True, width=120)
     sink = TerminalPromptSink(out=buf, console=console)
@@ -18,6 +19,7 @@ def _make_sink() -> tuple[TerminalPromptSink, io.StringIO]:
 
 class TestDisplayStep:
     async def test_thinking_step_prints_dim_text(self) -> None:
+        """Verify thinking steps render with the thought-bubble glyph."""
         sink, buf = _make_sink()
         step = IntermediateStep(kind=StepKind.thinking, text="Let me analyze this code")
         await sink.display_step(step)
@@ -26,6 +28,7 @@ class TestDisplayStep:
         assert "Let me analyze" in output
 
     async def test_tool_call_step_prints_tool_name(self) -> None:
+        """Verify tool_call steps render the tool name."""
         sink, buf = _make_sink()
         step = IntermediateStep(
             kind=StepKind.tool_call,
@@ -39,6 +42,7 @@ class TestDisplayStep:
         assert "Read" in output
 
     async def test_tool_call_step_shows_location(self) -> None:
+        """Verify tool_call steps render the affected file location."""
         sink, buf = _make_sink()
         step = IntermediateStep(
             kind=StepKind.tool_call,
@@ -50,6 +54,7 @@ class TestDisplayStep:
         assert "/src/main.py" in output
 
     async def test_tool_result_step_prints_status(self) -> None:
+        """Verify tool_result steps render the completed status."""
         sink, buf = _make_sink()
         step = IntermediateStep(
             kind=StepKind.tool_result,
@@ -61,6 +66,7 @@ class TestDisplayStep:
         assert "completed" in output
 
     async def test_tool_result_failed_prints_status(self) -> None:
+        """Verify tool_result steps render the failed status."""
         sink, buf = _make_sink()
         step = IntermediateStep(
             kind=StepKind.tool_result,
@@ -72,6 +78,7 @@ class TestDisplayStep:
         assert "failed" in output
 
     async def test_thinking_text_truncated_for_display(self) -> None:
+        """Verify long thinking text is truncated when rendered."""
         sink, buf = _make_sink()
         long_text = "x" * 300
         step = IntermediateStep(kind=StepKind.thinking, text=long_text)

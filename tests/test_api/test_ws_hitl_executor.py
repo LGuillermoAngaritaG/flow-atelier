@@ -15,14 +15,23 @@ from app.services.store.filesystem import FilesystemStore
 
 class _Sink:
     def __init__(self) -> None:
+        """Initialize the sink with an empty list of captured payloads."""
         self.sent: list[dict] = []
 
     async def __call__(self, payload: dict) -> None:
+        """Record an outbound websocket payload.
+
+        :param payload: envelope dict to capture.
+        """
         self.sent.append(payload)
 
 
 @pytest.fixture
 def store(tmp_path) -> FilesystemStore:
+    """Build a FilesystemStore seeded with a minimal ``hello`` conduit.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     s = FilesystemStore(tmp_path / ".atelier")
     conduit_dir = s.base_dir / "conduits" / "hello"
     conduit_dir.mkdir(parents=True)
@@ -35,11 +44,19 @@ def store(tmp_path) -> FilesystemStore:
 
 
 def _ctx(store: FilesystemStore) -> FlowContext:
+    """Create a fresh FlowContext bound to a new flow in ``store``.
+
+    :param store: filesystem store used to allocate the flow id.
+    """
     flow_id = store.create_flow("hello", {})
     return FlowContext(flow_id=flow_id, store=store, inputs={})
 
 
 async def test_executor_emits_hitl_request_envelope(store):
+    """Verify the executor emits a hitl_request envelope when invoked.
+
+    :param store: filesystem store fixture.
+    """
     sink = _Sink()
     broker = WebSocketBroker(send=sink)
     ctx = _ctx(store)
@@ -58,6 +75,7 @@ async def test_executor_emits_hitl_request_envelope(store):
     )
 
     async def respond_later() -> None:
+        """Deliver a hitl answer after a short delay."""
         await asyncio.sleep(0.01)
         await broker.deliver_hitl_answer(ctx.flow_id, {"confirm": "yes"})
 
@@ -73,6 +91,10 @@ async def test_executor_emits_hitl_request_envelope(store):
 
 
 async def test_executor_persists_answers_to_input_yaml(store):
+    """Verify the executor persists hitl answers to input.yaml.
+
+    :param store: filesystem store fixture.
+    """
     sink = _Sink()
     broker = WebSocketBroker(send=sink)
     ctx = _ctx(store)
@@ -91,6 +113,7 @@ async def test_executor_persists_answers_to_input_yaml(store):
     )
 
     async def respond() -> None:
+        """Deliver a hitl answer after a short delay."""
         await asyncio.sleep(0.01)
         await broker.deliver_hitl_answer(ctx.flow_id, {"name": "Alice"})
 
@@ -103,6 +126,10 @@ async def test_executor_persists_answers_to_input_yaml(store):
 
 
 async def test_executor_output_is_yaml_dump_of_answers(store):
+    """Verify the executor output is a YAML dump of the collected answers.
+
+    :param store: filesystem store fixture.
+    """
     sink = _Sink()
     broker = WebSocketBroker(send=sink)
     ctx = _ctx(store)
@@ -121,6 +148,7 @@ async def test_executor_output_is_yaml_dump_of_answers(store):
     )
 
     async def respond() -> None:
+        """Deliver a hitl answer after a short delay."""
         await asyncio.sleep(0.01)
         await broker.deliver_hitl_answer(ctx.flow_id, {"choice": "blue"})
 

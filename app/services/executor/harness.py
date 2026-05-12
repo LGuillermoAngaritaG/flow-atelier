@@ -71,6 +71,9 @@ def _pick_permissive_mode(state: SessionModeState | None) -> str | None:
 
     Walks :data:`PERMISSIVE_MODE_KEYWORDS` and returns the first
     available mode whose ``id`` contains a keyword (case-insensitive).
+
+    :param state: ACP session mode state advertised by the agent, or ``None``.
+    :returns: the most permissive matching mode id, or ``None`` if no match.
     """
     if state is None or not state.available_modes:
         return None
@@ -101,6 +104,11 @@ CURSOR_ACP_LAUNCH = [
 
 
 def build_interactive_suffix(marker: str) -> str:
+    """Return the trailing instruction appended to interactive prompts.
+
+    :param marker: the done-token the agent must emit when finished.
+    :returns: instruction text instructing the agent to emit ``marker`` once.
+    """
     return (
         "\n\nWhen — and only when — you are completely finished answering, "
         f"output the exact token {marker} to signal completion. "
@@ -143,6 +151,13 @@ class _BufferingClient:
         stream_steps: bool = False,
         done_marker: str = DEFAULT_DONE_MARKER,
     ) -> None:
+        """Initialize the buffering client.
+
+        :param sink: prompt sink used for permission requests and streaming.
+        :param stream_messages: if ``True``, mirror agent message chunks to the sink.
+        :param stream_steps: if ``True``, mirror intermediate steps to the sink.
+        :param done_marker: token stripped from streamed text before display.
+        """
         self._sink = sink
         self._stream_messages = stream_messages
         self._stream_steps = stream_steps
@@ -151,6 +166,12 @@ class _BufferingClient:
         self.steps: list[IntermediateStep] = []
 
     async def session_update(self, session_id: str, update, **kwargs) -> None:
+        """Handle a session update notification from the ACP agent.
+
+        :param session_id: id of the session emitting the update (unused).
+        :param update: the ACP update payload (message chunk, tool call, etc.).
+        :param kwargs: additional ACP fields (unused).
+        """
         del session_id, kwargs
         if isinstance(update, AgentMessageChunk):
             content = update.content
@@ -193,6 +214,15 @@ class _BufferingClient:
     async def request_permission(
         self, options, session_id: str, tool_call, **kwargs
     ) -> RequestPermissionResponse:
+        """Auto-approve a tool permission request with the most permissive option.
+
+        :param options: list of permission options offered by the agent.
+        :param session_id: id of the requesting session (unused).
+        :param tool_call: the pending tool call (unused).
+        :param kwargs: additional ACP fields (unused).
+        :returns: an :class:`AllowedOutcome` selecting the chosen option, or
+            a :class:`DeniedOutcome` if no allow option is available.
+        """
         # Backstop for any agent that still asks despite the permissive
         # session mode: silently pick the most permissive allow option.
         # Tool activity is still surfaced to the user via display_step.
@@ -212,46 +242,96 @@ class _BufferingClient:
 
     # ---- capabilities we don't advertise: safe stubs ----
     async def write_text_file(self, *args: Any, **kwargs: Any) -> None:
+        """Reject file-write requests; capability not advertised.
+
+        :param args: ignored positional ACP arguments.
+        :param kwargs: ignored keyword ACP arguments.
+        """
         del args, kwargs
         raise NotImplementedError("file write not supported by atelier harness")
 
     async def read_text_file(self, *args: Any, **kwargs: Any) -> None:
+        """Reject file-read requests; capability not advertised.
+
+        :param args: ignored positional ACP arguments.
+        :param kwargs: ignored keyword ACP arguments.
+        """
         del args, kwargs
         raise NotImplementedError("file read not supported by atelier harness")
 
     async def create_terminal(self, *args: Any, **kwargs: Any) -> None:
+        """Reject terminal-create requests; capability not advertised.
+
+        :param args: ignored positional ACP arguments.
+        :param kwargs: ignored keyword ACP arguments.
+        """
         del args, kwargs
         raise NotImplementedError("terminal not supported by atelier harness")
 
     async def terminal_output(self, *args: Any, **kwargs: Any) -> None:
+        """Reject terminal-output requests; capability not advertised.
+
+        :param args: ignored positional ACP arguments.
+        :param kwargs: ignored keyword ACP arguments.
+        """
         del args, kwargs
         raise NotImplementedError
 
     async def release_terminal(self, *args: Any, **kwargs: Any) -> None:
+        """No-op release_terminal stub.
+
+        :param args: ignored positional ACP arguments.
+        :param kwargs: ignored keyword ACP arguments.
+        """
         del args, kwargs
         return None
 
     async def wait_for_terminal_exit(self, *args: Any, **kwargs: Any) -> None:
+        """Reject wait_for_terminal_exit; capability not advertised.
+
+        :param args: ignored positional ACP arguments.
+        :param kwargs: ignored keyword ACP arguments.
+        """
         del args, kwargs
         raise NotImplementedError
 
     async def kill_terminal(self, *args: Any, **kwargs: Any) -> None:
+        """No-op kill_terminal stub.
+
+        :param args: ignored positional ACP arguments.
+        :param kwargs: ignored keyword ACP arguments.
+        """
         del args, kwargs
         return None
 
     async def ext_method(
         self, method: str, params: dict[str, Any]
     ) -> dict[str, Any]:
+        """No-op handler for unknown ACP extension methods.
+
+        :param method: the extension method name (unused).
+        :param params: the extension method params (unused).
+        :returns: an empty dict.
+        """
         del method, params
         return {}
 
     async def ext_notification(
         self, method: str, params: dict[str, Any]
     ) -> None:
+        """No-op handler for unknown ACP extension notifications.
+
+        :param method: the notification method name (unused).
+        :param params: the notification params (unused).
+        """
         del method, params
         return None
 
     def on_connect(self, conn) -> None:
+        """Store the ACP connection for later use.
+
+        :param conn: the ACP connection handed to the client on attach.
+        """
         self._conn = conn
 
 
@@ -270,6 +350,14 @@ class AcpHarnessExecutor(ExecutorBase):
         sink: PromptSink | None = None,
         done_marker: str | None = None,
     ) -> None:
+        """Initialize the harness executor.
+
+        :param launch_cmd: argv used to spawn the ACP agent subprocess.
+        :param sink: optional :class:`PromptSink` for user I/O; defaults to
+            :class:`TerminalPromptSink`.
+        :param done_marker: optional done-token override; defaults to
+            :data:`DEFAULT_DONE_MARKER`.
+        """
         if not launch_cmd:
             raise ValueError("launch_cmd must not be empty")
         self.launch_cmd = list(launch_cmd)
@@ -282,6 +370,13 @@ class AcpHarnessExecutor(ExecutorBase):
         resolved_command: str,
         context: FlowContext,
     ) -> ExecutionResult:
+        """Drive an ACP agent for one task, single-turn or interactive.
+
+        :param task: the task definition; ``task.interactive`` selects the loop.
+        :param resolved_command: the prompt text with templates resolved.
+        :param context: runtime :class:`FlowContext` providing timeout/step flags.
+        :returns: :class:`ExecutionResult` capturing buffered output and steps.
+        """
         prompt_text = resolved_command
         if task.interactive:
             prompt_text = prompt_text + build_interactive_suffix(self.done_marker)
@@ -323,6 +418,15 @@ class AcpHarnessExecutor(ExecutorBase):
         interactive: bool,
         cwd: str,
     ) -> ExecutionResult:
+        """Spawn the agent, initialize a session, and run one or many turns.
+
+        :param client: buffering ACP client receiving session updates.
+        :param initial_prompt: first prompt to send (already suffix-augmented
+            for interactive runs).
+        :param interactive: ``True`` to loop until the done marker arrives.
+        :param cwd: working directory passed to the agent process.
+        :returns: :class:`ExecutionResult` from single-turn or interactive run.
+        """
         cmd, *args = self.launch_cmd
         # Raise the per-line StreamReader limit well above asyncio's 64 KiB
         # default; Codex and similar harnesses emit large JSON-RPC frames
@@ -362,6 +466,9 @@ class AcpHarnessExecutor(ExecutorBase):
         ``session/request_permission``. A bad mode switch is non-fatal —
         the auto-approve backstop in :meth:`_BufferingClient.request_permission`
         still catches any residual prompts.
+
+        :param conn: the ACP connection used to issue ``set_session_mode``.
+        :param sess: the new-session response carrying advertised mode ids.
         """
         modes = getattr(sess, "modes", None)
         picked = _pick_permissive_mode(modes)
@@ -379,6 +486,14 @@ class AcpHarnessExecutor(ExecutorBase):
         prompt_text: str,
         client: _BufferingClient,
     ) -> ExecutionResult:
+        """Send one prompt and return the resulting :class:`ExecutionResult`.
+
+        :param conn: the active ACP connection.
+        :param session_id: the ACP session id to address.
+        :param prompt_text: the prompt content to send.
+        :param client: buffering client capturing streamed output.
+        :returns: :class:`ExecutionResult` built from the agent's stop_reason.
+        """
         resp = await conn.prompt(
             prompt=[TextContentBlock(type="text", text=prompt_text)],
             session_id=session_id,
@@ -395,6 +510,8 @@ class AcpHarnessExecutor(ExecutorBase):
         be running when ``conn.prompt`` returns. We wait for the client's
         buffer to stabilize (no growth for two consecutive short yields)
         or until ``max_wait`` seconds have passed.
+
+        :param client: buffering client whose ``buffer`` is polled for growth.
         """
         max_wait = 0.5
         stable_yields_required = 2
@@ -421,6 +538,15 @@ class AcpHarnessExecutor(ExecutorBase):
         initial_prompt: str,
         client: _BufferingClient,
     ) -> ExecutionResult:
+        """Loop prompts and user replies until the done marker or limit.
+
+        :param conn: the active ACP connection.
+        :param session_id: the ACP session id to address.
+        :param initial_prompt: the first prompt (already suffix-augmented).
+        :param client: buffering client whose buffer is checked for the marker.
+        :returns: :class:`ExecutionResult` with cleaned output on success, or
+            an error result on input failure or turn-limit exhaustion.
+        """
         next_prompt = initial_prompt
         last_stop = "end_turn"
         # Sinks that don't render visually (e.g. API/queue transports)
@@ -486,6 +612,12 @@ class AcpHarnessExecutor(ExecutorBase):
     def _result_for_turn(
         client: _BufferingClient, stop_reason: str
     ) -> ExecutionResult:
+        """Build an :class:`ExecutionResult` from a finished single turn.
+
+        :param client: buffering client holding the accumulated output/steps.
+        :param stop_reason: the agent's reported ``stop_reason`` for the turn.
+        :returns: :class:`ExecutionResult` with exit_code 0 on normal stops.
+        """
         output = "".join(client.buffer)
         if stop_reason in ("end_turn", "max_tokens"):
             return ExecutionResult(
@@ -510,6 +642,13 @@ class ClaudeHarness(AcpHarnessExecutor):
         launch_cmd: list[str] | None = None,
         done_marker: str | None = None,
     ) -> None:
+        """Initialize the Claude Code harness.
+
+        :param sink: optional :class:`PromptSink` for user I/O.
+        :param launch_cmd: optional argv override; defaults to
+            :data:`CLAUDE_ACP_LAUNCH`.
+        :param done_marker: optional done-token override.
+        """
         super().__init__(
             launch_cmd=launch_cmd or list(CLAUDE_ACP_LAUNCH),
             sink=sink,
@@ -526,6 +665,13 @@ class CodexHarness(AcpHarnessExecutor):
         launch_cmd: list[str] | None = None,
         done_marker: str | None = None,
     ) -> None:
+        """Initialize the Codex harness.
+
+        :param sink: optional :class:`PromptSink` for user I/O.
+        :param launch_cmd: optional argv override; defaults to
+            :data:`CODEX_ACP_LAUNCH`.
+        :param done_marker: optional done-token override.
+        """
         super().__init__(
             launch_cmd=launch_cmd or list(CODEX_ACP_LAUNCH),
             sink=sink,
@@ -542,6 +688,13 @@ class OpencodeHarness(AcpHarnessExecutor):
         launch_cmd: list[str] | None = None,
         done_marker: str | None = None,
     ) -> None:
+        """Initialize the opencode harness.
+
+        :param sink: optional :class:`PromptSink` for user I/O.
+        :param launch_cmd: optional argv override; defaults to
+            :data:`OPENCODE_ACP_LAUNCH`.
+        :param done_marker: optional done-token override.
+        """
         super().__init__(
             launch_cmd=launch_cmd or list(OPENCODE_ACP_LAUNCH),
             sink=sink,
@@ -558,6 +711,13 @@ class CopilotHarness(AcpHarnessExecutor):
         launch_cmd: list[str] | None = None,
         done_marker: str | None = None,
     ) -> None:
+        """Initialize the Copilot CLI harness.
+
+        :param sink: optional :class:`PromptSink` for user I/O.
+        :param launch_cmd: optional argv override; defaults to
+            :data:`COPILOT_ACP_LAUNCH`.
+        :param done_marker: optional done-token override.
+        """
         super().__init__(
             launch_cmd=launch_cmd or list(COPILOT_ACP_LAUNCH),
             sink=sink,
@@ -574,6 +734,13 @@ class CursorHarness(AcpHarnessExecutor):
         launch_cmd: list[str] | None = None,
         done_marker: str | None = None,
     ) -> None:
+        """Initialize the Cursor harness.
+
+        :param sink: optional :class:`PromptSink` for user I/O.
+        :param launch_cmd: optional argv override; defaults to
+            :data:`CURSOR_ACP_LAUNCH`.
+        :param done_marker: optional done-token override.
+        """
         super().__init__(
             launch_cmd=launch_cmd or list(CURSOR_ACP_LAUNCH),
             sink=sink,

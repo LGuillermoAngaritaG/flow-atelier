@@ -16,7 +16,11 @@ from app.services.scheduler import SchedulerDaemon, default_local_zone
 @pytest.mark.timeout(15)
 async def test_serve_smoke_boots_and_serves_conduits(tmp_path, monkeypatch):
     """Boot uvicorn programmatically on an ephemeral port, hit GET /conduits,
-    then shut down cleanly."""
+    then shut down cleanly.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     monkeypatch.delenv("ATELIER_GLOBAL_ATELIER_DIR", raising=False)
     atelier = Atelier(base_dir=tmp_path / ".atelier")
     daemon = SchedulerDaemon(
@@ -29,6 +33,10 @@ async def test_serve_smoke_boots_and_serves_conduits(tmp_path, monkeypatch):
 
     @asynccontextmanager
     async def _lifespan(_app):
+        """Start/stop the scheduler daemon around the app lifespan.
+
+        :param _app: FastAPI app instance (unused).
+        """
         await daemon.start()
         try:
             yield

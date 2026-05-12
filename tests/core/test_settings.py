@@ -5,6 +5,11 @@ from app.core.settings import AtelierSettings
 
 
 def test_defaults(tmp_path, monkeypatch):
+    """Verify AtelierSettings exposes the expected defaults with no env overrides.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     monkeypatch.chdir(tmp_path)
     # Clear any ATELIER_* env vars that may leak in
     for k in list(__import__("os").environ):
@@ -20,6 +25,11 @@ def test_defaults(tmp_path, monkeypatch):
 
 
 def test_env_override(tmp_path, monkeypatch):
+    """Verify AtelierSettings honors ATELIER_* environment overrides.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     monkeypatch.setenv("ATELIER_DEFAULT_TIMEOUT", "42")
     monkeypatch.setenv(
         "ATELIER_CLAUDE_LAUNCH_CMD", '["npx","-y","custom-claude-acp"]'

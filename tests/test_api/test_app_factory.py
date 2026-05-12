@@ -10,11 +10,20 @@ from app.services.api.app import FastApiServer
 
 @pytest.fixture
 def atelier(tmp_path, monkeypatch):
+    """Build an Atelier rooted at a temp directory.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     monkeypatch.delenv("ATELIER_GLOBAL_ATELIER_DIR", raising=False)
     return Atelier(base_dir=tmp_path / ".atelier")
 
 
 async def test_create_app_returns_fastapi_with_liveness(atelier):
+    """Verify create_app returns a FastAPI exposing the liveness endpoint.
+
+    :param atelier: atelier fixture.
+    """
     server = FastApiServer()
     app = server.create_app(atelier)
     transport = httpx.ASGITransport(app=app)
@@ -25,6 +34,10 @@ async def test_create_app_returns_fastapi_with_liveness(atelier):
 
 
 async def test_create_app_registers_cors(atelier):
+    """Verify create_app registers CORS for an allowed origin.
+
+    :param atelier: atelier fixture.
+    """
     server = FastApiServer()
     app = server.create_app(atelier, cors_origins=["http://localhost:5173"])
     transport = httpx.ASGITransport(app=app)
@@ -43,6 +56,10 @@ async def test_create_app_registers_cors(atelier):
 
 
 async def test_create_app_default_cors_is_wildcard(atelier):
+    """Verify the default CORS policy is wildcard (or echoed origin).
+
+    :param atelier: atelier fixture.
+    """
     server = FastApiServer()
     app = server.create_app(atelier)
     transport = httpx.ASGITransport(app=app)
