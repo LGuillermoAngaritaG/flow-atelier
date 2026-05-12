@@ -3,11 +3,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from app.schemas.conduit import TaskDefinition, ToolType
 from app.schemas.log import ExecutionResult, LogEntry
-from app.schemas.progress import FlowStatus, Progress, TaskStatus
+from app.schemas.progress import FlowStatus, Progress
 from app.services.executor.base import FlowContext
 from app.services.executor.conduit import ConduitExecutor
 

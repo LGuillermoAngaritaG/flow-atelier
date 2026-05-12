@@ -44,7 +44,6 @@ from app.services.executor.prompt_sink import (
     TerminalPromptSink,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -394,7 +393,7 @@ class AcpHarnessExecutor(ExecutorBase):
                 self._drive_session(client, prompt_text, task.interactive, cwd),
                 timeout=context.timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ExecutionResult(
                 exit_code=124,
                 stdout="".join(client.buffer),

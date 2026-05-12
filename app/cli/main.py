@@ -36,11 +36,11 @@ app.add_typer(scheduler_app, name="scheduler")
 # decoration order in app/main.py so --help layout stays byte-identical.
 from app.cli.commands import (  # noqa: E402, F401
     init,
-    run,
-    status,
     logs,
-    list as _list,
+    run,
     schedule,
     scheduler,
     serve,
+    status,
 )
+from app.cli.commands import list as _list  # noqa: E402, F401

@@ -17,8 +17,9 @@ from __future__ import annotations
 import asyncio
 import sys
 import traceback
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from app.modules.conditions import (
     DependencyParseError,
@@ -48,7 +49,7 @@ def _now() -> str:
 
     :returns: ISO-8601 timestamp ending with ``Z``.
     """
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _validate_dag(conduit: Conduit) -> dict[str, list]:
@@ -405,13 +406,13 @@ class Engine:
                     for iteration in range(1, t.repeat + 1):
                         mark_running(t.name, iteration)
                         started = _now()
-                        start_ts = datetime.now(timezone.utc)
+                        start_ts = datetime.now(UTC)
                         try:
                             result = await asyncio.wait_for(
                                 executor.execute(t, resolved, ctx),
                                 timeout=conduit.timeout,
                             )
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             result = ExecutionResult(
                                 exit_code=124,
                                 stderr=f"engine timeout after {conduit.timeout}s",
@@ -422,7 +423,7 @@ class Engine:
                             )
                         finished = _now()
                         duration = (
-                            datetime.now(timezone.utc) - start_ts
+                            datetime.now(UTC) - start_ts
                         ).total_seconds()
                         await self.store.append_log(
                             flow_id,

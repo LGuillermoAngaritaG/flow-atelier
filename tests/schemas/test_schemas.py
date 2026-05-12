@@ -5,9 +5,8 @@ import pytest
 import yaml
 
 from app.schemas.conduit import Conduit, ToolType
-from app.schemas.flow import new_flow_id, parse_flow_id, FLOW_ID_RE
+from app.schemas.flow import FLOW_ID_RE, new_flow_id, parse_flow_id
 from app.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
-
 
 SAMPLE_YAML = """
 name: deploy_pipeline
@@ -289,10 +288,10 @@ def test_flow_id_roundtrip():
     """Verify a generated flow id parses back into its components."""
     fid = new_flow_id("deploy_pipeline")
     assert FLOW_ID_RE.match(fid)
-    conduit, uuid8, ts = parse_flow_id(fid)
+    conduit, uuid8, date = parse_flow_id(fid)
     assert conduit == "deploy_pipeline"
     assert len(uuid8) == 8
-    assert re.match(r"^\d{8}T\d{6}Z$", ts)
+    assert re.match(r"^\d{8}$", date)
 
 
 def test_parse_flow_id_rejects_invalid():

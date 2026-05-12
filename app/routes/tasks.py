@@ -7,7 +7,6 @@ from app.core.atelier import Atelier
 from app.schemas.api import RunTaskInput, RunTaskOutput
 from app.services.api.base import get_atelier
 
-
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 

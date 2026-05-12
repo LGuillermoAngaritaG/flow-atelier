@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse
 from app.core.atelier import Atelier
 from app.services.api.base import get_atelier
 
-
 router = APIRouter(prefix="/flows", tags=["flows"])
 
 

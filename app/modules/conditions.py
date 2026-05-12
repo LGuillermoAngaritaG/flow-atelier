@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal, Union
+from typing import Literal
 
 from app.schemas.progress import TaskStatus
 
@@ -45,7 +45,7 @@ class ConditionalDependency:
         return self._compiled
 
 
-Dependency = Union[PlainDependency, ConditionalDependency]
+Dependency = PlainDependency | ConditionalDependency
 
 
 class DependencyParseError(ValueError):

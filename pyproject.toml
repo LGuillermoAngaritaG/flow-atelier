@@ -29,12 +29,33 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-timeout>=2.3",
     "websockets>=16.0",
+    "ruff>=0.6",
+    "pre-commit>=3.8",
+    "pyinstaller>=6.10",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 timeout = 300
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = [
+    "B008",
+    "B904",
+    "E402",
+    "E741",
+    "SIM105",
+    "UP042",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B", "SIM", "E501"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

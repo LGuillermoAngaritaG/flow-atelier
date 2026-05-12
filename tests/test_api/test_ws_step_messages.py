@@ -1,12 +1,6 @@
 """Test that WebSocket emits StepMessage when tasks have steps."""
 from __future__ import annotations
 
-import asyncio
-from typing import Any
-from unittest.mock import AsyncMock
-
-import pytest
-
 from app.schemas.log import IntermediateStep, StepKind, TaskEvent
 from app.schemas.progress import TaskStatus
 

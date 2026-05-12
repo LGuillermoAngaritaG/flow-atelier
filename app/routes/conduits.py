@@ -15,7 +15,6 @@ from app.schemas.api import (
 )
 from app.services.api.base import get_atelier
 
-
 router = APIRouter(prefix="/conduits", tags=["conduits"])
 
 

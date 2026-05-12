@@ -118,6 +118,7 @@ class TestTerminalPromptSink:
         :param monkeypatch: pytest monkeypatch fixture.
         """
         import sys as _sys
+
         import app.cli.rendering.multiline_input as _ml
 
         stream = io.StringIO()

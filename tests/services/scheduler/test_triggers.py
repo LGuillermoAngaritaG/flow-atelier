@@ -1,7 +1,8 @@
 """Tests for trigger construction (APScheduler integration, JSON store)."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC as _STDLIB_UTC
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.combining import OrTrigger
@@ -10,7 +11,6 @@ from apscheduler.triggers.date import DateTrigger
 
 from app.schemas.api import ScheduledJob
 from app.services.scheduler.triggers import default_local_zone, to_trigger
-
 
 UTC = ZoneInfo("UTC")
 NYC = ZoneInfo("America/New_York")
@@ -45,7 +45,7 @@ def test_once_aware_run_at_uses_explicit_tz():
     trig = to_trigger(job, default_zone=NYC)
     assert isinstance(trig, DateTrigger)
     fire = trig.get_next_fire_time(None, datetime(2026, 4, 1, tzinfo=UTC))
-    assert fire == datetime(2026, 5, 1, 9, 0, tzinfo=timezone.utc)
+    assert fire == datetime(2026, 5, 1, 9, 0, tzinfo=_STDLIB_UTC)
 
 
 def test_once_naive_run_at_uses_default_zone():

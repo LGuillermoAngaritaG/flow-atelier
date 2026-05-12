@@ -22,7 +22,6 @@ from app.schemas.conduit import Conduit
 from app.schemas.flow import parse_flow_id
 from app.schemas.log import LogEntry
 from app.schemas.progress import Progress
-from app.services.scheduler.store import ScheduleStore
 from app.services.executor.bash import BashExecutor
 from app.services.executor.conduit import ConduitExecutor
 from app.services.executor.harness import (
@@ -34,8 +33,8 @@ from app.services.executor.harness import (
 )
 from app.services.executor.hitl import HitlExecutor
 from app.services.executor.prompt_sink import PromptSink, TerminalPromptSink
+from app.services.scheduler.store import ScheduleStore
 from app.services.store.filesystem import FilesystemStore
-
 
 logger = logging.getLogger(__name__)
 

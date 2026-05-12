@@ -1,5 +1,4 @@
 """BashExecutor tests."""
-import pytest
 
 from app.schemas.conduit import TaskDefinition, ToolType
 from app.services.executor.base import FlowContext

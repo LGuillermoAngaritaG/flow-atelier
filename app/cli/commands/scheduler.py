@@ -8,8 +8,8 @@ from pathlib import Path
 import typer
 
 from app.cli._shared import _schedule_store, console
-from app.cli.main import scheduler_app
 from app.cli.commands.schedule import schedule_list_cmd
+from app.cli.main import scheduler_app
 from app.services.scheduler import SchedulerDaemon, default_local_zone
 
 

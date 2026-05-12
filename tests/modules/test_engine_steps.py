@@ -8,7 +8,7 @@ import pytest
 from app.modules.engine import Engine
 from app.schemas.conduit import Conduit
 from app.schemas.log import ExecutionResult, IntermediateStep, StepKind, TaskEvent
-from app.services.executor.base import ExecutorBase, FlowContext
+from app.services.executor.base import ExecutorBase
 from app.services.store.filesystem import FilesystemStore
 
 

@@ -3,34 +3,34 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-FLOW_ID_RE = re.compile(r"^(?P<conduit>.+)_(?P<uuid>[0-9a-f]{8})_(?P<ts>\d{8}T\d{6}Z)$")
+FLOW_ID_RE = re.compile(r"^(?P<date>\d{8})_(?P<uuid>[0-9a-f]{8})_(?P<conduit>.+)$")
 
 
 def new_flow_id(conduit_name: str) -> str:
-    """Build a filesystem-safe flow id: <conduit>_<uuid8>_<YYYYMMDDTHHMMSSZ>.
+    """Build a filesystem-safe flow id: <YYYYMMDD>_<uuid8>_<conduit>.
 
     :param conduit_name: name of the conduit this flow belongs to.
-    :returns: a new flow id string composed of conduit, short uuid, and UTC timestamp.
+    :returns: a new flow id string composed of UTC date, short uuid, and conduit name.
     """
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"{conduit_name}_{uuid.uuid4().hex[:8]}_{ts}"
+    date = datetime.now(UTC).strftime("%Y%m%d")
+    return f"{date}_{uuid.uuid4().hex[:8]}_{conduit_name}"
 
 
 def parse_flow_id(flow_id: str) -> tuple[str, str, str]:
-    """Return (conduit_name, uuid8, timestamp) — raises ValueError if invalid.
+    """Return (conduit_name, uuid8, date) — raises ValueError if invalid.
 
     :param flow_id: a flow id previously built by :func:`new_flow_id`.
-    :returns: a tuple of ``(conduit_name, uuid8, timestamp)`` parsed from the id.
+    :returns: a tuple of ``(conduit_name, uuid8, date)`` parsed from the id.
     """
     m = FLOW_ID_RE.match(flow_id)
     if not m:
         raise ValueError(f"Invalid flow id: {flow_id!r}")
-    return m.group("conduit"), m.group("uuid"), m.group("ts")
+    return m.group("conduit"), m.group("uuid"), m.group("date")
 
 
 class Flow(BaseModel):
