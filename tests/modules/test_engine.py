@@ -20,12 +20,24 @@ class FakeExecutor(ExecutorBase):
         fail: set[str] | None = None,
         sleep: float = 0.0,
     ):
+        """Initialize the fake executor.
+
+        :param outputs: optional task-name to stdout mapping.
+        :param fail: optional set of task names that should fail.
+        :param sleep: optional delay (seconds) before each execution returns.
+        """
         self.outputs = outputs or {}
         self.fail = fail or set()
         self.sleep = sleep
         self.calls: list[str] = []
 
     async def execute(self, task, resolved_command, context):
+        """Record the call and return a scripted ExecutionResult.
+
+        :param task: task definition being executed.
+        :param resolved_command: command string after template resolution.
+        :param context: flow context provided by the engine.
+        """
         self.calls.append(task.name)
         if self.sleep:
             await asyncio.sleep(self.sleep)
@@ -37,10 +49,19 @@ class FakeExecutor(ExecutorBase):
 
 @pytest.fixture
 def store(tmp_path):
+    """Provide a FilesystemStore rooted under the pytest temp path.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
     return FilesystemStore(tmp_path / ".atelier")
 
 
 def _conduit(tasks: list[dict[str, Any]], **kw: Any) -> Conduit:
+    """Build a Conduit model from a list of task dicts plus optional fields.
+
+    :param tasks: task dicts each containing a ``name`` and task fields.
+    :param kw: extra top-level conduit fields (inputs, max_concurrency, ...).
+    """
     body = {
         "name": "test",
         "description": "d",
@@ -51,6 +72,10 @@ def _conduit(tasks: list[dict[str, Any]], **kw: Any) -> Conduit:
 
 
 async def test_linear_happy_path(store):
+    """Verify a two-task linear DAG runs both tasks to completion in order.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
@@ -68,6 +93,10 @@ async def test_linear_happy_path(store):
 
 
 async def test_parallel_fan_out(store):
+    """Verify a fan-out/fan-in DAG completes all tasks.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "root", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
@@ -86,6 +115,10 @@ async def test_parallel_fan_out(store):
 
 
 async def test_conditional_branch_match_and_not_match(store):
+    """Verify match/not_match conditional dependencies pick the right branch.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "review", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
@@ -105,6 +138,10 @@ async def test_conditional_branch_match_and_not_match(store):
 
 
 async def test_repeat_runs_n_times(store):
+    """Verify a task with ``repeat: N`` is invoked N times.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "a", "description": "d", "task": "x", "tool": "tool:bash",
@@ -118,6 +155,10 @@ async def test_repeat_runs_n_times(store):
 
 
 async def test_repeat_fails_aborts(store):
+    """Verify a failing iteration aborts the rest of a repeat loop.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "a", "description": "d", "task": "x", "tool": "tool:bash",
@@ -127,10 +168,17 @@ async def test_repeat_fails_aborts(store):
     # Fail on the 2nd iteration by subclassing
     class FailSecond(FakeExecutor):
         def __init__(self):
+            """Initialize the counter used to fail on the 2nd call."""
             super().__init__()
             self.count = 0
 
         async def execute(self, task, resolved_command, context):
+            """Fail on the 2nd execution; succeed otherwise.
+
+            :param task: task definition being executed.
+            :param resolved_command: command string after template resolution.
+            :param context: flow context provided by the engine.
+            """
             self.count += 1
             self.calls.append(task.name)
             if self.count == 2:
@@ -145,6 +193,10 @@ async def test_repeat_fails_aborts(store):
 
 
 async def test_fail_fast_cancels_siblings(store):
+    """Verify a failing task cancels still-running sibling tasks.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "fail", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
@@ -154,6 +206,12 @@ async def test_fail_fast_cancels_siblings(store):
     )
     class Mixed(FakeExecutor):
         async def execute(self, task, resolved_command, context):
+            """Fail the ``fail`` task immediately; stall everything else.
+
+            :param task: task definition being executed.
+            :param resolved_command: command string after template resolution.
+            :param context: flow context provided by the engine.
+            """
             self.calls.append(task.name)
             if task.name == "fail":
                 return ExecutionResult(exit_code=1, stderr="boom")
@@ -173,6 +231,10 @@ async def test_fail_fast_cancels_siblings(store):
 
 
 async def test_skip_propagation_via_template(store):
+    """Verify skipping a task propagates skip to template-dependent successors.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
@@ -192,6 +254,10 @@ async def test_skip_propagation_via_template(store):
 
 
 async def test_template_inputs_resolved(store):
+    """Verify ``{{inputs.x}}`` is resolved into the command before execution.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "a", "description": "d", "task": "echo {{inputs.msg}}",
@@ -203,6 +269,12 @@ async def test_template_inputs_resolved(store):
 
     class Capturing(FakeExecutor):
         async def execute(self, task, resolved_command, context):
+            """Capture the resolved command and return success.
+
+            :param task: task definition being executed.
+            :param resolved_command: command string after template resolution.
+            :param context: flow context provided by the engine.
+            """
             captured["cmd"] = resolved_command
             return ExecutionResult(exit_code=0, output="ok")
 
@@ -213,6 +285,10 @@ async def test_template_inputs_resolved(store):
 
 
 async def test_missing_input_raises(store):
+    """Verify a missing required input raises ValueError before execution.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [{"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []}],
         inputs={"x": "required"},
@@ -223,6 +299,10 @@ async def test_missing_input_raises(store):
 
 
 async def test_cycle_detection(store):
+    """Verify a cycle in the DAG raises ConduitValidationError.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": ["b"]},
@@ -235,6 +315,10 @@ async def test_cycle_detection(store):
 
 
 async def test_unknown_dep_target(store):
+    """Verify a dependency on an unknown task raises ConduitValidationError.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": ["ghost"]},
@@ -246,6 +330,10 @@ async def test_unknown_dep_target(store):
 
 
 async def test_invalid_regex(store):
+    """Verify an invalid regex in a conditional dep raises ConduitValidationError.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
@@ -259,6 +347,10 @@ async def test_invalid_regex(store):
 
 
 async def test_concurrency_cap(store):
+    """Verify ``max_concurrency`` caps the number of in-flight tasks.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
@@ -274,6 +366,12 @@ async def test_concurrency_cap(store):
 
     class Cap(FakeExecutor):
         async def execute(self, task, resolved_command, context):
+            """Track concurrent invocations and return success.
+
+            :param task: task definition being executed.
+            :param resolved_command: command string after template resolution.
+            :param context: flow context provided by the engine.
+            """
             nonlocal active, max_seen
             async with lock:
                 active += 1
@@ -291,6 +389,10 @@ async def test_concurrency_cap(store):
 
 
 async def test_on_task_event_fires_for_each_completed_task(store):
+    """Verify on_task_event is called once per completed task with output.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
@@ -308,6 +410,10 @@ async def test_on_task_event_fires_for_each_completed_task(store):
 
 
 async def test_on_task_event_fires_for_failed_task(store):
+    """Verify on_task_event fires with failure metadata when a task fails.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "boom", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
@@ -326,6 +432,11 @@ async def test_on_task_event_fires_for_failed_task(store):
 
 
 async def test_on_task_event_callback_error_does_not_break_flow(store, capsys):
+    """Verify an error in on_task_event is swallowed and the flow still completes.
+
+    :param store: FilesystemStore fixture.
+    :param capsys: pytest captured-output fixture.
+    """
     conduit = _conduit(
         [
             {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
@@ -335,6 +446,10 @@ async def test_on_task_event_callback_error_does_not_break_flow(store, capsys):
     engine = Engine({"tool:bash": fake}, store)
 
     def bad_callback(event):
+        """Always raise to simulate a broken task-event consumer.
+
+        :param event: TaskEvent dispatched by the engine.
+        """
         raise RuntimeError("renderer exploded")
 
     flow_id = await engine.run(conduit, {}, on_task_event=bad_callback)
@@ -347,7 +462,10 @@ async def test_on_task_event_callback_error_does_not_break_flow(store, capsys):
 
 async def test_on_task_event_fires_for_skipped_task(store):
     """A task skipped via a conditional dependency must still emit a
-    TaskEvent so renderers can show it (previously it disappeared)."""
+    TaskEvent so renderers can show it (previously it disappeared).
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "review", "description": "d", "task": "x",
@@ -371,6 +489,8 @@ async def test_on_task_event_fires_for_cancelled_task(store):
     """When fail-fast cancels still-pending tasks, those tasks must
     emit a TaskEvent so the user sees they were cancelled rather than
     just silently missing from the live output.
+
+    :param store: FilesystemStore fixture.
     """
     conduit = _conduit(
         [
@@ -391,6 +511,10 @@ async def test_on_task_event_fires_for_cancelled_task(store):
 
 
 async def test_on_task_event_fires_per_repeat_iteration(store):
+    """Verify on_task_event fires once per repeat iteration with iteration/of set.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "a", "description": "d", "task": "x", "tool": "tool:bash",
@@ -413,12 +537,23 @@ class ScriptedExecutor(FakeExecutor):
     """Returns outputs from a scripted list, one per call."""
 
     def __init__(self, outputs_per_call: list[str], fail_on: int | None = None):
+        """Initialize the scripted executor.
+
+        :param outputs_per_call: outputs returned, one per call, in order.
+        :param fail_on: optional 1-indexed call number that should fail.
+        """
         super().__init__()
         self._scripted = outputs_per_call
         self._fail_on = fail_on  # 1-indexed iteration to fail on
         self._n = 0
 
     async def execute(self, task, resolved_command, context):
+        """Return the next scripted output, failing on the configured call.
+
+        :param task: task definition being executed.
+        :param resolved_command: command string after template resolution.
+        :param context: flow context provided by the engine.
+        """
         self._n += 1
         self.calls.append(task.name)
         if self._fail_on is not None and self._n == self._fail_on:
@@ -431,6 +566,10 @@ class ScriptedExecutor(FakeExecutor):
 
 
 async def test_until_match_breaks_loop_early(store):
+    """Verify ``until: output.match(...)`` breaks the repeat loop early.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
@@ -449,6 +588,10 @@ async def test_until_match_breaks_loop_early(store):
 
 
 async def test_until_match_never_fires_runs_full_repeat(store):
+    """Verify the full repeat runs when an until pattern never matches.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
@@ -467,6 +610,10 @@ async def test_until_match_never_fires_runs_full_repeat(store):
 
 
 async def test_until_not_match_breaks_when_pattern_absent(store):
+    """Verify ``until: output.not_match(...)`` breaks when pattern is absent.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
@@ -485,7 +632,10 @@ async def test_until_not_match_breaks_when_pattern_absent(store):
 
 
 async def test_until_not_evaluated_on_failed_iteration(store):
-    """Fail-fast wins over until — a failed iteration never triggers early-exit."""
+    """Fail-fast wins over until — a failed iteration never triggers early-exit.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
@@ -505,7 +655,10 @@ async def test_until_not_evaluated_on_failed_iteration(store):
 
 async def test_while_match_breaks_when_pattern_absent(store):
     """`while: output.match(retry)` keeps iterating while output contains
-    "retry" and breaks on the first iteration that doesn't."""
+    "retry" and breaks on the first iteration that doesn't.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
@@ -525,7 +678,10 @@ async def test_while_match_breaks_when_pattern_absent(store):
 
 async def test_while_not_match_breaks_when_pattern_present(store):
     """`while: output.not_match(ready)` keeps iterating while output is
-    NOT ready and breaks on the first iteration that emits "ready"."""
+    NOT ready and breaks on the first iteration that emits "ready".
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
@@ -544,7 +700,10 @@ async def test_while_not_match_breaks_when_pattern_present(store):
 
 
 async def test_while_runs_full_repeat_when_predicate_holds(store):
-    """If output keeps matching `while` regex, the loop never exits early."""
+    """If output keeps matching `while` regex, the loop never exits early.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
@@ -562,7 +721,10 @@ async def test_while_runs_full_repeat_when_predicate_holds(store):
 
 
 async def test_while_not_evaluated_on_failed_iteration(store):
-    """Fail-fast wins over while too — failure stops the loop."""
+    """Fail-fast wins over while too — failure stops the loop.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "poll", "description": "d", "task": "x", "tool": "tool:bash",
@@ -595,12 +757,23 @@ class ScriptedConduitExecutor(FakeExecutor):
         sub_outputs_per_iteration: list[list[str]],
         aggregate_output: str = "nested conduit completed",
     ):
+        """Initialize the scripted conduit-style executor.
+
+        :param sub_outputs_per_iteration: sub-task outputs per iteration.
+        :param aggregate_output: aggregate ``output`` string returned each call.
+        """
         super().__init__()
         self._scripted = sub_outputs_per_iteration
         self._aggregate = aggregate_output
         self._n = 0
 
     async def execute(self, task, resolved_command, context):
+        """Return the next iteration's aggregate output plus sub-outputs.
+
+        :param task: task definition being executed.
+        :param resolved_command: command string after template resolution.
+        :param context: flow context provided by the engine.
+        """
         self._n += 1
         self.calls.append(task.name)
         sub = self._scripted[self._n - 1]
@@ -621,6 +794,8 @@ async def test_conduit_until_breaks_on_any_sub_task_match(store):
     5 iterations because ``"PASS"`` never appears in
     ``aggregate_output``. It only passes once the engine reads
     ``result.sub_outputs`` for ``tool:conduit`` tasks.
+
+    :param store: FilesystemStore fixture.
     """
     conduit = _conduit(
         [
@@ -653,7 +828,10 @@ async def test_conduit_while_continues_until_every_sub_task_matches(store):
     """`while: output.not_match(ready)` over a tool:conduit task keeps
     iterating while at least one sub-task is not ready, and breaks the
     iteration in which every sub-task output contains "ready" (the
-    plan's M2 semantics for while + negated predicate)."""
+    plan's M2 semantics for while + negated predicate).
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "outer", "description": "d", "task": "child",
@@ -682,7 +860,10 @@ async def test_conduit_while_continues_until_every_sub_task_matches(store):
 
 async def test_conduit_predicate_runs_full_repeat_when_no_sub_match(store):
     """If no sub-output ever matches the until regex, the loop runs to
-    completion — no vacuous early exit."""
+    completion — no vacuous early exit.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "outer", "description": "d", "task": "child",
@@ -707,7 +888,10 @@ async def test_conduit_predicate_runs_full_repeat_when_no_sub_match(store):
 
 
 async def test_until_early_exit_publishes_output_to_downstream(store):
-    """Output from the early-exit iteration must reach downstream conditional deps."""
+    """Output from the early-exit iteration must reach downstream conditional deps.
+
+    :param store: FilesystemStore fixture.
+    """
     conduit = _conduit(
         [
             {"name": "up", "description": "d", "task": "x", "tool": "tool:bash",
@@ -720,10 +904,17 @@ async def test_until_early_exit_publishes_output_to_downstream(store):
 
     class ByName(FakeExecutor):
         def __init__(self):
+            """Initialize per-task call counters."""
             super().__init__()
             self._up_n = 0
 
         async def execute(self, task, resolved_command, context):
+            """Return scripted output keyed off the task name.
+
+            :param task: task definition being executed.
+            :param resolved_command: command string after template resolution.
+            :param context: flow context provided by the engine.
+            """
             self.calls.append(task.name)
             if task.name == "up":
                 self._up_n += 1
@@ -738,3 +929,125 @@ async def test_until_early_exit_publishes_output_to_downstream(store):
     assert "down" in fake.calls
     p = store.read_progress(flow_id)
     assert p.tasks["down"].status == TaskStatus.completed
+
+
+# ---------------------------------------------------------------- outputs.yaml
+
+
+async def test_run_writes_outputs_yaml_with_completed_tasks(store):
+    """Verify outputs.yaml is written next to logs.json with a task map."""
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+            {"name": "b", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": ["a"]},
+        ]
+    )
+    fake = FakeExecutor(outputs={"a": "alpha", "b": "beta"})
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    path = store._flow_dir(flow_id) / "outputs.yaml"
+    assert path.exists()
+    data = yaml.safe_load(path.read_text())
+    assert data == {"a": "alpha", "b": "beta"}
+
+
+async def test_run_outputs_yaml_has_null_for_skipped_tasks(store):
+    """Skipped tasks must appear in outputs.yaml with value None."""
+    conduit = _conduit(
+        [
+            {"name": "review", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+            {"name": "deploy", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": ["review.output.match(APPROVE)"]},
+        ]
+    )
+    fake = FakeExecutor(outputs={"review": "VERDICT: REJECT"})
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    data = yaml.safe_load((store._flow_dir(flow_id) / "outputs.yaml").read_text())
+    assert data == {"review": "VERDICT: REJECT", "deploy": None}
+
+
+async def test_run_does_not_write_outputs_yaml_on_failure(store):
+    """A failed flow must not write outputs.yaml; logs.json still present."""
+    conduit = _conduit(
+        [
+            {"name": "boom", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+        ]
+    )
+    fake = FakeExecutor(fail={"boom"})
+    engine = Engine({"tool:bash": fake}, store)
+    with pytest.raises(RuntimeError):
+        await engine.run(conduit, {})
+    flow_id = store.list_flows()[0]
+    flow_dir = store._flow_dir(flow_id)
+    assert not (flow_dir / "outputs.yaml").exists()
+    assert (flow_dir / "logs.json").exists()
+
+
+async def test_run_outputs_yaml_preserves_declaration_order(store):
+    """outputs.yaml keys must follow the conduit's task declaration order."""
+    conduit = _conduit(
+        [
+            {"name": "c", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+            {"name": "b", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+        ]
+    )
+    fake = FakeExecutor()
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    raw = (store._flow_dir(flow_id) / "outputs.yaml").read_text()
+    data = yaml.safe_load(raw)
+    assert list(data.keys()) == ["c", "a", "b"]
+
+
+# ---------------------------------------------------------------- last_turn_output
+
+
+async def test_engine_uses_last_turn_output_when_executor_sets_it(store):
+    """When an executor returns last_turn_output, the engine stores it in outputs[task]
+    (so both {{task.output}} templating and outputs.yaml see only the last turn).
+    """
+    captured = {}
+
+    class LastTurnExecutor(ExecutorBase):
+        async def execute(self, task, resolved_command, context):
+            if task.name == "agent":
+                return ExecutionResult(
+                    exit_code=0,
+                    output="full transcript across turns",
+                    stdout="full transcript across turns",
+                    last_turn_output="just the last turn",
+                )
+            captured["cmd"] = resolved_command
+            return ExecutionResult(exit_code=0, output="downstream-ran")
+
+    conduit = _conduit(
+        [
+            {"name": "agent", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": []},
+            {"name": "downstream", "description": "d", "task": "echo {{agent.output}}",
+             "tool": "tool:bash", "depends_on": ["agent"]},
+        ]
+    )
+    engine = Engine({"tool:bash": LastTurnExecutor()}, store)
+    flow_id = await engine.run(conduit, {})
+    # Downstream templating saw only the last turn.
+    assert captured["cmd"] == "echo just the last turn"
+    # outputs.yaml also holds only the last turn.
+    data = yaml.safe_load((store._flow_dir(flow_id) / "outputs.yaml").read_text())
+    assert data["agent"] == "just the last turn"
+
+
+async def test_engine_falls_back_to_output_when_last_turn_is_none(store):
+    """Without last_turn_output set, the engine continues to use result.output."""
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+        ]
+    )
+    fake = FakeExecutor(outputs={"a": "alpha"})  # last_turn_output stays at default (None)
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    data = yaml.safe_load((store._flow_dir(flow_id) / "outputs.yaml").read_text())
+    assert data == {"a": "alpha"}

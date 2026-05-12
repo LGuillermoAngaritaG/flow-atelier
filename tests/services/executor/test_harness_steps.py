@@ -19,29 +19,52 @@ class RecordingSink:
     """Minimal sink that records display_step calls."""
 
     def __init__(self) -> None:
+        """Initialize the recording sink with empty logs."""
         self.display_log: list[str] = []
         self.step_log: list[IntermediateStep] = []
 
     async def display(self, text: str) -> None:
+        """Record displayed text.
+
+        :param text: chunk of agent output forwarded to the sink.
+        """
         self.display_log.append(text)
 
     async def start_agent_turn(self, label: str = "agent") -> None:
+        """No-op stub for the agent-turn marker.
+
+        :param label: turn label (ignored).
+        """
         pass
 
     async def request_input(self, prompt: str) -> str:
+        """Refuse input by raising EOFError.
+
+        :param prompt: prompt text (ignored).
+        """
         raise EOFError
 
     async def request_permission(
         self, summary: str, options: list[PermissionOption]
     ) -> str:
+        """Auto-approve by returning the first option id.
+
+        :param summary: permission request summary (ignored).
+        :param options: available permission options.
+        """
         return options[0].id
 
     async def display_step(self, step: IntermediateStep) -> None:
+        """Record an intermediate step.
+
+        :param step: the intermediate step to capture.
+        """
         self.step_log.append(step)
 
 
 class TestBufferingClientSteps:
     async def test_thinking_chunk_captured(self) -> None:
+        """Verify agent thought chunks become thinking steps."""
         sink = RecordingSink()
         client = _BufferingClient(sink, stream_steps=False)
         update = AgentThoughtChunk(
@@ -54,6 +77,7 @@ class TestBufferingClientSteps:
         assert client.steps[0].text == "Let me think about this"
 
     async def test_tool_call_start_captured(self) -> None:
+        """Verify ToolCallStart updates become tool_call steps with metadata."""
         sink = RecordingSink()
         client = _BufferingClient(sink, stream_steps=False)
         update = ToolCallStart(
@@ -76,6 +100,7 @@ class TestBufferingClientSteps:
         assert step.locations == ["/src/main.py"]
 
     async def test_tool_call_progress_completed_captured(self) -> None:
+        """Verify completed ToolCallProgress updates become tool_result steps."""
         sink = RecordingSink()
         client = _BufferingClient(sink, stream_steps=False)
         update = ToolCallProgress(
@@ -92,6 +117,7 @@ class TestBufferingClientSteps:
         assert step.tool_status == "completed"
 
     async def test_tool_call_progress_failed_captured(self) -> None:
+        """Verify failed ToolCallProgress updates become tool_result steps."""
         sink = RecordingSink()
         client = _BufferingClient(sink, stream_steps=False)
         update = ToolCallProgress(
@@ -116,6 +142,7 @@ class TestBufferingClientSteps:
         assert len(client.steps) == 0
 
     async def test_stream_steps_calls_display_step(self) -> None:
+        """Verify stream_steps=True forwards captured steps to the sink."""
         sink = RecordingSink()
         client = _BufferingClient(sink, stream_steps=True)
         update = AgentThoughtChunk(
@@ -127,6 +154,7 @@ class TestBufferingClientSteps:
         assert sink.step_log[0].kind == StepKind.thinking
 
     async def test_no_stream_steps_skips_display_step(self) -> None:
+        """Verify stream_steps=False captures steps without sending them live."""
         sink = RecordingSink()
         client = _BufferingClient(sink, stream_steps=False)
         update = AgentThoughtChunk(
@@ -201,6 +229,7 @@ class TestBufferingClientSteps:
         assert sink.display_log == []
 
     async def test_tool_input_truncated(self) -> None:
+        """Verify oversized tool_input payloads are truncated."""
         sink = RecordingSink()
         client = _BufferingClient(sink, stream_steps=False)
         update = ToolCallStart(
@@ -213,6 +242,7 @@ class TestBufferingClientSteps:
         assert len(client.steps[0].tool_input) <= 500
 
     async def test_tool_output_truncated(self) -> None:
+        """Verify oversized tool_output payloads are truncated."""
         sink = RecordingSink()
         client = _BufferingClient(sink, stream_steps=False)
         update = ToolCallProgress(

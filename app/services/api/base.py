@@ -27,5 +27,8 @@ class ApiServerBase(ABC):
 
 
 def get_atelier(request: Request) -> Atelier:
-    """FastAPI dependency: returns the :class:`Atelier` bound to the app."""
+    """FastAPI dependency: returns the :class:`Atelier` bound to the app.
+
+    :param request: incoming FastAPI request whose app holds the facade
+    """
     return request.app.state.atelier

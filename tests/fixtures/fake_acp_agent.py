@@ -68,16 +68,32 @@ class FakeAgent:
         turns: list[dict[str, Any]],
         modes: dict[str, Any] | None = None,
     ) -> None:
+        """Initialize the fake agent with a scripted turn list.
+
+        :param turns: ordered list of turn specs to consume on each prompt.
+        :param modes: optional session-modes spec exposed via new_session.
+        """
         self._turns = list(turns)
         self._modes_spec = modes
         self._conn: acp.Client | None = None
 
     def on_connect(self, conn: acp.Client) -> None:
+        """Store the ACP client connection used for session updates.
+
+        :param conn: the ACP client connection bound by the runtime.
+        """
         self._conn = conn
 
     async def initialize(
         self, protocol_version: int, client_capabilities=None, client_info=None, **kwargs
     ) -> InitializeResponse:
+        """Return a canned InitializeResponse for tests.
+
+        :param protocol_version: ACP protocol version requested by the client.
+        :param client_capabilities: client-advertised capabilities (ignored).
+        :param client_info: client identity info (ignored).
+        :param kwargs: additional keyword arguments accepted by the protocol.
+        """
         return InitializeResponse(
             protocol_version=acp.PROTOCOL_VERSION,
             agent_capabilities=AgentCapabilities(
@@ -91,6 +107,12 @@ class FakeAgent:
         )
 
     async def new_session(self, cwd: str, mcp_servers=None, **kwargs) -> NewSessionResponse:
+        """Return a canned NewSessionResponse, optionally with session modes.
+
+        :param cwd: working directory provided by the client (ignored).
+        :param mcp_servers: MCP server specs (ignored).
+        :param kwargs: additional keyword arguments accepted by the protocol.
+        """
         modes = None
         if self._modes_spec:
             available = [
@@ -104,6 +126,12 @@ class FakeAgent:
         return NewSessionResponse(session_id=self.SESSION_ID, modes=modes)
 
     async def prompt(self, prompt, session_id: str, **kwargs) -> PromptResponse:
+        """Pop the next scripted turn and emit its chunks via session_update.
+
+        :param prompt: prompt payload from the client (ignored beyond presence).
+        :param session_id: session identifier the client is interacting with.
+        :param kwargs: additional keyword arguments accepted by the protocol.
+        """
         if not self._turns:
             return PromptResponse(stop_reason="end_turn")
         turn = self._turns.pop(0)
@@ -159,17 +187,38 @@ class FakeAgent:
 
     # ---- unused Agent methods: stub to satisfy protocol ----
     async def authenticate(self, method_id: str, **kwargs):
+        """Stub authenticate to satisfy the Agent protocol.
+
+        :param method_id: authentication method identifier (ignored).
+        :param kwargs: additional keyword arguments accepted by the protocol.
+        """
         return None
 
     async def load_session(self, *args, **kwargs):
+        """Stub load_session to satisfy the Agent protocol.
+
+        :param args: positional arguments accepted by the protocol.
+        :param kwargs: keyword arguments accepted by the protocol.
+        """
         return None
 
     async def list_sessions(self, *args, **kwargs):
+        """Stub list_sessions to satisfy the Agent protocol.
+
+        :param args: positional arguments accepted by the protocol.
+        :param kwargs: keyword arguments accepted by the protocol.
+        """
         raise NotImplementedError
 
     async def set_session_mode(
         self, mode_id: str, session_id: str, **kwargs
     ) -> SetSessionModeResponse:
+        """Emit a mode-set chunk so tests can assert the selected mode.
+
+        :param mode_id: requested session mode identifier.
+        :param session_id: session identifier the client is interacting with.
+        :param kwargs: additional keyword arguments accepted by the protocol.
+        """
         del kwargs
         if self._conn is not None:
             await self._conn.session_update(
@@ -184,28 +233,64 @@ class FakeAgent:
         return SetSessionModeResponse()
 
     async def set_session_model(self, *args, **kwargs):
+        """Stub set_session_model to satisfy the Agent protocol.
+
+        :param args: positional arguments accepted by the protocol.
+        :param kwargs: keyword arguments accepted by the protocol.
+        """
         return None
 
     async def set_config_option(self, *args, **kwargs):
+        """Stub set_config_option to satisfy the Agent protocol.
+
+        :param args: positional arguments accepted by the protocol.
+        :param kwargs: keyword arguments accepted by the protocol.
+        """
         return None
 
     async def fork_session(self, *args, **kwargs):
+        """Stub fork_session to satisfy the Agent protocol.
+
+        :param args: positional arguments accepted by the protocol.
+        :param kwargs: keyword arguments accepted by the protocol.
+        """
         raise NotImplementedError
 
     async def resume_session(self, *args, **kwargs):
+        """Stub resume_session to satisfy the Agent protocol.
+
+        :param args: positional arguments accepted by the protocol.
+        :param kwargs: keyword arguments accepted by the protocol.
+        """
         raise NotImplementedError
 
     async def close_session(self, *args, **kwargs):
+        """Stub close_session to satisfy the Agent protocol.
+
+        :param args: positional arguments accepted by the protocol.
+        :param kwargs: keyword arguments accepted by the protocol.
+        """
         return None
 
     async def ext_method(self, method: str, params):
+        """Stub ext_method to satisfy the Agent protocol.
+
+        :param method: extension method name (ignored).
+        :param params: extension method parameters (ignored).
+        """
         return {}
 
     async def ext_notification(self, method: str, params) -> None:
+        """Stub ext_notification to satisfy the Agent protocol.
+
+        :param method: extension notification name (ignored).
+        :param params: extension notification parameters (ignored).
+        """
         return None
 
 
 async def _main() -> None:
+    """Entry point that wires the FakeAgent script onto the ACP runtime."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--script", required=True)
     args = parser.parse_args()

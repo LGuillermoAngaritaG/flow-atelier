@@ -37,6 +37,11 @@ tasks:
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
+    """Build an Atelier + FastAPI app pair with seeded conduits.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     monkeypatch.delenv("ATELIER_GLOBAL_ATELIER_DIR", raising=False)
     atelier = Atelier(base_dir=tmp_path / ".atelier")
     (atelier.store.base_dir / "conduits" / "hello").mkdir(parents=True, exist_ok=True)
@@ -52,6 +57,12 @@ def env(tmp_path, monkeypatch):
 
 
 def _drain_until(ws, predicate, *, max_messages: int = 50):
+    """Read envelopes from a websocket until ``predicate`` matches.
+
+    :param ws: websocket client.
+    :param predicate: callable invoked per envelope; stop when it returns truthy.
+    :param max_messages: cap on envelopes to read before raising.
+    """
     collected: list[dict] = []
     for _ in range(max_messages):
         msg = ws.receive_text()
@@ -65,6 +76,10 @@ def _drain_until(ws, predicate, *, max_messages: int = 50):
 
 
 def test_ws_happy_path_emits_started_log_and_complete(env):
+    """Verify the WS happy path emits started, log, and flow_complete envelopes.
+
+    :param env: env fixture providing (atelier, app).
+    """
     _, app = env
     with TestClient(app) as client:
         with client.websocket_connect("/ws/run-conduit") as ws:
@@ -95,6 +110,10 @@ def test_ws_happy_path_emits_started_log_and_complete(env):
 
 
 def test_ws_hitl_round_trip_completes_after_answer(env):
+    """Verify the WS hitl round-trip completes after an answer is sent.
+
+    :param env: env fixture providing (atelier, app).
+    """
     _, app = env
     with TestClient(app) as client:
         with client.websocket_connect("/ws/run-conduit") as ws:
@@ -131,6 +150,10 @@ def test_ws_hitl_round_trip_completes_after_answer(env):
 
 
 def test_ws_unknown_message_type_emits_error_envelope(env):
+    """Verify an unknown WS message type emits an error envelope.
+
+    :param env: env fixture providing (atelier, app).
+    """
     _, app = env
     with TestClient(app) as client:
         with client.websocket_connect("/ws/run-conduit") as ws:
@@ -140,6 +163,10 @@ def test_ws_unknown_message_type_emits_error_envelope(env):
 
 
 def test_ws_run_unknown_conduit_emits_flow_failed(env):
+    """Verify running an unknown conduit emits flow_failed or error.
+
+    :param env: env fixture providing (atelier, app).
+    """
     _, app = env
     with TestClient(app) as client:
         with client.websocket_connect("/ws/run-conduit") as ws:

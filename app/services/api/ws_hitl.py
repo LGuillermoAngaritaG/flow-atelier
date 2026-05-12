@@ -31,6 +31,12 @@ class WsHitlExecutor(ExecutorBase):
         flow_id: str,
         request_timeout: float | None = None,
     ) -> None:
+        """Bind the executor to a broker and a specific flow.
+
+        :param broker: per-connection broker that owns the answer queue
+        :param flow_id: flow this executor instance is bound to
+        :param request_timeout: optional timeout (seconds) for awaiting answers
+        """
         self.broker = broker
         self.flow_id = flow_id
         self.request_timeout = request_timeout
@@ -41,6 +47,12 @@ class WsHitlExecutor(ExecutorBase):
         resolved_command: str,
         context: FlowContext,
     ) -> ExecutionResult:
+        """Send an HITL request, await the answer, and persist the collected inputs.
+
+        :param task: task definition being executed
+        :param resolved_command: command string already rendered with templating
+        :param context: live flow context (store, inputs, flow id)
+        """
         inputs_descriptor = [
             {"name": name, "description": description}
             for name, description in task.inputs.items()

@@ -11,6 +11,11 @@ from app.services.api.app import FastApiServer
 
 @pytest.fixture
 async def fixture(tmp_path, monkeypatch):
+    """Yield an httpx client wired to a fresh Atelier instance.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     monkeypatch.delenv("ATELIER_GLOBAL_ATELIER_DIR", raising=False)
     atelier = Atelier(base_dir=tmp_path / ".atelier")
     app = FastApiServer().create_app(atelier)
@@ -22,6 +27,10 @@ async def fixture(tmp_path, monkeypatch):
 
 
 async def _seed_flow(atelier: Atelier) -> str:
+    """Run a one-off bash task to seed a completed flow.
+
+    :param atelier: Atelier instance to run the task against.
+    """
     out = await atelier.run_single_task(
         RunTaskInput(
             name="echo",
@@ -36,6 +45,10 @@ async def _seed_flow(atelier: Atelier) -> str:
 
 
 async def test_list_flows_empty(fixture):
+    """Verify GET /flows returns an empty list when no flows have run.
+
+    :param fixture: client+atelier tuple fixture.
+    """
     client, _ = fixture
     resp = await client.get("/flows")
     assert resp.status_code == 200
@@ -43,6 +56,10 @@ async def test_list_flows_empty(fixture):
 
 
 async def test_list_flows_returns_completed(fixture):
+    """Verify GET /flows includes the seeded completed flow.
+
+    :param fixture: client+atelier tuple fixture.
+    """
     client, atelier = fixture
     flow_id = await _seed_flow(atelier)
     resp = await client.get("/flows")
@@ -54,6 +71,10 @@ async def test_list_flows_returns_completed(fixture):
 
 
 async def test_get_logs_round_trips(fixture):
+    """Verify GET /flows/<id>/logs returns the recorded stdout entries.
+
+    :param fixture: client+atelier tuple fixture.
+    """
     client, atelier = fixture
     flow_id = await _seed_flow(atelier)
     resp = await client.get(f"/flows/{flow_id}/logs")
@@ -66,6 +87,10 @@ async def test_get_logs_round_trips(fixture):
 
 
 async def test_get_logs_unknown_returns_404(fixture):
+    """Verify requesting logs for an unknown flow returns 404.
+
+    :param fixture: client+atelier tuple fixture.
+    """
     client, _ = fixture
     resp = await client.get("/flows/no_such_flow/logs")
     assert resp.status_code == 404

@@ -14,7 +14,7 @@ from app.cli._shared import (
     console,
 )
 from app.cli.main import app
-from app.cli.render import _FLOW_STATUS_STYLE, _task_status_summary
+from app.cli.rendering.render import _FLOW_STATUS_STYLE, _task_status_summary
 from app.core.atelier import Atelier
 
 
@@ -25,7 +25,11 @@ def status_cmd(
         False, "--json", help="Emit machine-readable JSON instead of a table."
     ),
 ) -> None:
-    """Show progress for a flow."""
+    """Show progress for a flow.
+
+    :param flow_id: flow id (or unique prefix) to inspect.
+    :param json_mode: when true, emit machine-readable JSON instead of a table.
+    """
     atelier = Atelier()
     flow_id = _resolve_flow_id(atelier, flow_id)
     try:

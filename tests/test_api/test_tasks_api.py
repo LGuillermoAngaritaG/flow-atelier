@@ -12,6 +12,11 @@ from app.services.api.app import FastApiServer
 
 @pytest.fixture
 async def fixture(tmp_path, monkeypatch):
+    """Yield an httpx client wired to a fresh Atelier instance.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     monkeypatch.delenv("ATELIER_GLOBAL_ATELIER_DIR", raising=False)
     atelier = Atelier(base_dir=tmp_path / ".atelier")
     app = FastApiServer().create_app(atelier)
@@ -23,6 +28,10 @@ async def fixture(tmp_path, monkeypatch):
 
 
 async def test_run_task_executes_bash_and_returns_logs(fixture):
+    """Verify POST /tasks/run executes a bash task and returns logs.
+
+    :param fixture: client+atelier+tmp_path tuple fixture.
+    """
     client, atelier, tmp_path = fixture
     payload = {
         "name": "echo",
@@ -48,6 +57,10 @@ async def test_run_task_executes_bash_and_returns_logs(fixture):
 
 
 async def test_run_task_invalid_payload_returns_400(fixture):
+    """Verify an invalid /tasks/run payload returns 400 or 422.
+
+    :param fixture: client+atelier+tmp_path tuple fixture.
+    """
     client, _, _ = fixture
     resp = await client.post(
         "/tasks/run", json={"name": "x"}  # missing task, tool, run_path

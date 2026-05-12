@@ -56,6 +56,8 @@ def parse_dependency(dep: str) -> Dependency:
     """Parse one dependency string into a structured Dependency.
 
     Raises DependencyParseError on malformed syntax or invalid regex.
+
+    :param dep: raw dependency string from the conduit definition.
     """
     if not isinstance(dep, str) or not dep.strip():
         raise DependencyParseError(f"empty or non-string dependency: {dep!r}")
@@ -89,6 +91,11 @@ def parse_dependency(dep: str) -> Dependency:
 
 
 def parse_dependencies(deps: list[str]) -> list[Dependency]:
+    """Parse a list of dependency strings into structured Dependency objects.
+
+    :param deps: list of raw dependency strings.
+    :returns: list of parsed :class:`Dependency` values, in input order.
+    """
     return [parse_dependency(d) for d in deps]
 
 
@@ -100,6 +107,7 @@ def parse_output_predicate(expr: str) -> tuple[re.Pattern[str], bool]:
     everything between the prefix's ``(`` and the final ``)`` — the same
     delimiting rule as :func:`parse_dependency`.
 
+    :param expr: raw predicate string from the conduit definition.
     :raises DependencyParseError: malformed DSL or uncompilable regex
     """
     if not isinstance(expr, str) or not expr.strip():
@@ -155,6 +163,11 @@ def evaluate_loop_predicate(
 
     An empty ``outputs`` list never breaks — wait for data on the next
     iteration.
+
+    :param predicate: ``(compiled_regex, negate)`` from :func:`parse_output_predicate`.
+    :param outputs: per-sub-task outputs (or ``[result.output]`` for simple tasks).
+    :param mode: ``"until"`` or ``"while"`` loop semantics.
+    :returns: ``True`` when the loop should stop now, ``False`` otherwise.
     """
     if mode not in ("until", "while"):
         raise ValueError(f"unknown loop mode: {mode!r}")
@@ -183,6 +196,11 @@ def evaluate(
       ("satisfied", None)  — this dep is met
       ("wait", None)       — referenced task has not yet terminated
       ("skip", reason)     — this dep cannot be satisfied; dependent task must be skipped
+
+    :param dep: parsed dependency to evaluate.
+    :param statuses: current map of task name to :class:`TaskStatus`.
+    :param outputs: completed task outputs keyed by task name.
+    :returns: tuple of ``(EvalResult, optional reason)``.
     """
     status = statuses.get(dep.task)
     if status is None:

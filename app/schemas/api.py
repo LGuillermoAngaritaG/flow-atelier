@@ -82,6 +82,11 @@ class ScheduleConfig(BaseModel):
     @field_validator("days")
     @classmethod
     def _validate_days(cls, v: list[int] | None) -> list[int] | None:
+        """Ensure each entry in ``days`` is an ISO 8601 day-of-week (1..7).
+
+        :param v: list of day numbers to validate, or ``None``.
+        :returns: the validated list unchanged, or ``None`` if not provided.
+        """
         if v is None:
             return v
         for d in v:
@@ -94,6 +99,11 @@ class ScheduleConfig(BaseModel):
     @field_validator("times")
     @classmethod
     def _validate_times(cls, v: list[str] | None) -> list[str] | None:
+        """Ensure each entry in ``times`` matches the 24h ``HH:mm`` format.
+
+        :param v: list of time strings to validate, or ``None``.
+        :returns: the validated list unchanged, or ``None`` if not provided.
+        """
         if v is None:
             return v
         for t in v:
@@ -106,6 +116,11 @@ class ScheduleConfig(BaseModel):
     @field_validator("run_at", mode="before")
     @classmethod
     def _parse_iso(cls, v: Any) -> Any:
+        """Parse an ISO 8601 string into a ``datetime``, accepting a trailing ``Z``.
+
+        :param v: raw value; parsed when it is a string, otherwise returned as-is.
+        :returns: a ``datetime`` when ``v`` is a valid ISO string, otherwise ``v`` unchanged.
+        """
         if isinstance(v, str):
             try:
                 return datetime.fromisoformat(v.replace("Z", "+00:00"))
@@ -115,6 +130,10 @@ class ScheduleConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_mode_fields(self) -> "ScheduleConfig":
+        """Ensure required fields are present for the selected ``mode``.
+
+        :returns: the validated ``ScheduleConfig`` instance.
+        """
         if self.mode == "recurring":
             if not self.days:
                 raise ValueError("recurring schedule requires at least one day")

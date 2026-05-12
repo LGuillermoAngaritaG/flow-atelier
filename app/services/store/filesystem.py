@@ -38,6 +38,11 @@ class FilesystemStore(StoreBase):
         base_dir: Path | str,
         global_dir: Path | str | None = None,
     ):
+        """Initialise the filesystem store with project and optional global dirs.
+
+        :param base_dir: project-level ``.atelier/`` directory
+        :param global_dir: optional user-level directory for shared conduits
+        """
         self.base_dir = Path(base_dir)
         (self.base_dir / "conduits").mkdir(parents=True, exist_ok=True)
         (self.base_dir / "flows").mkdir(parents=True, exist_ok=True)
@@ -54,17 +59,33 @@ class FilesystemStore(StoreBase):
     # ------------------------------------------------------------------ paths
 
     def _conduit_dir(self, name: str) -> Path:
+        """Return the project-level directory for conduit ``name``.
+
+        :param name: conduit name
+        """
         return self.base_dir / "conduits" / name
 
     def _conduit_yaml(self, name: str) -> Path:
+        """Return the project-level ``conduit.yaml`` path for ``name``.
+
+        :param name: conduit name
+        """
         return self._conduit_dir(name) / "conduit.yaml"
 
     def _global_conduit_yaml(self, name: str) -> Path | None:
+        """Return the global ``conduit.yaml`` path for ``name`` or ``None``.
+
+        :param name: conduit name
+        """
         if self.global_dir is None:
             return None
         return self.global_dir / "conduits" / name / "conduit.yaml"
 
     def _flow_dir(self, flow_id: str) -> Path:
+        """Resolve and cache the directory for ``flow_id``.
+
+        :param flow_id: flow identifier
+        """
         if flow_id in self._flow_paths:
             return self._flow_paths[flow_id]
         # fall-back: search (for CLI `status`/`list` after restart)
@@ -77,6 +98,10 @@ class FilesystemStore(StoreBase):
     # ------------------------------------------------------------------ conduits
 
     def read_conduit(self, name: str) -> Conduit:
+        """Load conduit ``name`` from the project store, falling back to global.
+
+        :param name: conduit name
+        """
         project_path = self._conduit_yaml(name)
         global_path = self._global_conduit_yaml(name)
         if project_path.exists():
@@ -94,6 +119,10 @@ class FilesystemStore(StoreBase):
         return conduit
 
     def _scan_conduits_dir(self, root: Path) -> list[str]:
+        """List conduit names under ``root`` that have a ``conduit.yaml``.
+
+        :param root: directory expected to contain ``<name>/conduit.yaml``
+        """
         if not root.exists():
             return []
         return sorted(
@@ -103,9 +132,11 @@ class FilesystemStore(StoreBase):
         )
 
     def list_conduits(self) -> list[str]:
+        """Return all visible conduit names from project and global stores."""
         return [name for name, _ in self.list_conduits_with_source()]
 
     def list_conduits_with_source(self) -> list[tuple[str, ConduitSource]]:
+        """Return ``(name, source)`` pairs; project shadows global on collision."""
         project_names = set(self._scan_conduits_dir(self.base_dir / "conduits"))
         global_names: set[str] = set()
         if self.global_dir is not None:
@@ -151,6 +182,13 @@ class FilesystemStore(StoreBase):
         inputs: dict[str, Any],
         parent_flow_id: str | None = None,
     ) -> str:
+        """Create a new flow directory and seed its tracking files.
+
+        :param conduit_name: conduit being run
+        :param inputs: initial input map persisted to ``input.yaml``
+        :param parent_flow_id: optional parent flow for nested runs
+        :returns: the freshly generated flow id
+        """
         flow_id = new_flow_id(conduit_name)
         if parent_flow_id is None:
             flow_dir = self.base_dir / "flows" / flow_id
@@ -181,6 +219,10 @@ class FilesystemStore(StoreBase):
         return flow_id
 
     def list_flows(self, conduit_name: str | None = None) -> list[str]:
+        """List top-level flow ids, optionally filtered by conduit prefix.
+
+        :param conduit_name: when set, only flows starting with ``<name>_`` are returned
+        """
         root = self.base_dir / "flows"
         if not root.exists():
             return []
@@ -194,6 +236,10 @@ class FilesystemStore(StoreBase):
     # ------------------------------------------------------------------ logs
 
     def _lock_for(self, flow_id: str) -> asyncio.Lock:
+        """Return (lazily creating) the asyncio lock guarding ``flow_id`` logs.
+
+        :param flow_id: flow identifier
+        """
         lock = self._log_locks.get(flow_id)
         if lock is None:
             lock = asyncio.Lock()
@@ -201,6 +247,11 @@ class FilesystemStore(StoreBase):
         return lock
 
     async def append_log(self, flow_id: str, entry: LogEntry) -> None:
+        """Append ``entry`` to the flow's ``logs.json`` under a per-flow lock.
+
+        :param flow_id: flow identifier
+        :param entry: log entry to append
+        """
         path = self._flow_dir(flow_id) / "logs.json"
         async with self._lock_for(flow_id):
             try:
@@ -228,24 +279,57 @@ class FilesystemStore(StoreBase):
     # ------------------------------------------------------------------ progress
 
     def write_progress(self, flow_id: str, progress: Progress) -> None:
+        """Atomically write ``progress.json`` for ``flow_id``.
+
+        :param flow_id: flow identifier
+        :param progress: progress snapshot to persist
+        """
         path = self._flow_dir(flow_id) / "progress.json"
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(progress.model_dump_json(indent=2))
         os.replace(tmp, path)
 
     def read_progress(self, flow_id: str) -> Progress:
+        """Load and return the ``Progress`` snapshot for ``flow_id``.
+
+        :param flow_id: flow identifier
+        """
         path = self._flow_dir(flow_id) / "progress.json"
         return Progress.model_validate_json(path.read_text())
+
+    # ------------------------------------------------------------------ outputs.yaml
+
+    def write_outputs(self, flow_id: str, outputs: dict[str, Any]) -> None:
+        """Atomically write ``outputs.yaml`` for ``flow_id``.
+
+        :param flow_id: flow identifier
+        :param outputs: mapping of task name to final output (``None`` for tasks
+            that did not complete)
+        """
+        path = self._flow_dir(flow_id) / "outputs.yaml"
+        tmp = path.with_suffix(".yaml.tmp")
+        tmp.write_text(yaml.safe_dump(outputs, sort_keys=False))
+        os.replace(tmp, path)
 
     # ------------------------------------------------------------------ input.yaml
 
     def read_input(self, flow_id: str) -> dict[str, Any]:
+        """Return the parsed ``input.yaml`` map for ``flow_id`` (empty if missing).
+
+        :param flow_id: flow identifier
+        """
         path = self._flow_dir(flow_id) / "input.yaml"
         if not path.exists():
             return {}
         return yaml.safe_load(path.read_text()) or {}
 
     def append_input(self, flow_id: str, key: str, value: Any) -> None:
+        """Set ``key=value`` in the flow's ``input.yaml``.
+
+        :param flow_id: flow identifier
+        :param key: input key to add or overwrite
+        :param value: value to store under ``key``
+        """
         path = self._flow_dir(flow_id) / "input.yaml"
         existing: dict[str, Any] = {}
         if path.exists():

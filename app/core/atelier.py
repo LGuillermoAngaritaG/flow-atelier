@@ -58,6 +58,15 @@ class Atelier:
         base_dir: Path | str | None = None,
         prompt_sink: PromptSink | None = None,
     ) -> None:
+        """Construct the facade, wiring store, executors, engine and schedule store.
+
+        :param settings: explicit :class:`AtelierSettings`; if omitted, loads
+            from environment / ``.env``.
+        :param base_dir: convenience override for ``settings.atelier_dir``;
+            ignored when ``settings`` is passed explicitly.
+        :param prompt_sink: optional :class:`PromptSink` shared by harness
+            executors; defaults to :class:`TerminalPromptSink`.
+        """
         if settings is None:
             settings = (
                 AtelierSettings(atelier_dir=Path(base_dir))
@@ -241,6 +250,10 @@ class Atelier:
         captured: dict[str, str | None] = {"id": None}
 
         def _on_started(fid: str) -> None:
+            """Capture the flow id emitted by the engine before tasks run.
+
+            :param fid: flow id assigned by the engine.
+            """
             captured["id"] = fid
 
         try:

@@ -6,12 +6,13 @@ import io
 from rich.console import Console
 from rich.text import Text
 
-from app.cli.render import _render_log_entry, _render_orchestration_msg, _render_step, _render_task_event
+from app.cli.rendering.render import _render_log_entry, _render_orchestration_msg, _render_step, _render_task_event
 from app.schemas.log import IntermediateStep, LogEntry, StepKind, TaskEvent
 from app.schemas.progress import TaskStatus
 
 
 def _console() -> tuple[Console, io.StringIO]:
+    """Build a Rich console writing to an in-memory buffer for assertions."""
     buf = io.StringIO()
     c = Console(file=buf, no_color=True, width=120)
     return c, buf
@@ -22,17 +23,20 @@ def _console() -> tuple[Console, io.StringIO]:
 
 class TestRenderStep:
     def test_returns_rich_text(self) -> None:
+        """Verify _render_step returns a Rich Text instance."""
         step = IntermediateStep(kind=StepKind.thinking, text="hello")
         result = _render_step(step)
         assert isinstance(result, Text)
 
     def test_thinking_glyph(self) -> None:
+        """Verify the thinking glyph is rendered for thinking steps."""
         step = IntermediateStep(kind=StepKind.thinking, text="some thought")
         result = _render_step(step)
         plain = result.plain
         assert "💭" in plain
 
     def test_thinking_text_truncated_at_120(self) -> None:
+        """Verify thinking text is truncated to 120 characters with ellipsis."""
         long_text = "a" * 200
         step = IntermediateStep(kind=StepKind.thinking, text=long_text)
         result = _render_step(step)
@@ -43,6 +47,7 @@ class TestRenderStep:
         assert "a" * 121 not in plain
 
     def test_thinking_short_text_no_ellipsis(self) -> None:
+        """Verify short thinking text is rendered without an ellipsis."""
         step = IntermediateStep(kind=StepKind.thinking, text="short")
         result = _render_step(step)
         plain = result.plain
@@ -50,18 +55,21 @@ class TestRenderStep:
         assert "short" in plain
 
     def test_tool_call_glyph(self) -> None:
+        """Verify the tool-call glyph is rendered for tool_call steps."""
         step = IntermediateStep(kind=StepKind.tool_call, tool_name="Read")
         result = _render_step(step)
         plain = result.plain
         assert "🔧" in plain
 
     def test_tool_call_shows_name(self) -> None:
+        """Verify the tool name is rendered in the tool_call line."""
         step = IntermediateStep(kind=StepKind.tool_call, tool_name="Read")
         result = _render_step(step)
         plain = result.plain
         assert "Read" in plain
 
     def test_tool_call_with_location(self) -> None:
+        """Verify locations are rendered when present on a tool_call."""
         step = IntermediateStep(
             kind=StepKind.tool_call,
             tool_name="Read",
@@ -72,12 +80,14 @@ class TestRenderStep:
         assert "/src/main.py" in plain
 
     def test_tool_call_without_location(self) -> None:
+        """Verify a tool_call without a location still renders the name."""
         step = IntermediateStep(kind=StepKind.tool_call, tool_name="Task")
         result = _render_step(step)
         plain = result.plain
         assert "Task" in plain
 
     def test_tool_result_success_glyph(self) -> None:
+        """Verify completed tool_results render the success glyph."""
         step = IntermediateStep(kind=StepKind.tool_result, tool_status="completed")
         result = _render_step(step)
         plain = result.plain
@@ -85,6 +95,7 @@ class TestRenderStep:
         assert "completed" in plain
 
     def test_tool_result_failure_glyph(self) -> None:
+        """Verify failed tool_results render the failure glyph."""
         step = IntermediateStep(kind=StepKind.tool_result, tool_status="failed")
         result = _render_step(step)
         plain = result.plain
@@ -92,18 +103,21 @@ class TestRenderStep:
         assert "failed" in plain
 
     def test_thinking_indented_2_spaces(self) -> None:
+        """Verify thinking lines are indented by 2 spaces."""
         step = IntermediateStep(kind=StepKind.thinking, text="hi")
         result = _render_step(step)
         plain = result.plain
         assert plain.startswith("  ")
 
     def test_tool_call_indented_2_spaces(self) -> None:
+        """Verify tool_call lines are indented by 2 spaces."""
         step = IntermediateStep(kind=StepKind.tool_call, tool_name="Read")
         result = _render_step(step)
         plain = result.plain
         assert plain.startswith("  ")
 
     def test_tool_result_indented_5_spaces(self) -> None:
+        """Verify tool_result lines are indented by 5 spaces."""
         step = IntermediateStep(kind=StepKind.tool_result, tool_status="completed")
         result = _render_step(step)
         plain = result.plain
@@ -112,6 +126,7 @@ class TestRenderStep:
 
 class TestRenderTaskEventStepSummary:
     def test_step_summary_shown_for_success_with_steps(self) -> None:
+        """Verify the step summary is rendered for successful tasks with steps."""
         steps = [
             IntermediateStep(kind=StepKind.thinking, text="hmm"),
             IntermediateStep(kind=StepKind.thinking, text="ok"),
@@ -134,6 +149,7 @@ class TestRenderTaskEventStepSummary:
         assert "tools(2)" in output
 
     def test_no_step_summary_when_steps_empty(self) -> None:
+        """Verify no step summary is rendered when steps are empty."""
         event = TaskEvent(
             task="build",
             tool="tool:bash",
@@ -181,6 +197,7 @@ class TestRenderTaskEventStepSummary:
 
 class TestRenderLogEntrySteps:
     def _entry_with_steps(self) -> LogEntry:
+        """Build a LogEntry populated with a representative steps timeline."""
         return LogEntry(
             task="build",
             tool="harness:claude-code",
@@ -209,6 +226,7 @@ class TestRenderLogEntrySteps:
         )
 
     def test_show_steps_renders_timeline(self) -> None:
+        """Verify the steps view renders glyphs and tool names from the timeline."""
         entry = self._entry_with_steps()
         c, buf = _console()
         _render_log_entry(entry, "steps", c)
@@ -220,6 +238,7 @@ class TestRenderLogEntrySteps:
         assert "completed" in output
 
     def test_show_steps_uses_short_timestamps(self) -> None:
+        """Verify the steps view renders short timestamps, not full dates."""
         entry = self._entry_with_steps()
         c, buf = _console()
         _render_log_entry(entry, "steps", c)
@@ -244,6 +263,7 @@ class TestRenderLogEntrySteps:
                 break
 
     def test_show_all_includes_steps(self) -> None:
+        """Verify the `all` view renders both output and step content."""
         entry = self._entry_with_steps()
         c, buf = _console()
         _render_log_entry(entry, "all", c)
@@ -252,6 +272,7 @@ class TestRenderLogEntrySteps:
         assert "💭" in output or "done" in output
 
     def test_show_output_does_not_include_steps(self) -> None:
+        """Verify the `output` view omits step content."""
         entry = self._entry_with_steps()
         c, buf = _console()
         _render_log_entry(entry, "output", c)
@@ -264,15 +285,18 @@ class TestRenderLogEntrySteps:
 
 class TestRenderOrchestrationMsg:
     def test_returns_rich_text(self) -> None:
+        """Verify _render_orchestration_msg returns a Rich Text instance."""
         result = _render_orchestration_msg("loading conduit")
         assert isinstance(result, Text)
 
     def test_has_dot_prefix(self) -> None:
+        """Verify orchestration messages are prefixed with the dot glyph."""
         result = _render_orchestration_msg("loading conduit")
         plain = result.plain
         assert plain.startswith("·")
 
     def test_contains_message(self) -> None:
+        """Verify the orchestration message body is preserved verbatim."""
         result = _render_orchestration_msg('running task "lint" [tool:bash]')
         plain = result.plain
         assert 'running task "lint" [tool:bash]' in plain

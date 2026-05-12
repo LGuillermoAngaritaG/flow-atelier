@@ -19,13 +19,21 @@ def _make_key_bindings() -> KeyBindings:
 
     @kb.add("escape", "enter")
     def _submit(event):
+        """Submit the current buffer when Alt+Enter is pressed.
+
+        :param event: prompt_toolkit key event whose buffer is submitted.
+        """
         event.current_buffer.validate_and_handle()
 
     return kb
 
 
 async def multiline_input(prompt: str = "› ", hint: str = "") -> str:
-    """Read user input — multi-line on a TTY, single-line otherwise."""
+    """Read user input — multi-line on a TTY, single-line otherwise.
+
+    :param prompt: text shown before the cursor.
+    :param hint: optional dim hint printed above the prompt on a TTY.
+    """
     if not sys.stdin.isatty():
         return await asyncio.to_thread(builtins.input, prompt)
 
@@ -37,7 +45,11 @@ async def multiline_input(prompt: str = "› ", hint: str = "") -> str:
 
 
 def multiline_input_sync(prompt: str = "› ", hint: str = "") -> str:
-    """Synchronous variant for use before ``asyncio.run()``."""
+    """Synchronous variant for use before ``asyncio.run()``.
+
+    :param prompt: text shown before the cursor.
+    :param hint: optional dim hint printed above the prompt on a TTY.
+    """
     if not sys.stdin.isatty():
         return builtins.input(prompt)
 

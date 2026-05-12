@@ -18,7 +18,7 @@ list_app = typer.Typer(
 app.add_typer(list_app, name="list")
 
 schedule_app = typer.Typer(
-    help="Manage scheduled conduit runs (.atelier/schedules.json).",
+    help="Manage scheduled conduit runs (.atelier/schedules/).",
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
@@ -34,7 +34,7 @@ app.add_typer(scheduler_app, name="scheduler")
 # Side-effect imports: each command module decorates its handler against
 # the appropriate Typer instance above. Order matches the original
 # decoration order in app/main.py so --help layout stays byte-identical.
-from app.cli import (  # noqa: E402, F401
+from app.cli.commands import (  # noqa: E402, F401
     init,
     run,
     status,

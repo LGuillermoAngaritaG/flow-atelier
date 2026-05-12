@@ -22,6 +22,10 @@ class WebSocketBroker:
     """
 
     def __init__(self, send: SendCallable) -> None:
+        """Initialise the broker bound to an outbound JSON sink.
+
+        :param send: async callable receiving outbound JSON envelopes
+        """
         self.send_callable = send
         self._hitl_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
@@ -29,17 +33,26 @@ class WebSocketBroker:
     # ------------------------------------------------------------------ outbound
 
     async def send(self, payload: dict[str, Any]) -> None:
-        """Forward ``payload`` to the wrapped sink."""
+        """Forward ``payload`` to the wrapped sink.
+
+        :param payload: JSON-serialisable envelope to send
+        """
         await self.send_callable(payload)
 
     # ------------------------------------------------------------------ flow lifecycle
 
     def register_flow(self, flow_id: str) -> None:
-        """Allocate per-flow state for ``flow_id`` (idempotent)."""
+        """Allocate per-flow state for ``flow_id`` (idempotent).
+
+        :param flow_id: flow identifier
+        """
         self._hitl_queues.setdefault(flow_id, asyncio.Queue())
 
     def unregister_flow(self, flow_id: str) -> None:
-        """Drop per-flow state for ``flow_id`` (idempotent)."""
+        """Drop per-flow state for ``flow_id`` (idempotent).
+
+        :param flow_id: flow identifier
+        """
         self._hitl_queues.pop(flow_id, None)
         self._tasks.pop(flow_id, None)
 
@@ -50,6 +63,8 @@ class WebSocketBroker:
     ) -> None:
         """Push ``answers`` onto the queue the executor is awaiting.
 
+        :param flow_id: flow identifier
+        :param answers: collected HITL answers keyed by input name
         :raises KeyError: if no flow with that id has been registered
         """
         if flow_id not in self._hitl_queues:
@@ -75,11 +90,18 @@ class WebSocketBroker:
     # ------------------------------------------------------------------ cancel
 
     def track_run(self, flow_id: str, task: asyncio.Task[Any]) -> None:
-        """Record the asyncio task running ``flow_id`` so it can be cancelled."""
+        """Record the asyncio task running ``flow_id`` so it can be cancelled.
+
+        :param flow_id: flow identifier
+        :param task: asyncio task driving the run
+        """
         self._tasks[flow_id] = task
 
     def cancel(self, flow_id: str) -> None:
-        """Best-effort cancel of the run task for ``flow_id`` (no-op if unknown)."""
+        """Best-effort cancel of the run task for ``flow_id`` (no-op if unknown).
+
+        :param flow_id: flow identifier
+        """
         task = self._tasks.get(flow_id)
         if task is not None and not task.done():
             task.cancel()

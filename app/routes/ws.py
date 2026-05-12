@@ -29,6 +29,11 @@ _client_message_adapter = TypeAdapter(ClientMessage)
 
 
 def _step_status_for(event: TaskEvent) -> str:
+    """Map a :class:`TaskEvent` to the WS step-status string.
+
+    :param event: task event emitted by the engine.
+    :returns: ``"completed"``, ``"failed"`` or the raw status value.
+    """
     if event.status == TaskStatus.completed and event.success:
         return "completed"
     if event.status == TaskStatus.completed and not event.success:
@@ -43,11 +48,17 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
     Builds a fresh :class:`Atelier` per connection so swapping
     ``executors["tool:hitl"]`` for a :class:`WsHitlExecutor` does not
     leak across sockets.
+
+    :param websocket: the incoming Starlette WebSocket connection.
     """
     base_atelier: Atelier = get_atelier(websocket)  # type: ignore[arg-type]
     await websocket.accept()
 
     async def _send(payload: dict[str, Any]) -> None:
+        """Send a JSON payload if the socket is still connected.
+
+        :param payload: JSON-serializable envelope to deliver.
+        """
         if websocket.application_state == WebSocketState.CONNECTED:
             await websocket.send_json(payload)
 
@@ -96,7 +107,12 @@ async def _spawn_run(
     broker: WebSocketBroker,
     message: RunMessage,
 ) -> None:
-    """Wire a per-flow Atelier and start the run task."""
+    """Wire a per-flow Atelier and start the run task.
+
+    :param base_atelier: connection-scoped :class:`Atelier` used as template.
+    :param broker: :class:`WebSocketBroker` that fans envelopes out.
+    :param message: :class:`RunMessage` describing what to run.
+    """
     # Per-connection Atelier instance keeps executor swaps from leaking
     # across sockets (SPEC §10 / risk table).
     atelier = Atelier(base_dir=base_atelier.settings.atelier_dir)
@@ -106,6 +122,10 @@ async def _spawn_run(
     )
 
     async def _on_task_event(event: TaskEvent) -> None:
+        """Emit per-step and step-status envelopes for a task event.
+
+        :param event: task event produced by the engine.
+        """
         # Emit intermediate steps as individual StepMessage envelopes
         for step in event.steps:
             await broker.send(
@@ -126,10 +146,15 @@ async def _spawn_run(
         )
 
     def _on_task_event_sync(event: TaskEvent) -> None:
+        """Schedule the async task-event handler from sync engine code.
+
+        :param event: task event produced by the engine.
+        """
         # Engine fires task events synchronously; schedule the async work.
         asyncio.create_task(_on_task_event(event))
 
     async def _run_and_report() -> None:
+        """Drive one flow end-to-end and broadcast its lifecycle envelopes."""
         try:
             await broker.send(
                 {"type": "started", "flow_id": message.flow_id}

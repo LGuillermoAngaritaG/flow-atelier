@@ -9,7 +9,7 @@ import typer
 
 from app.cli._shared import _schedule_store, console
 from app.cli.main import schedule_app
-from app.cli.render import _render_planned_table, _render_run_footer, _render_task_event
+from app.cli.rendering.render import _render_planned_table, _render_run_footer, _render_task_event
 from app.core.atelier import Atelier
 from app.schemas.api import CreateScheduleInput
 from app.schemas.log import TaskEvent
@@ -21,7 +21,12 @@ from app.services.scheduler import (
 
 
 def _resolve_schedule(store: ScheduleStore, ref: str):
-    """Find a schedule by id, then fall back to a name lookup."""
+    """Find a schedule by id, then fall back to a name lookup.
+
+    :param store: schedule store to query.
+    :param ref: schedule id or ``schedule.name`` value.
+    :returns: the matched schedule, or None when nothing matches.
+    """
     job = store.get(ref)
     if job is not None:
         return job
@@ -29,7 +34,11 @@ def _resolve_schedule(store: ScheduleStore, ref: str):
 
 
 def _load_schedule_payload(path: Path) -> CreateScheduleInput:
-    """Load YAML or JSON containing a CreateScheduleInput shape."""
+    """Load YAML or JSON containing a CreateScheduleInput shape.
+
+    :param path: filesystem path to a JSON or YAML schedule file.
+    :returns: a validated :class:`CreateScheduleInput`.
+    """
     text = path.read_text()
     suffix = path.suffix.lower()
     if suffix == ".json":
@@ -45,7 +54,7 @@ def _load_schedule_payload(path: Path) -> CreateScheduleInput:
 
 @schedule_app.command(
     "add",
-    help="Install a schedule (JSON or YAML) into .atelier/schedules.json.",
+    help="Install a schedule (JSON or YAML) into .atelier/schedules/.",
 )
 def schedule_add_cmd(
     file: Path = typer.Argument(
@@ -53,7 +62,10 @@ def schedule_add_cmd(
         help="Path to a schedule JSON or YAML file."
     ),
 ) -> None:
-    """Validate and persist a schedule via the JSON store."""
+    """Validate and persist a schedule via the JSON store.
+
+    :param file: path to a schedule JSON or YAML file to install.
+    """
     store = _schedule_store()
     try:
         payload = _load_schedule_payload(file)
@@ -70,6 +82,10 @@ def schedule_list_cmd(
         False, "--json", help="Emit machine-readable JSON instead of a table."
     ),
 ) -> None:
+    """List installed schedules and their next fire times.
+
+    :param json_mode: when true, emit machine-readable JSON instead of a table.
+    """
     store = _schedule_store()
     planned = compute_planned_view(
         store,
@@ -107,6 +123,10 @@ def schedule_list_cmd(
 def schedule_remove_cmd(
     ref: str = typer.Argument(..., help="Schedule id or schedule.name."),
 ) -> None:
+    """Soft-delete a schedule by id or name.
+
+    :param ref: schedule id or ``schedule.name`` to remove.
+    """
     store = _schedule_store()
     job = _resolve_schedule(store, ref)
     if job is None:
@@ -123,6 +143,10 @@ def schedule_remove_cmd(
 def schedule_run_now_cmd(
     ref: str = typer.Argument(..., help="Schedule id or schedule.name."),
 ) -> None:
+    """Run a scheduled conduit immediately, bypassing the daemon.
+
+    :param ref: schedule id or ``schedule.name`` to execute now.
+    """
     store = _schedule_store()
     job = _resolve_schedule(store, ref)
     if job is None:
@@ -138,12 +162,20 @@ def schedule_run_now_cmd(
     collected_events: list[TaskEvent] = []
 
     def _on_event(event: TaskEvent) -> None:
+        """Collect the task event and render it to the console.
+
+        :param event: the emitted task event to record and display.
+        """
         collected_events.append(event)
         _render_task_event(event, console)
 
     captured: dict[str, str | None] = {"id": None}
 
     def _on_started(fid: str) -> None:
+        """Capture the flow id once the run begins.
+
+        :param fid: the flow id assigned when the run starts.
+        """
         captured["id"] = fid
 
     try:

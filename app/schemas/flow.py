@@ -12,13 +12,21 @@ FLOW_ID_RE = re.compile(r"^(?P<conduit>.+)_(?P<uuid>[0-9a-f]{8})_(?P<ts>\d{8}T\d
 
 
 def new_flow_id(conduit_name: str) -> str:
-    """Build a filesystem-safe flow id: <conduit>_<uuid8>_<YYYYMMDDTHHMMSSZ>."""
+    """Build a filesystem-safe flow id: <conduit>_<uuid8>_<YYYYMMDDTHHMMSSZ>.
+
+    :param conduit_name: name of the conduit this flow belongs to.
+    :returns: a new flow id string composed of conduit, short uuid, and UTC timestamp.
+    """
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{conduit_name}_{uuid.uuid4().hex[:8]}_{ts}"
 
 
 def parse_flow_id(flow_id: str) -> tuple[str, str, str]:
-    """Return (conduit_name, uuid8, timestamp) — raises ValueError if invalid."""
+    """Return (conduit_name, uuid8, timestamp) — raises ValueError if invalid.
+
+    :param flow_id: a flow id previously built by :func:`new_flow_id`.
+    :returns: a tuple of ``(conduit_name, uuid8, timestamp)`` parsed from the id.
+    """
     m = FLOW_ID_RE.match(flow_id)
     if not m:
         raise ValueError(f"Invalid flow id: {flow_id!r}")

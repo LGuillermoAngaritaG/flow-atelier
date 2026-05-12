@@ -9,6 +9,12 @@ from app.core.atelier import Atelier
 
 
 def _write_conduit(base, name, body):
+    """Write a conduit YAML under `base/.atelier/conduits/<name>/conduit.yaml`.
+
+    :param base: base working directory path.
+    :param name: conduit name.
+    :param body: YAML body to write.
+    """
     d = base / ".atelier" / "conduits" / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "conduit.yaml").write_text(body)
@@ -16,11 +22,20 @@ def _write_conduit(base, name, body):
 
 @pytest.fixture
 def workdir(tmp_path, monkeypatch):
+    """Provide an isolated working directory for integration tests.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
 
 async def test_bash_pipeline_with_conditional_branch(workdir):
+    """Verify a bash pipeline with conditional branches routes correctly.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_conduit(
         workdir,
         "pipeline",
@@ -68,6 +83,10 @@ tasks:
 
 
 async def test_repeat_creates_multiple_log_entries(workdir):
+    """Verify a repeated task emits one log entry per iteration.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_conduit(
         workdir,
         "rep",
@@ -92,6 +111,11 @@ tasks:
 
 
 async def test_hitl_feeds_downstream_inputs(workdir, monkeypatch):
+    """Verify human-in-the-loop answers flow into downstream tasks.
+
+    :param workdir: isolated working directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     _write_conduit(
         workdir,
         "askflow",
@@ -134,6 +158,10 @@ tasks:
 
 
 async def test_nested_conduit(workdir):
+    """Verify a parent conduit can invoke a nested child conduit.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_conduit(
         workdir,
         "child",
@@ -184,6 +212,10 @@ tasks:
 
 
 async def test_fail_fast_flow_failed_status(workdir):
+    """Verify a failing task marks the whole flow as failed.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_conduit(
         workdir,
         "fast",
@@ -213,6 +245,10 @@ tasks:
 
 
 async def test_until_early_exit_with_real_bash(workdir):
+    """Verify `until:` exits the repeat loop when the predicate matches.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_conduit(
         workdir,
         "poller",
@@ -245,7 +281,10 @@ tasks:
 
 async def test_while_early_exit_with_real_bash(workdir):
     """`while: output.match(retry)` keeps iterating while bash emits
-    "retry" and breaks the iteration that emits something else."""
+    "retry" and breaks the iteration that emits something else.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_conduit(
         workdir,
         "retry_loop",
@@ -288,6 +327,8 @@ async def test_until_over_nested_conduit_sub_task_outputs(workdir):
     predicate (sub_outputs) can see the earlier ``tests`` task's
     "PASS". Confirmed to fail on a build of the engine without the
     conduit-scope wiring (the outer loop runs all 5 iterations).
+
+    :param workdir: isolated working directory fixture.
     """
     _write_conduit(
         workdir,
@@ -354,6 +395,10 @@ tasks:
 
 
 async def test_concurrency_cap_honored(workdir):
+    """Verify max_concurrency caps parallel task execution.
+
+    :param workdir: isolated working directory fixture.
+    """
     # four sleeps with cap 2 should take >= 2 * sleep
     _write_conduit(
         workdir,

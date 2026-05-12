@@ -7,7 +7,7 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from app.cli import app
-from app.cli.render import _render_task_event, _truncate_tail
+from app.cli.rendering.render import _render_task_event, _truncate_tail
 from app.schemas.log import TaskEvent
 
 CONDUIT_YAML = """
@@ -24,6 +24,11 @@ tasks:
 
 @pytest.fixture
 def workdir(tmp_path, monkeypatch):
+    """Provide an isolated working directory seeded with the hello conduit.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     atelier_dir = tmp_path / ".atelier"
     (atelier_dir / "conduits" / "hello").mkdir(parents=True)
     (atelier_dir / "conduits" / "hello" / "conduit.yaml").write_text(CONDUIT_YAML)
@@ -35,6 +40,10 @@ def workdir(tmp_path, monkeypatch):
 
 
 def test_list_conduits(workdir):
+    """Verify `list conduits` shows the project conduit and table columns.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     result = runner.invoke(app, ["list", "conduits"])
     assert result.exit_code == 0, result.output
@@ -61,6 +70,11 @@ tasks:
 def test_list_conduits_shows_global_and_shadowing(
     workdir, _isolate_global_atelier_dir
 ):
+    """Verify global conduits appear and project conduits shadow them.
+
+    :param workdir: isolated working directory fixture.
+    :param _isolate_global_atelier_dir: isolated global atelier dir fixture.
+    """
     global_dir = _isolate_global_atelier_dir
     (global_dir / "conduits" / "deploy").mkdir(parents=True)
     (global_dir / "conduits" / "deploy" / "conduit.yaml").write_text(
@@ -88,6 +102,10 @@ def test_list_conduits_shows_global_and_shadowing(
 
 
 def test_run_and_status(workdir):
+    """Verify `run` succeeds and `status` reports completion for the flow.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     result = runner.invoke(app, ["run", "hello", "--input", "name=world"])
     assert result.exit_code == 0, result.output
@@ -105,6 +123,10 @@ def test_run_and_status(workdir):
 
 
 def test_list_flows(workdir):
+    """Verify `list flows` shows the flow id and status columns.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     runner.invoke(app, ["run", "hello", "--input", "name=a"])
     result = runner.invoke(app, ["list", "flows"])
@@ -117,6 +139,10 @@ def test_list_flows(workdir):
 
 
 def test_status_includes_duration_and_summary(workdir):
+    """Verify `status` output includes timing and a per-task summary glyph.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     run_result = runner.invoke(app, ["run", "hello", "--input", "name=a"])
     line = [l for l in run_result.output.splitlines() if "flow_id" in l][0]
@@ -130,6 +156,10 @@ def test_status_includes_duration_and_summary(workdir):
 
 
 def test_run_prints_summary_footer(workdir):
+    """Verify `run` prints a totals footer line.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     result = runner.invoke(app, ["run", "hello", "--input", "name=a"])
     assert result.exit_code == 0, result.output
@@ -159,18 +189,32 @@ tasks:
 
 
 def _write_multi(workdir):
+    """Write the multi-task conduit fixture into the working directory.
+
+    :param workdir: working directory path.
+    """
     d = workdir / ".atelier" / "conduits" / "multi"
     d.mkdir(parents=True)
     (d / "conduit.yaml").write_text(MULTI_CONDUIT_YAML)
 
 
 def _run_and_id(runner, conduit, *args):
+    """Invoke `run` and return the resulting flow id from the output.
+
+    :param runner: Typer CliRunner instance.
+    :param conduit: conduit name to run.
+    :param args: extra CLI arguments forwarded to `run`.
+    """
     res = runner.invoke(app, ["run", conduit, *args])
     line = [l for l in res.output.splitlines() if "flow_id" in l][0]
     return line.split()[-1]
 
 
 def test_logs_unknown_flow(workdir):
+    """Verify `logs` errors on an unknown flow id.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     result = runner.invoke(app, ["logs", "no_such_flow"])
     assert result.exit_code != 0
@@ -178,6 +222,10 @@ def test_logs_unknown_flow(workdir):
 
 
 def test_logs_shows_task_output(workdir):
+    """Verify `logs` prints stdout for every task in the flow.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_multi(workdir)
     runner = CliRunner()
     flow_id = _run_and_id(runner, "multi")
@@ -190,6 +238,10 @@ def test_logs_shows_task_output(workdir):
 
 
 def test_logs_filter_by_task(workdir):
+    """Verify `logs --task` filters output to the named task only.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_multi(workdir)
     runner = CliRunner()
     flow_id = _run_and_id(runner, "multi")
@@ -200,6 +252,10 @@ def test_logs_filter_by_task(workdir):
 
 
 def test_logs_show_stderr(workdir):
+    """Verify `logs --show stderr` shows stderr and hides stdout.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_multi(workdir)
     runner = CliRunner()
     flow_id = _run_and_id(runner, "multi")
@@ -211,6 +267,10 @@ def test_logs_show_stderr(workdir):
 
 
 def test_logs_unknown_task_filter(workdir):
+    """Verify `logs --task` errors when the task name is unknown.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_multi(workdir)
     runner = CliRunner()
     flow_id = _run_and_id(runner, "multi")
@@ -223,7 +283,10 @@ def test_logs_unknown_task_filter(workdir):
 
 
 def test_status_accepts_short_prefix(workdir):
-    """git-style: a unique short prefix should resolve to the full flow id."""
+    """git-style: a unique short prefix should resolve to the full flow id.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     flow_id = _run_and_id(runner, "hello", "--input", "name=a")
     short = flow_id[: len(flow_id.split("_")[0]) + 5]  # conduit + 4 hex chars
@@ -233,6 +296,10 @@ def test_status_accepts_short_prefix(workdir):
 
 
 def test_logs_accepts_short_prefix(workdir):
+    """Verify `logs` resolves a unique short flow-id prefix.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     flow_id = _run_and_id(runner, "hello", "--input", "name=a")
     short = flow_id[: len(flow_id.split("_")[0]) + 5]
@@ -242,6 +309,10 @@ def test_logs_accepts_short_prefix(workdir):
 
 
 def test_status_ambiguous_prefix(workdir):
+    """Verify `status` errors when the flow-id prefix is ambiguous.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_multi(workdir)
     runner = CliRunner()
     # Two flows from the same conduit → "multi_" is ambiguous.
@@ -253,6 +324,10 @@ def test_status_ambiguous_prefix(workdir):
 
 
 def test_status_prefix_no_match(workdir):
+    """Verify `status` errors when no flow id matches the prefix.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     _run_and_id(runner, "hello", "--input", "name=a")
     result = runner.invoke(app, ["status", "nope_"])
@@ -267,6 +342,10 @@ import json as _json
 
 
 def test_list_flows_json(workdir):
+    """Verify `list flows --json` returns the expected schema.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     _run_and_id(runner, "hello", "--input", "name=a")
     result = runner.invoke(app, ["list", "flows", "--json"])
@@ -284,6 +363,10 @@ def test_list_flows_json(workdir):
 
 
 def test_list_conduits_json(workdir):
+    """Verify `list conduits --json` includes source and task counts.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     result = runner.invoke(app, ["list", "conduits", "--json"])
     assert result.exit_code == 0, result.output
@@ -296,6 +379,10 @@ def test_list_conduits_json(workdir):
 
 
 def test_status_json(workdir):
+    """Verify `status --json` returns task-level status info.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     flow_id = _run_and_id(runner, "hello", "--input", "name=a")
     result = runner.invoke(app, ["status", flow_id, "--json"])
@@ -308,6 +395,10 @@ def test_status_json(workdir):
 
 
 def test_logs_json(workdir):
+    """Verify `logs --json` returns one entry per task with output.
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_multi(workdir)
     runner = CliRunner()
     flow_id = _run_and_id(runner, "multi")
@@ -326,7 +417,10 @@ def test_logs_json(workdir):
 
 def test_logs_follow_on_completed_flow_exits(workdir):
     """--follow on an already-terminal flow must print all entries and exit
-    on the first poll iteration (status != running)."""
+    on the first poll iteration (status != running).
+
+    :param workdir: isolated working directory fixture.
+    """
     _write_multi(workdir)
     runner = CliRunner()
     flow_id = _run_and_id(runner, "multi")
@@ -337,6 +431,10 @@ def test_logs_follow_on_completed_flow_exits(workdir):
 
 
 def test_logs_follow_unknown_flow(workdir):
+    """Verify `logs --follow` errors on an unknown flow id.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     result = runner.invoke(app, ["logs", "no_such_flow", "--follow"])
     assert result.exit_code != 0
@@ -344,6 +442,10 @@ def test_logs_follow_unknown_flow(workdir):
 
 
 def test_run_missing_input_fails(workdir):
+    """Verify `run` fails when a required template input is missing.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     # conduit has no declared inputs but the task uses {{inputs.name}} — engine
     # does not enforce that unused-declared inputs match, so this command
@@ -392,13 +494,18 @@ SCHEDULE_ONCE_JSON = """{
 
 
 def test_schedule_add_and_list(workdir, tmp_path):
+    """Verify `schedule add` installs a recurring schedule and `list` shows it.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
     src = tmp_path / "nightly.json"
     src.write_text(SCHEDULE_RECURRING_JSON)
     runner = CliRunner()
     result = runner.invoke(app, ["schedule", "add", str(src)])
     assert result.exit_code == 0, result.output
     assert "installed" in result.output
-    assert (workdir / ".atelier" / "schedules.json").exists()
+    assert (workdir / ".atelier" / "schedules" / "nightly.yaml").exists()
 
     listing = runner.invoke(app, ["schedule", "list"])
     assert listing.exit_code == 0, listing.output
@@ -408,6 +515,11 @@ def test_schedule_add_and_list(workdir, tmp_path):
 
 
 def test_schedule_add_rejects_invalid(workdir, tmp_path):
+    """Verify `schedule add` rejects payloads with invalid schedule modes.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
     bad = tmp_path / "bad.json"
     bad.write_text(
         '{"conduit_name": "x", "run_path": "/tmp", "schedule": {"mode": "weekly"}}'
@@ -419,6 +531,11 @@ def test_schedule_add_rejects_invalid(workdir, tmp_path):
 
 
 def test_schedule_remove_by_name(workdir, tmp_path):
+    """Verify `schedule remove` deletes the named schedule.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
     src = tmp_path / "nightly.json"
     src.write_text(SCHEDULE_RECURRING_JSON)
     runner = CliRunner()
@@ -434,6 +551,10 @@ def test_schedule_remove_by_name(workdir, tmp_path):
 
 
 def test_schedule_remove_unknown(workdir):
+    """Verify `schedule remove` errors when the name is unknown.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     result = runner.invoke(app, ["schedule", "remove", "ghost"])
     assert result.exit_code != 0
@@ -441,6 +562,10 @@ def test_schedule_remove_unknown(workdir):
 
 
 def test_schedule_list_empty(workdir):
+    """Verify `schedule list` reports an empty schedule store.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     result = runner.invoke(app, ["schedule", "list"])
     assert result.exit_code == 0
@@ -448,6 +573,11 @@ def test_schedule_list_empty(workdir):
 
 
 def test_schedule_list_json_includes_one_shot(workdir, tmp_path):
+    """Verify `schedule list --json` includes one-shot schedules.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
     src = tmp_path / "backfill.json"
     src.write_text(SCHEDULE_ONCE_JSON)
     runner = CliRunner()
@@ -464,6 +594,11 @@ def test_schedule_list_json_includes_one_shot(workdir, tmp_path):
 
 
 def test_schedule_run_now_by_name(workdir, tmp_path):
+    """Verify `schedule run-now <name>` executes the schedule's conduit.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
     src = tmp_path / "nightly.json"
     src.write_text(SCHEDULE_RECURRING_JSON)
     runner = CliRunner()
@@ -476,6 +611,10 @@ def test_schedule_run_now_by_name(workdir, tmp_path):
 
 
 def test_schedule_run_now_unknown(workdir):
+    """Verify `schedule run-now` errors when the schedule name is unknown.
+
+    :param workdir: isolated working directory fixture.
+    """
     runner = CliRunner()
     result = runner.invoke(app, ["schedule", "run-now", "ghost"])
     assert result.exit_code != 0
@@ -483,6 +622,11 @@ def test_schedule_run_now_unknown(workdir):
 
 
 def test_scheduler_status_alias(workdir, tmp_path):
+    """Verify `scheduler status` is an alias for `schedule list`.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
     src = tmp_path / "nightly.json"
     src.write_text(SCHEDULE_RECURRING_JSON)
     runner = CliRunner()
@@ -496,6 +640,9 @@ def test_run_failure_prints_flow_id_and_status_hint(tmp_path, monkeypatch):
     """Failure output must include the flow_id and a next-step hint so
     the user can inspect what happened. Previously the flow_id was only
     printed on success, leaving failed runs un-inspectable.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
     """
     atelier_dir = tmp_path / ".atelier"
     (atelier_dir / "conduits" / "failing").mkdir(parents=True)
@@ -521,6 +668,10 @@ def test_run_failure_prints_flow_id_and_status_hint(tmp_path, monkeypatch):
 
 
 def _capture(event: TaskEvent) -> str:
+    """Render a TaskEvent into a string using a width-fixed Rich console.
+
+    :param event: the task event to render.
+    """
     buf = io.StringIO()
     console = Console(
         file=buf, force_terminal=False, color_system=None, width=120
@@ -530,6 +681,7 @@ def _capture(event: TaskEvent) -> str:
 
 
 def test_truncate_tail_short_passthrough():
+    """Verify shorter-than-max input passes through unchanged."""
     text = "line1\nline2\nline3"
     out, dropped = _truncate_tail(text, max_lines=20)
     assert out == text
@@ -537,6 +689,7 @@ def test_truncate_tail_short_passthrough():
 
 
 def test_truncate_tail_exactly_max():
+    """Verify input of exactly max lines is preserved without drops."""
     text = "\n".join(f"l{i}" for i in range(20))
     out, dropped = _truncate_tail(text, max_lines=20)
     assert dropped == 0
@@ -544,6 +697,7 @@ def test_truncate_tail_exactly_max():
 
 
 def test_truncate_tail_drops_head():
+    """Verify oversize input drops the head and keeps the last max_lines."""
     text = "\n".join(f"l{i}" for i in range(100))
     out, dropped = _truncate_tail(text, max_lines=20)
     assert dropped == 80
@@ -552,10 +706,12 @@ def test_truncate_tail_drops_head():
 
 
 def test_truncate_tail_empty():
+    """Verify empty input returns empty output with zero drops."""
     assert _truncate_tail("", max_lines=20) == ("", 0)
 
 
 def test_render_successful_task_with_output():
+    """Verify a successful task renders task name, tool, body and timing."""
     event = TaskEvent(
         task="greet",
         tool="tool:bash",
@@ -574,6 +730,7 @@ def test_render_successful_task_with_output():
 
 
 def test_render_successful_task_empty_output_is_compact():
+    """Verify an empty-output success renders as a compact one-liner."""
     event = TaskEvent(
         task="ping",
         tool="tool:bash",
@@ -591,6 +748,7 @@ def test_render_successful_task_empty_output_is_compact():
 
 
 def test_render_failed_task_falls_back_to_stderr():
+    """Verify a failed task with no stdout renders the stderr body."""
     event = TaskEvent(
         task="boom",
         tool="tool:bash",
@@ -651,6 +809,7 @@ def test_render_failed_task_with_only_output_does_not_label_sections():
 
 
 def test_render_truncates_long_output():
+    """Verify long task output renders with a truncation indicator."""
     long_out = "\n".join(f"line{i}" for i in range(100))
     event = TaskEvent(
         task="chatty",
@@ -691,6 +850,7 @@ def test_render_live_streamed_task_is_compact():
 
 
 def test_render_skipped_task_shows_reason():
+    """Verify a skipped task renders compactly with its skip reason."""
     from app.schemas.progress import TaskStatus
     event = TaskEvent(
         task="deploy",
@@ -709,6 +869,7 @@ def test_render_skipped_task_shows_reason():
 
 
 def test_render_cancelled_task_shows_reason():
+    """Verify a cancelled task renders compactly with its cancel reason."""
     from app.schemas.progress import TaskStatus
     event = TaskEvent(
         task="after",
@@ -725,6 +886,7 @@ def test_render_cancelled_task_shows_reason():
 
 
 def test_render_iteration_shown_when_repeat_gt_one():
+    """Verify the renderer shows iteration markers when repeat > 1."""
     event = TaskEvent(
         task="retry",
         tool="tool:bash",
@@ -760,6 +922,11 @@ tasks:
 
 @pytest.fixture
 def prompted_workdir(tmp_path, monkeypatch):
+    """Provide an isolated working directory seeded with the prompted conduit.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     atelier_dir = tmp_path / ".atelier"
     (atelier_dir / "conduits" / "prompted").mkdir(parents=True)
     (atelier_dir / "conduits" / "prompted" / "conduit.yaml").write_text(
@@ -773,17 +940,21 @@ def prompted_workdir(tmp_path, monkeypatch):
 
 
 def _patch_tty(monkeypatch, *, isatty: bool = True):
-    """Make ``sys.stdin.isatty()`` inside ``app.cli.run`` return *isatty*.
+    """Make ``sys.stdin.isatty()`` inside ``app.cli.commands.run`` return *isatty*.
 
     The CliRunner replaces ``sys.stdin`` during ``invoke()``, so we need to
     patch the ``sys`` reference held by the *module* itself.
+
+    :param monkeypatch: pytest monkeypatch fixture.
+    :param isatty: value that ``sys.stdin.isatty()`` should report.
     """
-    import app.cli.run as _run_mod
+    import app.cli.commands.run as _run_mod
 
     _real_sys = _run_mod.sys
 
     class _FakeStdin:
         def isatty(self):
+            """Return the patched isatty value."""
             return isatty
 
     class _FakeSys:
@@ -791,6 +962,10 @@ def _patch_tty(monkeypatch, *, isatty: bool = True):
 
     # Delegate everything else to the real sys module.
     def __getattr__(name):
+        """Delegate attribute access to the real `sys` module.
+
+        :param name: attribute name to look up.
+        """
         return getattr(_real_sys, name)
 
     _FakeSys.__getattr__ = __getattr__
@@ -798,10 +973,18 @@ def _patch_tty(monkeypatch, *, isatty: bool = True):
 
 
 def test_prompt_partial_inputs_only_missing(prompted_workdir, monkeypatch):
-    """Pass alpha via --input; only beta should be prompted."""
+    """Pass alpha via --input; only beta should be prompted.
+
+    :param prompted_workdir: working directory with prompted conduit fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     prompted_keys: list[str] = []
 
     def fake_input(prompt=""):
+        """Record the prompt and return a canned beta value.
+
+        :param prompt: prompt text emitted by the runtime.
+        """
         prompted_keys.append(prompt)
         return "val_beta"
 
@@ -818,11 +1001,19 @@ def test_prompt_partial_inputs_only_missing(prompted_workdir, monkeypatch):
 
 
 def test_prompt_all_inputs_when_none_given(prompted_workdir, monkeypatch):
-    """No --input flags → both alpha and beta prompted, in declaration order."""
+    """No --input flags → both alpha and beta prompted, in declaration order.
+
+    :param prompted_workdir: working directory with prompted conduit fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     prompted_keys: list[str] = []
     answers = iter(["val_alpha", "val_beta"])
 
     def fake_input(prompt=""):
+        """Record the prompt and return the next canned answer.
+
+        :param prompt: prompt text emitted by the runtime.
+        """
         prompted_keys.append(prompt)
         return next(answers)
 
@@ -839,10 +1030,18 @@ def test_prompt_all_inputs_when_none_given(prompted_workdir, monkeypatch):
 
 
 def test_no_prompt_when_all_inputs_provided(prompted_workdir, monkeypatch):
-    """All inputs via --input → no prompting at all."""
+    """All inputs via --input → no prompting at all.
+
+    :param prompted_workdir: working directory with prompted conduit fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     prompted_keys: list[str] = []
 
     def fake_input(prompt=""):
+        """Record the prompt; should never be called in this test.
+
+        :param prompt: prompt text emitted by the runtime.
+        """
         prompted_keys.append(prompt)
         return "should_not_be_called"
 
@@ -858,7 +1057,11 @@ def test_no_prompt_when_all_inputs_provided(prompted_workdir, monkeypatch):
 
 
 def test_no_prompt_when_stdin_not_tty(prompted_workdir, monkeypatch):
-    """Non-TTY stdin → prompting skipped, engine raises ValueError."""
+    """Non-TTY stdin → prompting skipped, engine raises ValueError.
+
+    :param prompted_workdir: working directory with prompted conduit fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     _patch_tty(monkeypatch, isatty=False)
 
     runner = CliRunner()
@@ -868,9 +1071,17 @@ def test_no_prompt_when_stdin_not_tty(prompted_workdir, monkeypatch):
 
 
 def test_ctrl_c_during_prompt_exits_130(prompted_workdir, monkeypatch):
-    """KeyboardInterrupt during prompting → exit code 130, no traceback."""
+    """KeyboardInterrupt during prompting → exit code 130, no traceback.
+
+    :param prompted_workdir: working directory with prompted conduit fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
 
     def fake_input(prompt=""):
+        """Raise KeyboardInterrupt to simulate the user hitting Ctrl-C.
+
+        :param prompt: prompt text emitted by the runtime.
+        """
         raise KeyboardInterrupt
 
     monkeypatch.setattr("builtins.input", fake_input)
@@ -884,10 +1095,18 @@ def test_ctrl_c_during_prompt_exits_130(prompted_workdir, monkeypatch):
 
 
 def test_no_prompt_for_conduit_without_inputs(workdir, monkeypatch):
-    """Conduit with inputs: {} → no prompting."""
+    """Conduit with inputs: {} → no prompting.
+
+    :param workdir: isolated working directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
     prompted_keys: list[str] = []
 
     def fake_input(prompt=""):
+        """Record the prompt; should never be called in this test.
+
+        :param prompt: prompt text emitted by the runtime.
+        """
         prompted_keys.append(prompt)
         return "should_not_be_called"
 

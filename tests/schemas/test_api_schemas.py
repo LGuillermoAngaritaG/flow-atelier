@@ -18,6 +18,7 @@ from app.schemas.api import (
 
 
 def test_create_conduit_input_round_trips_to_conduit_payload():
+    """Verify CreateConduitInput accepts and dumps a payload in snake_case."""
     payload = {
         "name": "release_notes",
         "description": "Generate release notes",
@@ -40,12 +41,14 @@ def test_create_conduit_input_round_trips_to_conduit_payload():
 
 
 def test_update_conduit_input_allows_partial_update():
+    """Verify UpdateConduitInput accepts partial updates with None defaults."""
     dto = UpdateConduitInput.model_validate({"description": "new"})
     assert dto.description == "new"
     assert dto.timeout is None
 
 
 def test_conduit_dto_is_serializable():
+    """Verify ConduitDTO accepts a full conduit definition."""
     dto = ConduitDTO.model_validate(
         {
             "name": "x",
@@ -69,6 +72,7 @@ def test_conduit_dto_is_serializable():
 
 
 def test_open_path_input_requires_conduit_and_run_path():
+    """Verify OpenPathInput requires both conduit_name and run_path."""
     dto = OpenPathInput.model_validate(
         {"conduit_name": "release_notes", "run_path": "/abs/path"}
     )
@@ -79,6 +83,7 @@ def test_open_path_input_requires_conduit_and_run_path():
 
 
 def test_run_task_input_validates_minimum_fields():
+    """Verify RunTaskInput accepts the minimum required fields."""
     dto = RunTaskInput.model_validate(
         {
             "name": "echo",
@@ -94,6 +99,7 @@ def test_run_task_input_validates_minimum_fields():
 
 
 def test_run_task_output_carries_flow_id_and_logs():
+    """Verify RunTaskOutput exposes flow_id and logs fields."""
     dto = RunTaskOutput.model_validate(
         {
             "flow_id": "x_aabbccdd_20260101T000000Z",
@@ -105,6 +111,7 @@ def test_run_task_output_carries_flow_id_and_logs():
 
 
 def test_schedule_config_recurring_validates_days_and_times():
+    """Verify recurring ScheduleConfig accepts valid days and times."""
     sc = ScheduleConfig.model_validate(
         {
             "mode": "recurring",
@@ -119,6 +126,7 @@ def test_schedule_config_recurring_validates_days_and_times():
 
 
 def test_schedule_config_once_requires_run_at():
+    """Verify once-mode ScheduleConfig accepts run_at."""
     sc = ScheduleConfig.model_validate(
         {"mode": "once", "name": "tomorrow", "run_at": "2026-05-01T08:00:00Z"}
     )
@@ -127,6 +135,7 @@ def test_schedule_config_once_requires_run_at():
 
 
 def test_schedule_config_recurring_rejects_bad_day():
+    """Verify recurring ScheduleConfig rejects an out-of-range day."""
     with pytest.raises(Exception):
         ScheduleConfig.model_validate(
             {"mode": "recurring", "name": "x", "days": [0], "times": ["06:00"]}
@@ -134,6 +143,7 @@ def test_schedule_config_recurring_rejects_bad_day():
 
 
 def test_schedule_config_recurring_rejects_bad_time():
+    """Verify recurring ScheduleConfig rejects an unparsable time."""
     with pytest.raises(Exception):
         ScheduleConfig.model_validate(
             {"mode": "recurring", "name": "x", "days": [1], "times": ["6:00 AM"]}
@@ -141,6 +151,7 @@ def test_schedule_config_recurring_rejects_bad_time():
 
 
 def test_create_schedule_input_assembles_full_payload():
+    """Verify CreateScheduleInput accepts a full schedule payload."""
     csi = CreateScheduleInput.model_validate(
         {
             "conduit_name": "release_notes",
@@ -159,6 +170,7 @@ def test_create_schedule_input_assembles_full_payload():
 
 
 def test_scheduled_job_has_id_and_metadata():
+    """Verify ScheduledJob exposes id and status metadata."""
     sj = ScheduledJob.model_validate(
         {
             "id": "SCH-12345678",
@@ -182,6 +194,7 @@ def test_scheduled_job_has_id_and_metadata():
 
 
 def test_scheduled_job_serializes_snake_case():
+    """Verify ScheduledJob dumps fields in snake_case."""
     sj = ScheduledJob.model_validate(
         {
             "id": "SCH-1",
@@ -201,6 +214,7 @@ def test_scheduled_job_serializes_snake_case():
 
 
 def test_prior_flow_carries_minimum_fields():
+    """Verify PriorFlow exposes flow_id and status fields."""
     pf = PriorFlow.model_validate(
         {
             "flow_id": "x_aabbccdd_20260101T000000Z",

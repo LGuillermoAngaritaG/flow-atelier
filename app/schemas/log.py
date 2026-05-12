@@ -17,6 +17,10 @@ class StepKind(str, Enum):
 
 
 def _now_iso() -> str:
+    """Return the current UTC time as an ISO 8601 string ending in ``Z``.
+
+    :returns: current UTC timestamp formatted as ISO 8601 with ``Z`` suffix.
+    """
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -52,10 +56,21 @@ class ExecutionResult(BaseModel):
     ``tool:conduit`` tasks when evaluating the per-iteration loop
     predicate.
     """
+    last_turn_output: str | None = None
+    """Text emitted by the agent on the final turn only, for interactive
+    harness tasks. When set, the engine uses it instead of ``output`` when
+    populating ``outputs[task]`` (which feeds ``{{task.output}}`` template
+    resolution and ``outputs.yaml``). ``None`` for every other executor;
+    engine falls back to ``output`` in that case.
+    """
     steps: list[IntermediateStep] = Field(default_factory=list)
 
     @property
     def success(self) -> bool:
+        """Whether the execution finished with a zero exit code.
+
+        :returns: ``True`` if ``exit_code`` is ``0``, otherwise ``False``.
+        """
         return self.exit_code == 0
 
 

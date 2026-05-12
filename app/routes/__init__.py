@@ -11,7 +11,10 @@ from fastapi import FastAPI
 
 
 def register_routes(app: FastAPI) -> None:
-    """Register every resource router on the given FastAPI app."""
+    """Register every resource router on the given FastAPI app.
+
+    :param app: FastAPI application that receives the routers.
+    """
     from app.routes import conduits, flows, schedules, tasks, ws
 
     app.include_router(conduits.router)

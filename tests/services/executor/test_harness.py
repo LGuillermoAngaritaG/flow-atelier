@@ -27,10 +27,19 @@ FAKE_AGENT = Path(__file__).resolve().parents[2] / "fixtures" / "fake_acp_agent.
 
 
 def _fake_cmd(script: dict[str, Any]) -> list[str]:
+    """Build a launch command that runs the fake ACP agent with a script.
+
+    :param script: JSON-serializable ACP scenario for the fake agent.
+    """
     return [sys.executable, str(FAKE_AGENT), "--script", json.dumps(script)]
 
 
 def _task(prompt: str, *, interactive: bool = False) -> TaskDefinition:
+    """Build a TaskDefinition for harness tests.
+
+    :param prompt: task body / prompt sent to the harness.
+    :param interactive: whether the task should run in interactive mode.
+    """
     return TaskDefinition(
         name="h",
         description="d",
@@ -42,6 +51,10 @@ def _task(prompt: str, *, interactive: bool = False) -> TaskDefinition:
 
 
 def _ctx(timeout: int = 30) -> FlowContext:
+    """Build a minimal FlowContext for harness tests.
+
+    :param timeout: per-task timeout in seconds.
+    """
     return FlowContext(
         flow_id="fake", store=None, inputs={}, timeout=timeout  # type: ignore[arg-type]
     )
@@ -55,6 +68,11 @@ class RecordingSink:
         replies: list[str] | None = None,
         perm_choice: str | None = None,
     ) -> None:
+        """Initialize the recording sink with scripted replies and perm choice.
+
+        :param replies: scripted user replies, popped in order on each request_input.
+        :param perm_choice: option id to return from request_permission, or None to pick first.
+        """
         self.display_log: list[str] = []
         self.input_prompts: list[str] = []
         self.agent_turn_starts: list[str] = []
@@ -63,12 +81,24 @@ class RecordingSink:
         self._perm_choice = perm_choice
 
     async def display(self, text: str) -> None:
+        """Record a chunk of displayed text.
+
+        :param text: text chunk forwarded by the harness.
+        """
         self.display_log.append(text)
 
     async def start_agent_turn(self, label: str = "agent") -> None:
+        """Record an agent-turn marker.
+
+        :param label: label for the agent turn.
+        """
         self.agent_turn_starts.append(label)
 
     async def request_input(self, prompt: str) -> str:
+        """Return the next scripted reply or raise EOFError.
+
+        :param prompt: prompt shown to the user.
+        """
         self.input_prompts.append(prompt)
         if not self._replies:
             raise EOFError("no more scripted replies")
@@ -77,6 +107,11 @@ class RecordingSink:
     async def request_permission(
         self, summary: str, options: list[PermissionOption]
     ) -> str:
+        """Return the configured permission choice, or the first option.
+
+        :param summary: human-readable permission summary.
+        :param options: available permission options.
+        """
         self.perm_log.append(summary)
         if self._perm_choice is not None:
             return self._perm_choice
@@ -85,6 +120,7 @@ class RecordingSink:
 
 class TestNonInteractive:
     async def test_single_turn_success(self) -> None:
+        """Verify a single-turn agent run returns its output with exit 0."""
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -97,6 +133,7 @@ class TestNonInteractive:
         assert "answer: ok" in result.output
 
     async def test_chunks_concatenated(self) -> None:
+        """Verify multiple agent chunks are concatenated into final output."""
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -116,6 +153,7 @@ class TestNonInteractive:
         assert "hello from agent" in result.output
 
     async def test_refusal_marks_failure(self) -> None:
+        """Verify a refusal stop reason maps to a non-zero exit code."""
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -128,6 +166,7 @@ class TestNonInteractive:
         assert "refusal" in result.stderr
 
     async def test_timeout(self) -> None:
+        """Verify the harness times out a slow agent with exit code 124."""
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -229,6 +268,7 @@ class TestInteractive:
         assert "[ATELIER_DONE]" not in displayed
 
     async def test_marker_first_turn_terminates(self) -> None:
+        """Verify the done marker on the first turn ends the interactive loop."""
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -255,6 +295,7 @@ class TestInteractive:
         assert sink.input_prompts == []
 
     async def test_multi_turn_with_user_reply(self) -> None:
+        """Verify a multi-turn interaction stitches replies into the output."""
         sink = RecordingSink(replies=["luis"])
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -281,6 +322,7 @@ class TestInteractive:
         assert len(sink.input_prompts) == 1
 
     async def test_missing_marker_fails_when_sink_exhausted(self) -> None:
+        """Verify a missing done marker plus exhausted sink yields failure."""
         sink = RecordingSink(replies=[])
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -295,6 +337,7 @@ class TestInteractive:
         assert "[ATELIER_DONE]" not in result.output
 
     async def test_custom_marker(self) -> None:
+        """Verify a custom done marker is honored and stripped from output."""
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -312,6 +355,7 @@ class TestInteractive:
         assert "done" in result.output
 
     async def test_permission_auto_approved_without_sink(self) -> None:
+        """Verify permission requests with an allow option auto-approve."""
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -341,6 +385,7 @@ class TestInteractive:
         assert "[perm:allow]" in result.output
 
     async def test_permission_prefers_allow_always(self) -> None:
+        """Verify allow_always is preferred over allow_once when both exist."""
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -369,6 +414,7 @@ class TestInteractive:
         assert "[perm:always]" in result.output
 
     async def test_permission_denies_when_only_reject_options(self) -> None:
+        """Verify reject-only option lists produce a denial outcome."""
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -398,6 +444,7 @@ class TestInteractive:
         assert "[perm:]" in result.output
 
     async def test_session_mode_switched_to_bypass(self) -> None:
+        """Verify the harness switches to bypassPermissions when offered."""
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -424,6 +471,7 @@ class TestInteractive:
         assert sink.perm_log == []
 
     async def test_session_mode_unchanged_when_no_permissive_option(self) -> None:
+        """Verify the harness leaves the mode alone when no permissive option exists."""
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -449,6 +497,7 @@ class TestInteractive:
         assert "[mode_set:" not in result.output
 
     async def test_session_mode_absent_is_no_op(self) -> None:
+        """Verify the harness is a no-op when the agent advertises no modes."""
         sink = RecordingSink()
         executor = AcpHarnessExecutor(
             launch_cmd=_fake_cmd(
@@ -469,34 +518,42 @@ class TestInteractive:
 
 class TestPreset:
     def test_claude_harness_default_launch_cmd(self) -> None:
+        """Verify ClaudeHarness uses the claude-code-acp launch command."""
         h = ClaudeHarness(sink=RecordingSink())
         assert "claude-code-acp" in " ".join(h.launch_cmd)
 
     def test_claude_harness_override_launch_cmd(self) -> None:
+        """Verify ClaudeHarness honors an explicit launch_cmd override."""
         h = ClaudeHarness(sink=RecordingSink(), launch_cmd=["foo", "bar"])
         assert h.launch_cmd == ["foo", "bar"]
 
     def test_codex_harness_default_launch_cmd(self) -> None:
+        """Verify CodexHarness uses the codex-acp launch command."""
         h = CodexHarness(sink=RecordingSink())
         assert "codex-acp" in " ".join(h.launch_cmd)
 
     def test_opencode_harness_default_launch_cmd(self) -> None:
+        """Verify OpencodeHarness uses the opencode acp launch command."""
         h = OpencodeHarness(sink=RecordingSink())
         assert h.launch_cmd == ["opencode", "acp"]
 
     def test_opencode_harness_override_launch_cmd(self) -> None:
+        """Verify OpencodeHarness honors an explicit launch_cmd override."""
         h = OpencodeHarness(sink=RecordingSink(), launch_cmd=["foo", "bar"])
         assert h.launch_cmd == ["foo", "bar"]
 
     def test_copilot_harness_default_launch_cmd(self) -> None:
+        """Verify CopilotHarness uses the copilot --acp launch command."""
         h = CopilotHarness(sink=RecordingSink())
         assert h.launch_cmd == ["copilot", "--acp"]
 
     def test_copilot_harness_override_launch_cmd(self) -> None:
+        """Verify CopilotHarness honors an explicit launch_cmd override."""
         h = CopilotHarness(sink=RecordingSink(), launch_cmd=["foo", "bar"])
         assert h.launch_cmd == ["foo", "bar"]
 
     def test_cursor_harness_default_launch_cmd(self) -> None:
+        """Verify CursorHarness uses the pinned cursor-agent-acp launch command."""
         h = CursorHarness(sink=RecordingSink())
         assert h.launch_cmd == [
             "npx",
@@ -505,6 +562,7 @@ class TestPreset:
         ]
 
     def test_cursor_harness_override_launch_cmd(self) -> None:
+        """Verify CursorHarness honors an explicit launch_cmd override."""
         h = CursorHarness(sink=RecordingSink(), launch_cmd=["foo", "bar"])
         assert h.launch_cmd == ["foo", "bar"]
 
@@ -513,6 +571,11 @@ class TestAtelierHarnessWiring:
     def test_atelier_exposes_all_five_harness_keys(
         self, monkeypatch, tmp_path
     ) -> None:
+        """Verify Atelier registers all five harness executor keys.
+
+        :param monkeypatch: pytest monkeypatch fixture.
+        :param tmp_path: pytest temp directory fixture.
+        """
         monkeypatch.chdir(tmp_path)
         from app.core.atelier import Atelier
 
@@ -532,6 +595,11 @@ class TestAtelierHarnessWiring:
         assert isinstance(a.executors["harness:cursor"], CursorHarness)
 
     def test_opencode_launch_cmd_env_override(self, monkeypatch, tmp_path) -> None:
+        """Verify ATELIER_OPENCODE_LAUNCH_CMD overrides the opencode launch cmd.
+
+        :param monkeypatch: pytest monkeypatch fixture.
+        :param tmp_path: pytest temp directory fixture.
+        """
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("ATELIER_OPENCODE_LAUNCH_CMD", '["x","y"]')
         from app.core.atelier import Atelier
@@ -540,6 +608,11 @@ class TestAtelierHarnessWiring:
         assert a.executors["harness:opencode"].launch_cmd == ["x", "y"]
 
     def test_copilot_launch_cmd_env_override(self, monkeypatch, tmp_path) -> None:
+        """Verify ATELIER_COPILOT_LAUNCH_CMD overrides the copilot launch cmd.
+
+        :param monkeypatch: pytest monkeypatch fixture.
+        :param tmp_path: pytest temp directory fixture.
+        """
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("ATELIER_COPILOT_LAUNCH_CMD", '["x","y"]')
         from app.core.atelier import Atelier
@@ -548,6 +621,11 @@ class TestAtelierHarnessWiring:
         assert a.executors["harness:copilot"].launch_cmd == ["x", "y"]
 
     def test_cursor_launch_cmd_env_override(self, monkeypatch, tmp_path) -> None:
+        """Verify ATELIER_CURSOR_LAUNCH_CMD overrides the cursor launch cmd.
+
+        :param monkeypatch: pytest monkeypatch fixture.
+        :param tmp_path: pytest temp directory fixture.
+        """
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("ATELIER_CURSOR_LAUNCH_CMD", '["x","y"]')
         from app.core.atelier import Atelier
@@ -557,10 +635,85 @@ class TestAtelierHarnessWiring:
 
 
 def test_default_marker_constant() -> None:
+    """Verify the default done-marker constant matches the protocol value."""
     assert DEFAULT_DONE_MARKER == "[ATELIER_DONE]"
 
 
 def test_interactive_suffix_contains_marker() -> None:
+    """Verify build_interactive_suffix injects the marker and an instruction."""
     suffix = build_interactive_suffix("[ATELIER_DONE]")
     assert "[ATELIER_DONE]" in suffix
     assert "do not" in suffix.lower() or "not echo" in suffix.lower()
+
+
+class TestLastTurnOutput:
+    async def test_single_turn_last_turn_matches_full_output(self) -> None:
+        """When the done marker fires on the first turn, last_turn_output
+        equals the cleaned full output (single turn → no slicing needed)."""
+        sink = RecordingSink()
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {
+                    "turns": [
+                        {
+                            "chunks": ["only turn ", "[ATELIER_DONE]"],
+                            "stop": "end_turn",
+                        }
+                    ]
+                }
+            ),
+            sink=sink,
+        )
+        result = await executor.execute(
+            _task("x", interactive=True), "x", _ctx()
+        )
+        assert result.exit_code == 0
+        assert result.last_turn_output == "only turn"
+        assert result.output == "only turn"
+
+    async def test_multi_turn_last_turn_is_only_final_turn(self) -> None:
+        """In a multi-turn interactive session, last_turn_output contains
+        only the final agent turn's text — not the full transcript that
+        result.output / stdout / logs.json continue to carry."""
+        sink = RecordingSink(replies=["my reply"])
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {
+                    "turns": [
+                        {"chunks": ["first turn says hi"], "stop": "end_turn"},
+                        {
+                            "chunks": ["final answer here [ATELIER_DONE]"],
+                            "stop": "end_turn",
+                        },
+                    ]
+                }
+            ),
+            sink=sink,
+        )
+        result = await executor.execute(
+            _task("go", interactive=True), "go", _ctx()
+        )
+        assert result.exit_code == 0
+        # Full transcript stays in output/stdout for logs.json.
+        assert "first turn says hi" in result.output
+        assert "final answer here" in result.output
+        # last_turn_output is final-turn-only.
+        assert result.last_turn_output == "final answer here"
+        assert "first turn" not in (result.last_turn_output or "")
+
+    async def test_non_interactive_last_turn_output_is_none(self) -> None:
+        """Non-interactive (single-turn) execution leaves last_turn_output
+        as None so the engine falls back to result.output."""
+        sink = RecordingSink()
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {"turns": [{"chunks": ["hi"], "stop": "end_turn"}]}
+            ),
+            sink=sink,
+        )
+        result = await executor.execute(
+            _task("x", interactive=False), "x", _ctx()
+        )
+        assert result.exit_code == 0
+        assert result.last_turn_output is None
+        assert "hi" in result.output

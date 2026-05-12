@@ -32,6 +32,9 @@ ScheduleExecutor = Callable[[ScheduledJob, Path], Awaitable[None]]
 async def _default_executor(job: ScheduledJob, working_dir: Path) -> None:
     """Default fire action: instantiate ``Atelier(base_dir=working_dir/.atelier)``
     and ``await run_conduit(...)``. Imported lazily to avoid a circular import.
+
+    :param job: schedule being fired
+    :param working_dir: directory under which ``.atelier`` is resolved
     """
     from app.core.atelier import Atelier
 
@@ -74,6 +77,14 @@ class SchedulerDaemon:
         default_working_dir: Path | None = None,
         reload_interval_seconds: float = 30.0,
     ) -> None:
+        """Configure the daemon without starting it.
+
+        :param store: backing :class:`ScheduleStore`
+        :param executor: per-fire coroutine; defaults to running the conduit
+        :param default_zone: default timezone for naive ``run_at`` values
+        :param default_working_dir: fallback working dir if ``run_path`` is empty
+        :param reload_interval_seconds: how often to re-scan the store
+        """
         self.store = store
         self.executor: ScheduleExecutor = executor or _default_executor
         self.default_zone = default_zone or default_local_zone()
@@ -85,6 +96,7 @@ class SchedulerDaemon:
     # ------------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
+        """Boot the APScheduler, install the reload job, and sync from disk."""
         if self._scheduler is not None:
             return
         self._scheduler = AsyncIOScheduler(timezone=self.default_zone)
@@ -106,6 +118,7 @@ class SchedulerDaemon:
         )
 
     async def stop(self) -> None:
+        """Shut down the APScheduler if it is currently running."""
         if self._scheduler is None:
             return
         self._scheduler.shutdown(wait=False)
@@ -165,6 +178,10 @@ class SchedulerDaemon:
             self._register(job)
 
     def _register(self, job: ScheduledJob) -> None:
+        """Register or replace the APScheduler job for ``job`` and cache planning data.
+
+        :param job: schedule to (re-)register
+        """
         assert self._scheduler is not None
         trigger = to_trigger(job, default_zone=self.default_zone)
         working_dir = self._resolve_working_dir(job)
@@ -195,6 +212,10 @@ class SchedulerDaemon:
         )
 
     def _resolve_working_dir(self, job: ScheduledJob) -> Path:
+        """Resolve ``job.run_path`` against the configured default working dir.
+
+        :param job: schedule whose working directory should be resolved
+        """
         if not job.run_path:
             return self.default_working_dir
         wd = Path(job.run_path)
@@ -205,7 +226,10 @@ class SchedulerDaemon:
     # ------------------------------------------------------------------ fire
 
     async def _fire(self, schedule_id: str) -> None:
-        """Job function: re-read the latest schedule and dispatch it."""
+        """Job function: re-read the latest schedule and dispatch it.
+
+        :param schedule_id: schedule identifier passed by APScheduler
+        """
         job = self.store.get(schedule_id)
         if job is None:
             logger.warning(
@@ -246,6 +270,10 @@ def compute_planned_view(
     Used by ``atelier schedule list`` and ``atelier scheduler status`` so they
     work whether or not a daemon is running. Already-fired one-shots are
     surfaced with ``next_fire_time=None``.
+
+    :param store: schedule store to read from
+    :param default_zone: timezone used to evaluate cron/date triggers
+    :param default_working_dir: base directory used to resolve relative ``run_path``
     """
     now = datetime.now(tz=default_zone)
     base = default_working_dir.resolve()

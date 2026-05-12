@@ -24,6 +24,11 @@ class FastApiServer(ApiServerBase):
         *,
         cors_origins: Iterable[str] | None = None,
     ) -> FastAPI:
+        """Build the FastAPI app, attach CORS, and register all routes.
+
+        :param atelier: facade exposed via ``app.state.atelier``
+        :param cors_origins: explicit CORS origins; ``None`` means ``["*"]``
+        """
         app = FastAPI(title="flow-atelier", version="0.1.0")
         app.state.atelier = atelier
 
@@ -38,6 +43,7 @@ class FastApiServer(ApiServerBase):
 
         @app.get("/")
         async def liveness() -> dict[str, str]:
+            """Return a small JSON body confirming the server is up."""
             return {"status": "ok"}
 
         # Routes mount themselves below — imported here to avoid
