@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  verify-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches pyproject version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pyver=$(grep -E '^version = ' pyproject.toml | head -1 | cut -d'"' -f2)
+          test "$tag" = "$pyver" || { echo "tag $tag != pyproject $pyver"; exit 1; }
+
+  build-wheel:
+    needs: verify-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.13
+      - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+
+  build-binary:
+    needs: verify-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: atelier-linux-x86_64
+            bin: atelier
+          - os: macos-latest
+            asset: atelier-macos-arm64
+            bin: atelier
+          - os: windows-latest
+            asset: atelier-windows-x86_64.exe
+            bin: atelier.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.13
+      - run: uv sync --dev
+      - name: Build binary
+        shell: bash
+        run: |
+          uv run pyinstaller scripts/atelier_entry.py \
+            --onefile --name atelier --clean --noconfirm \
+            --collect-all uvicorn \
+            --collect-all apscheduler \
+            --collect-all tzdata \
+            --collect-all agent_client_protocol
+      - name: Smoke test the binary
+        shell: bash
+        run: ./dist/${{ matrix.bin }} --help
+      - name: Rename for upload
+        shell: bash
+        run: mv dist/${{ matrix.bin }} dist/${{ matrix.asset }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.os }}
+          path: dist/${{ matrix.asset }}
+
+  publish-pypi:
+    needs: [build-wheel, build-binary]
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Flatten artifacts
+        run: mkdir -p release && find artifacts -type f -exec cp {} release/ \;
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
