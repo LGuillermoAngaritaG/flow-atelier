@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import re
 
 from rich.console import Console
 from rich.text import Text
@@ -242,13 +243,28 @@ class TestRenderLogEntrySteps:
         assert "completed" in output
 
     def test_show_steps_uses_short_timestamps(self) -> None:
-        """Verify the steps view renders short timestamps, not full dates."""
+        """Verify the steps view renders short timestamps inside the panel
+        body. The panel subtitle uses the full clock by design — and is
+        rendered on the bottom border, not the body — so it is excluded.
+
+        Scoping the assertion to body lines also keeps this test
+        timezone-independent: a UTC CI runner formats the fixture's
+        ``2026-01-01T00:00:00Z`` subtitle as ``2026-01-01 00:00`` (date
+        preserved), while a runner in any negative-offset zone shifts it
+        to ``2025-12-31`` — the assertion must only care about step rows.
+        """
         entry = self._entry_with_steps()
         c, buf = _console()
         _render_log_entry(entry, "steps", c)
         output = buf.getvalue()
-        # Should NOT contain full date format, only HH:MM
-        assert "2026-01-01" not in output
+        body_lines = [
+            line for line in output.splitlines()
+            if line.lstrip().startswith("│")
+        ]
+        assert body_lines, f"expected body lines in panel output: {output!r}"
+        for line in body_lines:
+            # Step rows must use HH:MM only, never YYYY-MM-DD.
+            assert not re.search(r"\d{4}-\d{2}-\d{2}", line), line
 
     def test_show_steps_tool_result_indented(self) -> None:
         """Tool results should be indented under their tool call (no timestamp)."""
