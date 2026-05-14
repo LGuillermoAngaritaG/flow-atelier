@@ -104,8 +104,11 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
     finally:
         if scheduler_bus is not None:
             scheduler_bus.unsubscribe(_send)
-        if websocket.application_state == WebSocketState.CONNECTED:
-            await websocket.close()
+        try:
+            if websocket.application_state == WebSocketState.CONNECTED:
+                await websocket.close()
+        except RuntimeError:
+            pass
 
 
 async def _spawn_run(

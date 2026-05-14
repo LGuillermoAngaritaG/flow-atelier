@@ -1,22 +1,30 @@
 """/conduits CRUD round-trip tests."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
 
 from app.core.atelier import Atelier
+from app.core.settings import AtelierSettings
 from app.services.api.app import FastApiServer
 
 
 @pytest.fixture
-async def client(tmp_path, monkeypatch):
+async def client(tmp_path, _isolate_global_atelier_dir):
     """Yield an httpx client wired to a fresh Atelier instance.
 
     :param tmp_path: pytest temp directory fixture.
-    :param monkeypatch: pytest monkeypatch fixture.
+    :param _isolate_global_atelier_dir: isolated global atelier dir fixture.
     """
-    monkeypatch.delenv("ATELIER_GLOBAL_ATELIER_DIR", raising=False)
-    atelier = Atelier(base_dir=tmp_path / ".atelier")
+    global_dir: Path = _isolate_global_atelier_dir
+    atelier = Atelier(
+        settings=AtelierSettings(
+            atelier_dir=tmp_path / ".atelier",
+            global_atelier_dir=global_dir,
+        ),
+    )
     app = FastApiServer().create_app(atelier)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
