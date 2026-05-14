@@ -1,5 +1,7 @@
 """BashExecutor tests."""
 
+from pathlib import Path
+
 from app.schemas.conduit import TaskDefinition, ToolType
 from app.services.executor.base import FlowContext
 from app.services.executor.bash import BashExecutor
@@ -19,16 +21,18 @@ def _task(cmd: str) -> TaskDefinition:
     )
 
 
-def _ctx(timeout: int = 30) -> FlowContext:
+def _ctx(timeout: int = 30, working_dir: Path | None = None) -> FlowContext:
     """Build a FlowContext stub with a fake store.
 
     :param timeout: per-task timeout in seconds.
+    :param working_dir: optional working directory for the subprocess.
     """
     return FlowContext(
         flow_id="fake",
         store=None,  # type: ignore[arg-type]
         inputs={},
         timeout=timeout,
+        working_dir=working_dir,
     )
 
 
@@ -67,3 +71,15 @@ async def test_timeout_kills_process():
     )
     assert r.exit_code == 124
     assert "timeout" in r.stderr
+
+
+async def test_working_dir_sets_subprocess_cwd(tmp_path):
+    """Verify BashExecutor runs the command in context.working_dir."""
+    marker = tmp_path / "cwd_marker.txt"
+    r = await BashExecutor().execute(
+        _task(f"pwd > {marker}"),
+        f"pwd > {marker}",
+        _ctx(working_dir=tmp_path),
+    )
+    assert r.exit_code == 0
+    assert tmp_path.name in marker.read_text().strip()

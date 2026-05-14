@@ -42,6 +42,33 @@ class StoreBase(ABC):
         ...
 
     @abstractmethod
+    def write_conduit_global(self, conduit: Conduit) -> None:
+        """Persist ``conduit`` to the global (user-level) store.
+
+        :param conduit: validated conduit to persist
+        :raises RuntimeError: if no global directory is available
+        """
+        ...
+
+    @abstractmethod
+    def conduit_source(self, name: str) -> ConduitSource:
+        """Return whether ``name`` lives in the project or global store.
+
+        :param name: conduit name
+        :raises FileNotFoundError: if not found in either store
+        """
+        ...
+
+    @abstractmethod
+    def delete_conduit_global(self, name: str) -> bool:
+        """Delete a global conduit. Returns False if it didn't exist.
+
+        :param name: conduit name
+        :returns: True if deleted, False if it didn't exist
+        """
+        ...
+
+    @abstractmethod
     def delete_conduit(self, name: str) -> bool:
         """Delete a project-level conduit. Returns False if it didn't exist.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, WebSocket
@@ -117,7 +118,7 @@ async def _spawn_run(
     """
     # Per-connection Atelier instance keeps executor swaps from leaking
     # across sockets (SPEC §10 / risk table).
-    atelier = Atelier(base_dir=base_atelier.settings.atelier_dir)
+    atelier = Atelier(base_dir=base_atelier.settings.global_atelier_dir)
     broker.register_flow(message.flow_id)
     atelier.executors["tool:hitl"] = WsHitlExecutor(
         broker=broker, flow_id=message.flow_id
@@ -177,6 +178,7 @@ async def _spawn_run(
                     conduit,
                     dict(message.inputs),
                     on_task_event=_on_task_event_sync,
+                    working_dir=Path(message.run_path) if message.run_path else None,
                 )
             except asyncio.CancelledError:
                 await broker.send(

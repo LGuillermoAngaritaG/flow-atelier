@@ -126,6 +126,7 @@ class Atelier:
         on_flow_started: FlowStartedCallback | None = None,
         on_task_starting: TaskStartingCallback | None = None,
         show_steps: bool = True,
+        working_dir: Path | str | None = None,
     ) -> str:
         """Start a new flow for the named conduit.
 
@@ -144,8 +145,11 @@ class Atelier:
             tool calls, tool results) to the executor's prompt sink as
             they happen. Defaults to ``True``; the CLI exposes
             ``--hide-steps`` to opt out.
+        :param working_dir: working directory for task execution. When
+            ``None``, executors use the process cwd.
         :returns: the newly created flow id
         """
+        wd = Path(working_dir) if working_dir is not None else None
         conduit = self.store.read_conduit(name)
         return await self.engine.run(
             conduit,
@@ -154,6 +158,7 @@ class Atelier:
             on_flow_started=on_flow_started,
             on_task_starting=on_task_starting,
             show_steps=show_steps,
+            working_dir=wd,
         )
 
     def get_status(self, flow_id: str) -> Progress:
@@ -182,17 +187,21 @@ class Atelier:
     # ------------------------------------------------------------------ CRUD
 
     def create_conduit(self, payload: CreateConduitInput) -> Conduit:
-        """Persist a new conduit; raise if one with that name already exists.
+        """Persist a new conduit to the global store.
+
+        Raises if a conduit with that name already exists in project or global.
 
         :param payload: validated :class:`CreateConduitInput`
         :returns: the persisted :class:`Conduit`
-        :raises FileExistsError: if a project conduit with that name exists
+        :raises FileExistsError: if a conduit with that name already exists
         """
-        existing = self.store.base_dir / "conduits" / payload.name
-        if existing.exists():
+        try:
+            self.store.conduit_source(payload.name)
             raise FileExistsError(f"conduit already exists: {payload.name}")
+        except FileNotFoundError:
+            pass
         conduit = Conduit.model_validate(payload.model_dump())
-        self.store.write_conduit(conduit)
+        self.store.write_conduit_global(conduit)
         return conduit
 
     def update_conduit(
@@ -200,29 +209,44 @@ class Atelier:
     ) -> Conduit:
         """Apply a partial update to an existing conduit.
 
+        Routes the write to the same store (project or global) where the
+        conduit currently lives.
+
         :param name: conduit to modify
         :param payload: subset of fields to overwrite
         :returns: the updated :class:`Conduit`
         :raises FileNotFoundError: if the conduit doesn't exist
         """
+        source = self.store.conduit_source(name)
         existing = self.store.read_conduit(name)
         merged = existing.model_dump()
         for key, value in payload.model_dump(exclude_none=True).items():
             merged[key] = value
         merged["name"] = merged.get("name") or name
         updated = Conduit.model_validate(merged)
-        self.store.write_conduit(updated)
+        if source == "global":
+            self.store.write_conduit_global(updated)
+        else:
+            self.store.write_conduit(updated)
         if updated.name != name:
-            # Rename: drop the old folder.
-            self.store.delete_conduit(name)
+            if source == "global":
+                self.store.delete_conduit_global(name)
+            else:
+                self.store.delete_conduit(name)
         return updated
 
     def delete_conduit(self, name: str) -> bool:
-        """Remove a project-level conduit.
+        """Remove a conduit from whichever store it lives in.
 
         :param name: conduit name
         :returns: True if it existed and was deleted, False otherwise
         """
+        try:
+            source = self.store.conduit_source(name)
+        except FileNotFoundError:
+            return False
+        if source == "global":
+            return self.store.delete_conduit_global(name)
         return self.store.delete_conduit(name)
 
     async def run_single_task(self, payload: RunTaskInput) -> RunTaskOutput:

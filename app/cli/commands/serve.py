@@ -13,6 +13,8 @@ from app.cli.main import app
 from app.core.atelier import Atelier
 from app.services.api.app import FastApiServer
 from app.services.scheduler import SchedulerDaemon, default_local_zone
+from app.schemas.api import ScheduledJob
+from app.services.scheduler.store import ScheduleStore
 
 
 @app.command(
@@ -53,8 +55,20 @@ def serve_cmd(
     )
 
     atelier = Atelier()
+    # API endpoints use the global schedule store so schedules persist in
+    # ~/.atelier/ rather than the project-level .atelier/. The daemon also
+    # reads from this store so it can fire API-created schedules.
+    global_schedule_store = ScheduleStore(atelier.settings.global_atelier_dir)
+    atelier.schedule_store = global_schedule_store
+
+    async def _api_executor(job: "ScheduledJob", working_dir: Path) -> None:
+        """Custom executor: store flows globally, run tasks in working_dir."""
+        a = Atelier(base_dir=atelier.settings.global_atelier_dir)
+        await a.run_conduit(job.conduit_name, dict(job.inputs), working_dir=working_dir)
+
     daemon = SchedulerDaemon(
-        atelier.schedule_store,
+        global_schedule_store,
+        executor=_api_executor,
         default_zone=default_local_zone(),
         default_working_dir=Path.cwd(),
         reload_interval_seconds=reload_interval,

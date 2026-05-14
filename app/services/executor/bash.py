@@ -28,6 +28,7 @@ class BashExecutor(ExecutorBase):
             resolved_command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=str(context.working_dir) if context.working_dir else None,
         )
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(

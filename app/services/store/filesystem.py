@@ -385,7 +385,7 @@ class FilesystemStore(StoreBase):
         path = self._flow_dir(flow_id) / "outputs.yaml"
         tmp = path.with_suffix(".yaml.tmp")
         tmp.write_text(yaml.safe_dump(outputs, sort_keys=False))
-        os.replace(tmp, path)
+        _atomic_replace(tmp, path)
 
     # ------------------------------------------------------------------ input.yaml
 

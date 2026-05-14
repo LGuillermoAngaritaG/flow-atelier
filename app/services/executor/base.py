@@ -4,6 +4,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from app.schemas.conduit import TaskDefinition
@@ -27,6 +28,9 @@ class FlowContext:
     """Stream intermediate steps (thinking, tool calls, tool results) to the
     executor's :class:`PromptSink` as they happen. Independent of
     ``task.interactive`` (which gates raw message-chunk streaming)."""
+    working_dir: Path | None = None
+    """Working directory for subprocess / agent execution. When ``None``,
+    executors use the process cwd."""
     run_nested_conduit: Callable[[str, dict[str, Any], str], Awaitable[str]] | None = None
     """Callback: (conduit_name, inputs, parent_flow_id) -> child flow_id."""
 
