@@ -19,6 +19,7 @@ import asyncio
 import json
 import os
 import shutil
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,20 @@ from app.schemas.flow import new_flow_id, parse_flow_id
 from app.schemas.log import LogEntry
 from app.schemas.progress import Progress
 from app.services.store.base import ConduitSource, StoreBase
+
+if os.name == "nt":
+    def _atomic_replace(src: str | Path, dst: str | Path) -> None:
+        for attempt in range(5):
+            try:
+                os.replace(src, dst)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+else:
+    def _atomic_replace(src: str | Path, dst: str | Path) -> None:
+        os.replace(src, dst)
 
 
 class FilesystemStore(StoreBase):
@@ -72,14 +87,22 @@ class FilesystemStore(StoreBase):
         """
         return self._conduit_dir(name) / "conduit.yaml"
 
-    def _global_conduit_yaml(self, name: str) -> Path | None:
-        """Return the global ``conduit.yaml`` path for ``name`` or ``None``.
+    def _global_conduit_dir(self, name: str) -> Path | None:
+        """Return the global directory for conduit ``name`` or ``None``.
 
         :param name: conduit name
         """
         if self.global_dir is None:
             return None
-        return self.global_dir / "conduits" / name / "conduit.yaml"
+        return self.global_dir / "conduits" / name
+
+    def _global_conduit_yaml(self, name: str) -> Path | None:
+        """Return the global ``conduit.yaml`` path for ``name`` or ``None``.
+
+        :param name: conduit name
+        """
+        conduit_dir = self._global_conduit_dir(name)
+        return conduit_dir / "conduit.yaml" if conduit_dir is not None else None
 
     def _flow_dir(self, flow_id: str) -> Path:
         """Resolve and cache the directory for ``flow_id``.
@@ -160,7 +183,51 @@ class FilesystemStore(StoreBase):
         path = self._conduit_yaml(conduit.name)
         tmp = path.with_suffix(".yaml.tmp")
         tmp.write_text(yaml.safe_dump(payload, sort_keys=False))
-        os.replace(tmp, path)
+        _atomic_replace(tmp, path)
+
+    def write_conduit_global(self, conduit: Conduit) -> None:
+        """Persist ``conduit`` under the global ``~/.atelier/conduits/<name>/``.
+
+        :param conduit: validated conduit to persist.
+        :raises RuntimeError: if no global directory is available.
+        """
+        conduit_dir = self._global_conduit_dir(conduit.name)
+        if conduit_dir is None:
+            raise RuntimeError(
+                "global conduit directory is not available "
+                "(home directory may be read-only)"
+            )
+        conduit_dir.mkdir(parents=True, exist_ok=True)
+        path = conduit_dir / "conduit.yaml"
+        payload = conduit.model_dump(mode="json", by_alias=True, exclude_none=True)
+        tmp = path.with_suffix(".yaml.tmp")
+        tmp.write_text(yaml.safe_dump(payload, sort_keys=False))
+        _atomic_replace(tmp, path)
+
+    def conduit_source(self, name: str) -> ConduitSource:
+        """Return whether ``name`` lives in the project or global store.
+
+        :param name: conduit name
+        :raises FileNotFoundError: if not found in either store
+        """
+        if self._conduit_yaml(name).exists():
+            return "project"
+        global_yaml = self._global_conduit_yaml(name)
+        if global_yaml is not None and global_yaml.exists():
+            return "global"
+        raise FileNotFoundError(f"conduit not found: {name}")
+
+    def delete_conduit_global(self, name: str) -> bool:
+        """Remove a global conduit by name.
+
+        :param name: conduit name
+        :returns: True if deleted, False if it didn't exist
+        """
+        conduit_dir = self._global_conduit_dir(name)
+        if conduit_dir is None or not conduit_dir.exists():
+            return False
+        shutil.rmtree(conduit_dir)
+        return True
 
     def delete_conduit(self, name: str) -> bool:
         """Remove ``conduits/<name>/`` if present (project store only).
@@ -270,7 +337,7 @@ class FilesystemStore(StoreBase):
             existing.append(entry.model_dump())
             tmp = path.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(existing, indent=2))
-            os.replace(tmp, path)
+            _atomic_replace(tmp, path)
 
     def read_logs(self, flow_id: str) -> list[LogEntry]:
         """Return all log entries for ``flow_id`` in append order.
@@ -296,7 +363,7 @@ class FilesystemStore(StoreBase):
         path = self._flow_dir(flow_id) / "progress.json"
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(progress.model_dump_json(indent=2))
-        os.replace(tmp, path)
+        _atomic_replace(tmp, path)
 
     def read_progress(self, flow_id: str) -> Progress:
         """Load and return the ``Progress`` snapshot for ``flow_id``.

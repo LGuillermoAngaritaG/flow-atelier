@@ -14,3 +14,5 @@ wheels/
 .devtool
 claude.md
 .pytest_cache
+.opencode
+AGENTS.md

@@ -97,8 +97,11 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
             elif isinstance(message, CancelMessage):
                 broker.cancel(message.flow_id)
     finally:
-        if websocket.application_state == WebSocketState.CONNECTED:
-            await websocket.close()
+        try:
+            if websocket.application_state == WebSocketState.CONNECTED:
+                await websocket.close()
+        except RuntimeError:
+            pass
 
 
 async def _spawn_run(

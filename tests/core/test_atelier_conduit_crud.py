@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from app.core.atelier import Atelier
+from app.core.settings import AtelierSettings
 from app.schemas.api import CreateConduitInput, UpdateConduitInput
 
 
@@ -34,14 +36,20 @@ def _payload(name: str = "release_notes", description: str = "Release notes"):
 
 
 @pytest.fixture
-def atelier(tmp_path, monkeypatch):
-    """Construct an Atelier instance rooted under tmp_path.
+def atelier(tmp_path, _isolate_global_atelier_dir):
+    """Construct an Atelier instance rooted under tmp_path with an isolated global dir.
 
     :param tmp_path: pytest temp directory fixture.
-    :param monkeypatch: pytest monkeypatch fixture.
+    :param _isolate_global_atelier_dir: isolated global atelier dir fixture.
     """
-    monkeypatch.delenv("ATELIER_GLOBAL_ATELIER_DIR", raising=False)
-    return Atelier(base_dir=tmp_path / ".atelier")
+    global_dir: Path = _isolate_global_atelier_dir
+    return Atelier(
+        base_dir=tmp_path / ".atelier",
+        settings=AtelierSettings(
+            atelier_dir=tmp_path / ".atelier",
+            global_atelier_dir=global_dir,
+        ),
+    )
 
 
 # ----------------------------------------------------------- create
