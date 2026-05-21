@@ -442,7 +442,7 @@ class AcpHarnessExecutor(ExecutorBase):
         if task.interactive:
             prompt_text = prompt_text + build_interactive_suffix(self.done_marker)
 
-        cwd = str(Path.cwd())
+        cwd = str(context.working_dir) if context.working_dir else str(Path.cwd())
         client = _BufferingClient(
             self.sink,
             stream_messages=task.interactive,

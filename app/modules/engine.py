@@ -19,6 +19,7 @@ import sys
 import traceback
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from app.modules.conditions import (
@@ -133,6 +134,7 @@ class Engine:
         on_flow_started: FlowStartedCallback | None = None,
         on_task_starting: TaskStartingCallback | None = None,
         show_steps: bool = True,
+        working_dir: Path | None = None,
     ) -> str:
         """Execute a conduit to completion, returning the flow id.
 
@@ -381,9 +383,10 @@ class Engine:
                     inputs=runtime_inputs,
                     task_outputs=outputs,
                     timeout=conduit.timeout,
+                    working_dir=working_dir,
                     show_steps=show_steps,
                     run_nested_conduit=self._make_nested_runner(
-                        on_task_event, show_steps=show_steps
+                        on_task_event, show_steps=show_steps, working_dir=working_dir
                     ),
                 )
 
@@ -590,11 +593,13 @@ class Engine:
         self,
         on_task_event: TaskEventCallback | None = None,
         show_steps: bool = True,
+        working_dir: Path | None = None,
     ):
         """Build the nested-conduit runner passed to executors via FlowContext.
 
         :param on_task_event: optional task-event callback forwarded to the child run.
         :param show_steps: whether the nested run should surface per-step progress.
+        :param working_dir: working directory forwarded to nested runs.
         :returns: an async callable ``(conduit_name, child_inputs, parent_flow_id)``
             that loads and runs the named child conduit.
         """
@@ -612,6 +617,7 @@ class Engine:
                 parent_flow_id,
                 on_task_event=on_task_event,
                 show_steps=show_steps,
+                working_dir=working_dir,
             )
 
         return _run_nested

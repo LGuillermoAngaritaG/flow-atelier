@@ -118,11 +118,10 @@ async def delete_conduit(name: str, atelier: Atelier = Depends(get_atelier)):
 async def open_path(
     payload: OpenPathInput, atelier: Atelier = Depends(get_atelier)
 ) -> dict[str, Any]:
-    """Open a conduit-relative path in the host OS and report what was opened.
+    """Open a path in the host OS file explorer.
 
     :param payload: parsed :class:`OpenPathInput` body.
     :param atelier: injected :class:`Atelier` facade.
-    :returns: ``{"opened": <path>}`` echoing the resolved target.
+    :returns: ``{"opened": true}`` on success, ``{"opened": false}`` on failure.
     """
-    opened = atelier.open_conduit_path(payload.conduit_name, payload.run_path)
-    return {"opened": opened}
+    return {"opened": atelier.open_conduit_path(payload.run_path)}
