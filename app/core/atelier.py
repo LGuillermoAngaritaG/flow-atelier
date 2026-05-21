@@ -126,6 +126,7 @@ class Atelier:
         on_flow_started: FlowStartedCallback | None = None,
         on_task_starting: TaskStartingCallback | None = None,
         show_steps: bool = True,
+        working_dir: Path | str | None = None,
     ) -> str:
         """Start a new flow for the named conduit.
 
@@ -144,8 +145,11 @@ class Atelier:
             tool calls, tool results) to the executor's prompt sink as
             they happen. Defaults to ``True``; the CLI exposes
             ``--hide-steps`` to opt out.
+        :param working_dir: working directory for task execution. When
+            ``None``, executors use the process cwd.
         :returns: the newly created flow id
         """
+        wd = Path(working_dir) if working_dir is not None else None
         conduit = self.store.read_conduit(name)
         return await self.engine.run(
             conduit,
@@ -154,6 +158,7 @@ class Atelier:
             on_flow_started=on_flow_started,
             on_task_starting=on_task_starting,
             show_steps=show_steps,
+            working_dir=wd,
         )
 
     def get_status(self, flow_id: str) -> Progress:
@@ -328,15 +333,12 @@ class Atelier:
         self.store._flow_dir(flow_id)
         return self.store.read_logs(flow_id)
 
-    def open_conduit_path(self, conduit_name: str, run_path: str) -> bool:
+    def open_conduit_path(self, run_path: str) -> bool:
         """Reveal ``run_path`` in the host's file explorer.
 
-        :param conduit_name: conduit context (not used by the OS opener,
-            kept for API symmetry with the frontend contract)
         :param run_path: absolute path to open
         :returns: True if the platform opener was launched, False otherwise
         """
-        del conduit_name
         cmd: list[str]
         if sys.platform == "darwin":
             cmd = ["open", run_path]
@@ -350,3 +352,4 @@ class Atelier:
             logger.warning("open_conduit_path failed: %s", e)
             return False
         return True
+        return target

@@ -138,7 +138,7 @@ def test_open_conduit_path_invokes_platform_opener(tmp_path, atelier):
     run_path.mkdir()
     with patch("subprocess.Popen") as popen:
         popen.return_value.poll.return_value = None
-        ok = atelier.open_conduit_path("release_notes", str(run_path))
+        ok = atelier.open_conduit_path(str(run_path))
     assert ok is True
     args = popen.call_args[0][0]
     if sys.platform == "darwin":
@@ -157,5 +157,5 @@ def test_open_conduit_path_returns_false_on_failure(tmp_path, atelier):
     """
     atelier.create_conduit(_payload())
     with patch("subprocess.Popen", side_effect=FileNotFoundError("no opener")):
-        ok = atelier.open_conduit_path("release_notes", str(tmp_path))
+        ok = atelier.open_conduit_path(str(tmp_path))
     assert ok is False
