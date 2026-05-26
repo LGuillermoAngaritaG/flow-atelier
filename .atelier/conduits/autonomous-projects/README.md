@@ -50,7 +50,12 @@ use_git: true          # or false
    are dropped. (`use_git: true` enables the git half; otherwise only mtime
    is considered.)
 
-Survivors are sorted by `priority` ascending; the stalest one wins on ties.
+Survivors are sorted by `priority` ascending. On ties, the project markdown
+file with the **oldest mtime** wins — i.e. the one whose task list has been
+untouched the longest. This is a different signal from the idle gate's
+"working dir activity" check: the idle gate keeps the agent from stepping on
+in-progress work, while the tie-break picks the project you've thought about
+least recently.
 
 Stdout is always one line:
 - `READY: /abs/path/to/winner.md` — the worker task runs.

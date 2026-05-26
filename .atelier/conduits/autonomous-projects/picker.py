@@ -9,7 +9,8 @@ Filters, in order:
        written by the statusline hook).
     2. Pending-Review section item count
     3. Idle time = max(latest git commit, latest mtime under `location`)
-    4. Sort survivors by frontmatter priority asc; stalest wins ties.
+    4. Sort survivors by frontmatter priority asc; on ties, the project
+       markdown file with the oldest mtime wins (= task list untouched longest).
 """
 
 from __future__ import annotations
@@ -207,14 +208,19 @@ def main() -> int:
         )
         return 0
 
-    # Sort: priority asc (1 = highest); tie-break on oldest last_touched.
+    # Sort: priority asc (1 = highest); tie-break on oldest project-file
+    # mtime so projects whose task list has been edited least recently win.
     def sort_key(entry: tuple[Path, dict[str, str], float]) -> tuple[int, float]:
-        _f, fm, lt = entry
+        f, fm, _lt = entry
         try:
             prio = int(fm.get("priority", "999"))
         except ValueError:
             prio = 999
-        return prio, lt
+        try:
+            proj_mtime = f.stat().st_mtime
+        except OSError:
+            proj_mtime = 0.0
+        return prio, proj_mtime
 
     survivors_idle.sort(key=sort_key)
     winner = survivors_idle[0][0]
