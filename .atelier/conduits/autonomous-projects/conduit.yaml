@@ -1,0 +1,77 @@
+name: autonomous-projects
+description: >
+  Pick the highest-priority idle project from a directory of project markdown
+  files and advance it via Claude Code. If no project is eligible (Claude usage
+  too high, every project recently touched, too many pending-review items, or
+  no projects at all), emit a SKIP reason and short-circuit.
+
+timeout: 7200
+max_concurrency: 1
+
+inputs:
+  projects_dir: >-
+    Directory containing one .md file per project. Each file must have YAML
+    frontmatter with: description, goal, priority, location, use_git.
+  max_usage_pct: >-
+    Skip if Claude Code 5h-window usage is at or above this percent.
+    Recommended default: "80".
+  idle_hours: >-
+    Project must have been untouched (no git commit or file edit under
+    `location`) for at least this many hours. Recommended default: "2".
+  max_pending_review: >-
+    Skip a project once its `# Pending-Review` section has at least this
+    many bullets (i.e. block at this count). Recommended default: "3".
+  token_limit: >-
+    Token ceiling used to compute usage %. Pick a number that approximates
+    your 5h Claude Code session quota. Recommended default: "19000000".
+
+tasks:
+  - pick_project:
+      description: Decide which project (if any) to work on this tick.
+      tool: tool:bash
+      depends_on: []
+      task: |
+        set -euo pipefail
+        python3 /Users/ganga/Documents/personal_repos/flow-atelier/.atelier/conduits/autonomous-projects/picker.py \
+          --projects-dir "{{inputs.projects_dir}}" \
+          --max-usage-pct "{{inputs.max_usage_pct}}" \
+          --idle-hours "{{inputs.idle_hours}}" \
+          --max-pending-review "{{inputs.max_pending_review}}" \
+          --token-limit "{{inputs.token_limit}}"
+
+  - loop_until_done:
+      description: Hand the chosen project to the goal conduit so it loops until a DONE verdict.
+      task: task-with-review
+      tool: tool:conduit
+      depends_on: 
+      - "pick_project.output.match(^READY: )"
+      repeat: 100
+      until: 'output.match(VERDICT:\s*DONE)'
+      inputs:
+        task: |
+          You are advancing an autonomous project tracked in a markdown file.
+
+          The picker emitted:
+          {{pick_project.output}}
+
+          The project file path is on the line beginning with "READY: ".
+
+          Do the following:
+          1. Read the project markdown file. Parse the YAML frontmatter
+             (description, goal, priority, location, use_git).
+          2. cd into the `location` directory (the project's working dir).
+          3. If the `# To-Do's` section has at least one task, pick the top one.
+             Otherwise, review the project against its `goal`, propose one
+             concrete improvement, and add it to `# To-Do's` first.
+          4. BEFORE starting work, move that task from `# To-Do's` to
+             `# In-Progress` in the project markdown file, preserving format.
+          5. Do the work. Respect `use_git`: if true, commit the changes with a
+             clear message; if false, just edit files.
+          6. When finished, move the task from `# In-Progress` to
+             `# Pending-Review` and fill in `summary:` and `location:`
+             sub-bullets per the file's existing bullet format. Never move
+             tasks to `# Done` — that section is reserved for the human
+             reviewer and is the only place a human-approved task lives.
+          7. Save the project markdown file.
+
+

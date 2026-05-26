@@ -1,0 +1,18 @@
+name: goal
+description: Pursue a goal by running task-with-review in a loop until the reviewer emits a DONE verdict
+timeout: 7200
+max_concurrency: 1
+
+inputs:
+  task: The task to perform
+
+tasks:
+  - loop_until_done:
+      description: Retry task-with-review until the review verdict is DONE
+      task: task-with-review
+      tool: tool:conduit
+      depends_on: []
+      repeat: 10
+      until: 'output.match(VERDICT:\s*DONE)'
+      inputs:
+        task: "{{inputs.task}}"

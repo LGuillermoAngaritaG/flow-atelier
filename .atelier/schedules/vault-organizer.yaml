@@ -1,0 +1,81 @@
+id: 234e18e2-8e8f-4d6c-b520-d550c7fb5291
+created_at: 1779781588
+conduit_name: goal
+run_path: /Users/ganga/Documents/personal_repos/flow-atelier
+inputs:
+  task: |
+    You are the Vault Organizer Agent. Tidy the user's Obsidian vault at:
+    /Users/ganga/Library/Mobile Documents/iCloud~md~obsidian/Documents/Cerebro/
+
+    Use the rules in the `obsidian-vault` skill (canonical filename format,
+    folder-casing gotchas, no emojis, no frontmatter unless requested). Today's
+    date is the system date in the America/Bogota timezone.
+
+    Do all five passes in order. For each action, append a one-line bullet to
+    the daily-note log (see Pass 5). Use absolute paths in every shell command.
+
+    PASS 1 — Inbox meeting notes
+    Scan only the direct children of `00_INBOX/` (do not descend into
+    `_needs_review/`). For every `.md` file that is NOT already named in the
+    canonical `YYYY-MM-DD - {project} - {subproject?} - {topic}.md` form:
+      - Read the file.
+      - Decide if it is a meeting note (look for sections like "Executive
+        Summary", "Outline", attendee lists, dated discussion).
+      - If yes: derive the canonical filename. The date is the date the
+        meeting actually happened (try to recover it from content; if you
+        cannot recover it, use today's date and note that in the log).
+      - Choose the destination folder by matching the project to the existing
+        `20_WORK/**/MEETINGS|Meetings|meetings/` folders — DO NOT create new
+        project folders. Match the existing casing exactly.
+      - Use `mv` with absolute paths.
+      - If you cannot confidently classify (unknown project, ambiguous topic),
+        move the file to `00_INBOX/_needs_review/` instead and log
+        "needs review: <reason>". Never guess.
+
+    PASS 2 — Excalidraw renames (all three locations)
+    For each `.excalidraw.md` under `00_INBOX/`, `Excalidraw/`, and
+    `41_EXCALIDRAW/`:
+      - If the filename already matches `{project} - {topic}.excalidraw.md`
+        (with a known project code), skip it.
+      - Otherwise open the file (it's JSON inside markdown) and infer a topic
+        from any text elements or title metadata. Derive a
+        `{project} - {topic}.excalidraw.md` name.
+      - If you cannot confidently determine a project, move the file to
+        `00_INBOX/_needs_review/` with its original name.
+      - Excalidraw files stay where they live (do not move them between
+        `41_EXCALIDRAW/` and `Excalidraw/`).
+
+    PASS 3 — Delete empties
+    Conservative deletion only:
+      - `.md` files in `00_INBOX/` whose body (after any frontmatter) is empty
+        or consists only of template scaffolding (e.g. just an `# Title`
+        placeholder and nothing else).
+      - `.excalidraw.md` files whose JSON has an empty or missing `elements`
+        array.
+    If in doubt, do NOT delete — move to `_needs_review/` instead.
+
+    PASS 4 — Daily-note bootstrap
+    Compute today's date in YYYY-MM-DD form (America/Bogota). If
+    `01_DAILY/<YYYY-MM-DD>.md` does not exist, create it by copying
+    `40_TEMPLATES/daily.md` verbatim. Do not modify the template file.
+
+    PASS 5 — Daily-note log
+    Append (or create if absent) a section in today's daily note:
+
+        ## Vault Organizer Agent
+        ### Run at <HH:MM local time>
+        - <one line per action taken — moves, renames, deletes, needs-review>
+
+    If the schedule fires multiple times in a day, add a new
+    `### Run at HH:MM` block under the same `## Vault Organizer Agent`
+    heading rather than duplicating the heading.
+
+    Final output
+    End your response with a one-paragraph summary that a reviewer can verify
+    with `ls` and `cat` — concrete filenames and destination paths, not
+    generalities. The reviewer agent will spot-check.
+schedule:
+  name: vault-organizer
+  mode: recurring
+  days: [1, 2, 3, 4, 5, 6, 7]
+  times: ["07:30", "12:30", "18:30"]
