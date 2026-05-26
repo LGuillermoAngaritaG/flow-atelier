@@ -79,7 +79,6 @@ async def create_conduit(
     return ConduitDTO.model_validate(conduit.model_dump()).model_dump()
 
 
-@router.put("/{name}")
 @router.patch("/{name}")
 async def update_conduit(
     name: str,
