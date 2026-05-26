@@ -4,6 +4,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from app.schemas.conduit import TaskDefinition
@@ -23,6 +24,9 @@ class FlowContext:
     inputs: dict[str, Any]
     task_outputs: dict[str, str] = field(default_factory=dict)
     timeout: int = 3600
+    working_dir: Path | None = None
+    """Working directory for subprocess / agent execution. When ``None``,
+    executors use the process cwd."""
     show_steps: bool = True
     """Stream intermediate steps (thinking, tool calls, tool results) to the
     executor's :class:`PromptSink` as they happen. Independent of

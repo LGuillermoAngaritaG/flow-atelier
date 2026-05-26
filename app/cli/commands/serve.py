@@ -11,11 +11,13 @@ import typer
 from app.cli._shared import console
 from app.cli.main import app
 from app.core.atelier import Atelier
+from app.core.settings import AtelierSettings
 from app.schemas.api import ScheduledJob
 from app.schemas.log import TaskEvent
 from app.services.api.app import FastApiServer
 from app.services.api.scheduler_bus import SchedulerEventBus
 from app.services.scheduler import SchedulerDaemon, default_local_zone
+from app.services.scheduler.store import ScheduleStore
 
 
 @app.command(
@@ -55,11 +57,12 @@ def serve_cmd(
         format="%(asctime)s %(levelname)-7s %(name)s — %(message)s",
     )
 
-    atelier = Atelier()
+    settings = AtelierSettings()
+    atelier = Atelier(base_dir=settings.global_atelier_dir)
     bus = SchedulerEventBus()
-    # The WS route subscribes new sockets to this bus so scheduled fires
-    # (which don't originate from a connected socket) still reach UIs.
     atelier.scheduler_bus = bus  # type: ignore[attr-defined]
+
+    global_schedule_store = ScheduleStore(settings.global_atelier_dir)
 
     async def _broadcasting_executor(job: ScheduledJob, working_dir: Path) -> None:
         """Run the conduit and fan lifecycle envelopes out to the bus."""
@@ -69,7 +72,7 @@ def serve_cmd(
             "conduit_name": job.conduit_name,
             "run_path": str(working_dir),
         }
-        scheduled_atelier = Atelier(base_dir=working_dir / ".atelier")
+        scheduled_atelier = Atelier(base_dir=settings.global_atelier_dir)
         captured: dict[str, str | None] = {"flow_id": None}
 
         def _on_started(flow_id: str) -> None:
@@ -98,6 +101,7 @@ def serve_cmd(
                 dict(job.inputs),
                 on_flow_started=_on_started,
                 on_task_event=_on_task_event,
+                working_dir=working_dir,
             )
         except Exception as e:  # noqa: BLE001
             await bus.broadcast(
@@ -114,7 +118,7 @@ def serve_cmd(
         )
 
     daemon = SchedulerDaemon(
-        atelier.schedule_store,
+        global_schedule_store,
         executor=_broadcasting_executor,
         default_zone=default_local_zone(),
         default_working_dir=Path.cwd(),

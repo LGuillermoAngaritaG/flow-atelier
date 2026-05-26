@@ -126,6 +126,7 @@ class Atelier:
         on_flow_started: FlowStartedCallback | None = None,
         on_task_starting: TaskStartingCallback | None = None,
         show_steps: bool = True,
+        working_dir: Path | str | None = None,
     ) -> str:
         """Start a new flow for the named conduit.
 
@@ -144,8 +145,11 @@ class Atelier:
             tool calls, tool results) to the executor's prompt sink as
             they happen. Defaults to ``True``; the CLI exposes
             ``--hide-steps`` to opt out.
+        :param working_dir: working directory for task execution. When
+            ``None``, executors use the process cwd.
         :returns: the newly created flow id
         """
+        wd = Path(working_dir) if working_dir is not None else None
         conduit = self.store.read_conduit(name)
         return await self.engine.run(
             conduit,
@@ -154,6 +158,7 @@ class Atelier:
             on_flow_started=on_flow_started,
             on_task_starting=on_task_starting,
             show_steps=show_steps,
+            working_dir=wd,
         )
 
     def get_status(self, flow_id: str) -> Progress:
@@ -233,7 +238,7 @@ class Atelier:
         """
         conduit = Conduit.model_validate(
             {
-                "name": f"adhoc__{payload.name}",
+                "name": f"task__{payload.name}",
                 "description": payload.description or payload.name,
                 "tasks": [
                     {
@@ -257,7 +262,10 @@ class Atelier:
 
         try:
             flow_id = await self.engine.run(
-                conduit, dict(payload.inputs), on_flow_started=_on_started
+                conduit,
+                {},
+                on_flow_started=_on_started,
+                working_dir=Path(payload.run_path) if payload.run_path else None,
             )
         except Exception:  # noqa: BLE001
             flow_id = captured["id"] or ""
@@ -328,22 +336,20 @@ class Atelier:
         self.store._flow_dir(flow_id)
         return self.store.read_logs(flow_id)
 
-    def open_conduit_path(self, conduit_name: str, run_path: str) -> bool:
+    def open_conduit_path(self, run_path: str) -> bool:
         """Reveal ``run_path`` in the host's file explorer.
 
-        :param conduit_name: conduit context (not used by the OS opener,
-            kept for API symmetry with the frontend contract)
         :param run_path: absolute path to open
         :returns: True if the platform opener was launched, False otherwise
         """
-        del conduit_name
+        target = str(Path(run_path))
         cmd: list[str]
         if sys.platform == "darwin":
-            cmd = ["open", run_path]
+            cmd = ["open", target]
         elif sys.platform == "win32":
-            cmd = ["explorer", run_path]
+            cmd = ["explorer", target]
         else:
-            cmd = ["xdg-open", run_path]
+            cmd = ["xdg-open", target]
         try:
             subprocess.Popen(cmd)
         except (FileNotFoundError, OSError) as e:

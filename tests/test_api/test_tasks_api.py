@@ -38,8 +38,7 @@ async def test_run_task_executes_bash_and_returns_logs(fixture):
         "description": "ad-hoc",
         "task": "echo task-api-output",
         "tool": "tool:bash",
-        "inputs": {},
-        "run_path": "/tmp",
+        "run_path": str(tmp_path),
     }
     resp = await client.post("/tasks/run", json=payload)
     assert resp.status_code == 200, resp.text

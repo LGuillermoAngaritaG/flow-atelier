@@ -26,10 +26,11 @@ async def fixture(tmp_path, monkeypatch):
         yield c, atelier
 
 
-async def _seed_flow(atelier: Atelier) -> str:
+async def _seed_flow(atelier: Atelier, run_path: str = ".") -> str:
     """Run a one-off bash task to seed a completed flow.
 
     :param atelier: Atelier instance to run the task against.
+    :param run_path: working directory for the bash subprocess.
     """
     out = await atelier.run_single_task(
         RunTaskInput(
@@ -37,8 +38,7 @@ async def _seed_flow(atelier: Atelier) -> str:
             description="d",
             task="echo flow-api-output",
             tool="tool:bash",
-            inputs={},
-            run_path="/tmp",
+            run_path=run_path,
         )
     )
     return out.flow_id
@@ -55,13 +55,13 @@ async def test_list_flows_empty(fixture):
     assert resp.json() == []
 
 
-async def test_list_flows_returns_completed(fixture):
+async def test_list_flows_returns_completed(fixture, tmp_path):
     """Verify GET /flows includes the seeded completed flow.
 
     :param fixture: client+atelier tuple fixture.
     """
     client, atelier = fixture
-    flow_id = await _seed_flow(atelier)
+    flow_id = await _seed_flow(atelier, run_path=str(tmp_path))
     resp = await client.get("/flows")
     assert resp.status_code == 200
     bodies = resp.json()
@@ -70,13 +70,13 @@ async def test_list_flows_returns_completed(fixture):
     assert target["status"] == "completed"
 
 
-async def test_get_logs_round_trips(fixture):
+async def test_get_logs_round_trips(fixture, tmp_path):
     """Verify GET /flows/<id>/logs returns the recorded stdout entries.
 
     :param fixture: client+atelier tuple fixture.
     """
     client, atelier = fixture
-    flow_id = await _seed_flow(atelier)
+    flow_id = await _seed_flow(atelier, run_path=str(tmp_path))
     resp = await client.get(f"/flows/{flow_id}/logs")
     assert resp.status_code == 200
     logs = resp.json()

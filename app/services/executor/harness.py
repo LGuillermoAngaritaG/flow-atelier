@@ -3,7 +3,7 @@
 Each harness is a thin :class:`AcpHarnessExecutor` subclass differing only
 in its ``launch_cmd``. Each reuses the host CLI's own config and auth.
 
-- ``harness:claude-code`` → ``@zed-industries/claude-code-acp`` via ``npx``
+- ``harness:claude-code`` → ``@agentclientprotocol/claude-agent-acp`` via ``npx``
 - ``harness:codex``       → ``@zed-industries/codex-acp`` via ``npx``
 - ``harness:opencode``    → ``opencode acp`` (native ACP)
 - ``harness:copilot``     → ``copilot --acp`` (GitHub Copilot CLI, native ACP)
@@ -19,7 +19,11 @@ when the marker appears or when :attr:`MAX_INTERACTIVE_TURNS` is reached.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
+import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +49,26 @@ from app.services.executor.prompt_sink import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_cmd(cmd: str) -> str:
+    """On Windows, resolve .cmd/.bat wrappers that ``create_subprocess_exec`` can't find."""
+    if os.name == "nt":
+        resolved = shutil.which(cmd)
+        if resolved is not None:
+            return resolved
+    return cmd
+
+
+def _close_proc_transports(proc: asyncio.subprocess.Process) -> None:
+    """Explicitly close pipe transports on Windows to prevent ``__del__`` errors."""
+    for stream in (proc.stdout, proc.stderr):
+        if stream is None:
+            continue
+        transport = getattr(stream, "_transport", None)
+        if transport is not None:
+            with contextlib.suppress(OSError, ValueError):
+                transport.close()
 
 
 DEFAULT_DONE_MARKER = "[ATELIER_DONE]"
@@ -92,7 +116,7 @@ def _pick_permissive_mode(state: SessionModeState | None) -> str | None:
 CLAUDE_ACP_LAUNCH = [
     "npx",
     "-y",
-    "@zed-industries/claude-code-acp@0.16.2",
+    "@agentclientprotocol/claude-agent-acp@0.37.0",
 ]
 CODEX_ACP_LAUNCH = [
     "npx",
@@ -418,7 +442,7 @@ class AcpHarnessExecutor(ExecutorBase):
         if task.interactive:
             prompt_text = prompt_text + build_interactive_suffix(self.done_marker)
 
-        cwd = str(Path.cwd())
+        cwd = str(context.working_dir) if context.working_dir else str(Path.cwd())
         client = _BufferingClient(
             self.sink,
             stream_messages=task.interactive,
@@ -467,6 +491,7 @@ class AcpHarnessExecutor(ExecutorBase):
         :returns: :class:`ExecutionResult` from single-turn or interactive run.
         """
         cmd, *args = self.launch_cmd
+        cmd = _resolve_cmd(cmd)
         # Raise the per-line StreamReader limit well above asyncio's 64 KiB
         # default; Codex and similar harnesses emit large JSON-RPC frames
         # (tool results, planning output) that routinely exceed it.
@@ -478,19 +503,23 @@ class AcpHarnessExecutor(ExecutorBase):
             transport_kwargs={"limit": 8 * 1024 * 1024},
         ) as (
             conn,
-            _proc,
+            proc,
         ):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
             sess = await conn.new_session(cwd=cwd)
             await self._maybe_switch_to_permissive_mode(conn, sess)
 
-            if not interactive:
-                return await self._run_single_turn(
+            try:
+                if not interactive:
+                    return await self._run_single_turn(
+                        conn, sess.session_id, initial_prompt, client
+                    )
+                return await self._run_interactive(
                     conn, sess.session_id, initial_prompt, client
                 )
-            return await self._run_interactive(
-                conn, sess.session_id, initial_prompt, client
-            )
+            finally:
+                if sys.platform == "win32":
+                    _close_proc_transports(proc)
 
     @staticmethod
     async def _maybe_switch_to_permissive_mode(conn, sess) -> None:

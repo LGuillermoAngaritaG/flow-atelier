@@ -19,7 +19,7 @@ def atelier(tmp_path, monkeypatch):
     return Atelier(base_dir=tmp_path / ".atelier")
 
 
-async def test_list_prior_flows_after_run_returns_one(atelier):
+async def test_list_prior_flows_after_run_returns_one(atelier, tmp_path):
     """Verify list_prior_flows returns the just-completed run.
 
     :param atelier: Atelier facade fixture.
@@ -29,8 +29,7 @@ async def test_list_prior_flows_after_run_returns_one(atelier):
         description="d",
         task="echo hi",
         tool="tool:bash",
-        inputs={},
-        run_path="/tmp",
+        run_path=str(tmp_path),
     )
     out = await atelier.run_single_task(payload)
     flows = atelier.list_prior_flows()
@@ -40,7 +39,7 @@ async def test_list_prior_flows_after_run_returns_one(atelier):
     assert flows[0].status == "completed"
 
 
-async def test_get_flow_logs_round_trips(atelier):
+async def test_get_flow_logs_round_trips(atelier, tmp_path):
     """Verify get_flow_logs returns LogEntry objects from a completed run.
 
     :param atelier: Atelier facade fixture.
@@ -50,8 +49,7 @@ async def test_get_flow_logs_round_trips(atelier):
         description="d",
         task="echo round-trip",
         tool="tool:bash",
-        inputs={},
-        run_path="/tmp",
+        run_path=str(tmp_path),
     )
     out = await atelier.run_single_task(payload)
     logs = atelier.get_flow_logs(out.flow_id)

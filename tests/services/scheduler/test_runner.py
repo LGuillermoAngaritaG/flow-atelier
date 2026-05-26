@@ -14,16 +14,17 @@ from app.services.scheduler.store import ScheduleStore
 UTC = ZoneInfo("UTC")
 
 
-def _recurring(conduit: str = "report") -> CreateScheduleInput:
+def _recurring(conduit: str = "report", run_path: str = "/tmp/run") -> CreateScheduleInput:
     """Build a recurring CreateScheduleInput for the given conduit.
 
     :param conduit: conduit name to embed in the schedule payload.
+    :param run_path: working directory for the scheduled run.
     """
     return CreateScheduleInput.model_validate(
         {
             "conduit_name": conduit,
             "inputs": {},
-            "run_path": "/tmp/run",
+            "run_path": run_path,
             "schedule": {
                 "mode": "recurring",
                 "name": conduit,
@@ -231,21 +232,23 @@ async def test_sync_replaces_when_config_changes(daemon, store):
 # -------------------------------------------------------------- fire
 
 
-async def test_fire_invokes_executor_with_run_path(daemon, store, executor):
+async def test_fire_invokes_executor_with_run_path(daemon, store, executor, tmp_path):
     """Verify _fire invokes the executor with the schedule's run_path.
 
     :param daemon: SchedulerDaemon fixture.
     :param store: ScheduleStore fixture.
     :param executor: recording executor fixture.
+    :param tmp_path: pytest temp directory fixture.
     """
-    job = store.create(_recurring())
+    run_path = str(tmp_path / "run")
+    job = store.create(_recurring(run_path=run_path))
     await daemon.start()
     await daemon._fire(job.id)
     assert len(executor.calls) == 1
     fired_job, working_dir = executor.calls[0]
     assert fired_job.id == job.id
     assert fired_job.conduit_name == "report"
-    assert working_dir == Path("/tmp/run")
+    assert working_dir == Path(run_path)
 
 
 async def test_fire_passes_inputs(daemon, store, executor):

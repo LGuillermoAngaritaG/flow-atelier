@@ -1,6 +1,7 @@
 """End-to-end integration tests (no live harnesses)."""
 import builtins
 import json
+import sys
 
 import pytest
 import yaml
@@ -244,6 +245,7 @@ tasks:
     assert p.tasks["bad"].status.value == "failed"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="uses Unix tr/wc pipes")
 async def test_until_early_exit_with_real_bash(workdir):
     """Verify `until:` exits the repeat loop when the predicate matches.
 
@@ -279,6 +281,7 @@ tasks:
     assert "HIT" in poll_logs[-1]["output"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="uses Unix tr/wc pipes")
 async def test_while_early_exit_with_real_bash(workdir):
     """`while: output.match(retry)` keeps iterating while bash emits
     "retry" and breaks the iteration that emits something else.
@@ -316,6 +319,7 @@ tasks:
     assert "settled" in poll_logs[-1]["output"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="uses Unix tr/wc pipes")
 async def test_until_over_nested_conduit_sub_task_outputs(workdir):
     """`tool:conduit` task with `until: output.match(PASS)` stops when a
     nested sub-task emits PASS, even though the conduit's aggregate

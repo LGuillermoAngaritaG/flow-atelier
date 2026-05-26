@@ -40,16 +40,16 @@ def env(tmp_path, monkeypatch):
     :param tmp_path: pytest temp directory fixture.
     :param monkeypatch: pytest monkeypatch fixture.
     """
-    monkeypatch.delenv("ATELIER_GLOBAL_ATELIER_DIR", raising=False)
+    global_dir = tmp_path / ".atelier-global"
+    monkeypatch.setenv("ATELIER_GLOBAL_ATELIER_DIR", str(global_dir))
     atelier = Atelier(base_dir=tmp_path / ".atelier")
-    (atelier.store.base_dir / "conduits" / "hello").mkdir(parents=True, exist_ok=True)
-    (atelier.store.base_dir / "conduits" / "hello" / "conduit.yaml").write_text(
-        HELLO_YAML
-    )
-    (atelier.store.base_dir / "conduits" / "human").mkdir(parents=True, exist_ok=True)
-    (atelier.store.base_dir / "conduits" / "human" / "conduit.yaml").write_text(
-        HITL_YAML
-    )
+    for name, yaml_str in [("hello", HELLO_YAML), ("human", HITL_YAML)]:
+        (atelier.store.global_dir / "conduits" / name).mkdir(
+            parents=True, exist_ok=True
+        )
+        (
+            atelier.store.global_dir / "conduits" / name / "conduit.yaml"
+        ).write_text(yaml_str)
     app = FastApiServer().create_app(atelier)
     return atelier, app
 
@@ -73,10 +73,11 @@ def _drain_until(ws, predicate, *, max_messages: int = 50):
     )
 
 
-def test_ws_happy_path_emits_started_log_and_complete(env):
+def test_ws_happy_path_emits_started_log_and_complete(env, tmp_path):
     """Verify the WS happy path emits started, log, and flow_complete envelopes.
 
     :param env: env fixture providing (atelier, app).
+    :param tmp_path: pytest temp directory fixture.
     """
     _, app = env
     with TestClient(app) as client:
@@ -88,7 +89,7 @@ def test_ws_happy_path_emits_started_log_and_complete(env):
                         "flow_id": "T-1",
                         "conduit_name": "hello",
                         "inputs": {},
-                        "run_path": "/tmp",
+                        "run_path": str(tmp_path),
                     }
                 )
             )
@@ -107,10 +108,11 @@ def test_ws_happy_path_emits_started_log_and_complete(env):
     )
 
 
-def test_ws_hitl_round_trip_completes_after_answer(env):
+def test_ws_hitl_round_trip_completes_after_answer(env, tmp_path):
     """Verify the WS hitl round-trip completes after an answer is sent.
 
     :param env: env fixture providing (atelier, app).
+    :param tmp_path: pytest temp directory fixture.
     """
     _, app = env
     with TestClient(app) as client:
@@ -122,7 +124,7 @@ def test_ws_hitl_round_trip_completes_after_answer(env):
                         "flow_id": "T-2",
                         "conduit_name": "human",
                         "inputs": {},
-                        "run_path": "/tmp",
+                        "run_path": str(tmp_path),
                     }
                 )
             )
@@ -160,10 +162,11 @@ def test_ws_unknown_message_type_emits_error_envelope(env):
             assert envelope["type"] == "error"
 
 
-def test_ws_run_unknown_conduit_emits_flow_failed(env):
+def test_ws_run_unknown_conduit_emits_flow_failed(env, tmp_path):
     """Verify running an unknown conduit emits flow_failed or error.
 
     :param env: env fixture providing (atelier, app).
+    :param tmp_path: pytest temp directory fixture.
     """
     _, app = env
     with TestClient(app) as client:
@@ -175,7 +178,7 @@ def test_ws_run_unknown_conduit_emits_flow_failed(env):
                         "flow_id": "T-4",
                         "conduit_name": "ghost",
                         "inputs": {},
-                        "run_path": "/tmp",
+                        "run_path": str(tmp_path),
                     }
                 )
             )
