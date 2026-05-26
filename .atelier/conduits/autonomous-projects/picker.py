@@ -59,7 +59,7 @@ def count_section_items(text: str, section_name: str) -> int:
     if not m:
         return 0
     body = m.group(1)
-    return sum(1 for line in body.splitlines() if line.lstrip().startswith("* "))
+    return sum(1 for line in body.splitlines() if line.startswith("* "))
 
 
 # ---------- usage gate ----------

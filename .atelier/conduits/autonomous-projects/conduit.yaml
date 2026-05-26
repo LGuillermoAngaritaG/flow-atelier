@@ -56,6 +56,12 @@ tasks:
 
           The project file path is on the line beginning with "READY: ".
 
+          The project's working directory is the `location` field in the
+          project markdown's YAML frontmatter. Always read the markdown
+          first and use that exact path for every cd, file check, git
+          command, and verification step. Never guess the working
+          directory from the project filename.
+
           Do the following:
           1. Read the project markdown file. Parse the YAML frontmatter
              (description, goal, priority, location, use_git).
