@@ -184,6 +184,50 @@ async def test_sync_reload_job_is_preserved(daemon, store):
     assert _RELOAD_JOB_ID in job_ids
 
 
+async def test_sync_skips_unchanged_schedules(daemon, store, monkeypatch):
+    """Verify a sync tick does not re-add APScheduler jobs whose config is identical.
+
+    :param daemon: SchedulerDaemon fixture.
+    :param store: ScheduleStore fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    store.create(_recurring())
+    await daemon.start()
+    # Count add_job calls during a no-op sync; only the reload job belongs.
+    add_calls: list[str] = []
+    original_add = daemon._scheduler.add_job
+
+    def _spy(*args, **kwargs):
+        add_calls.append(kwargs.get("id", "?"))
+        return original_add(*args, **kwargs)
+
+    monkeypatch.setattr(daemon._scheduler, "add_job", _spy)
+    await daemon.sync()
+    # No add_job call should have happened — schedule config did not change.
+    assert add_calls == []
+
+
+async def test_sync_replaces_when_config_changes(daemon, store):
+    """A schedule whose config changes must be re-registered on the next sync.
+
+    :param daemon: SchedulerDaemon fixture.
+    :param store: ScheduleStore fixture.
+    """
+    import yaml
+
+    job = store.create(_recurring())
+    await daemon.start()
+    initial_hash = daemon._known[job.id]
+    # Mutate the on-disk YAML through a round-trip so the new value stays
+    # a string (PyYAML auto-quotes ambiguous scalars on safe_dump).
+    yaml_path = store.schedules_dir / "report.yaml"
+    payload = yaml.safe_load(yaml_path.read_text())
+    payload["schedule"]["times"] = ["10:30"]
+    yaml_path.write_text(yaml.safe_dump(payload, sort_keys=False))
+    await daemon.sync()
+    assert daemon._known[job.id] != initial_hash
+
+
 # -------------------------------------------------------------- fire
 
 

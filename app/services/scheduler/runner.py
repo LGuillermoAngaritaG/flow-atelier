@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import signal
 import sys
@@ -90,7 +92,9 @@ class SchedulerDaemon:
         self.default_working_dir = (default_working_dir or Path.cwd()).resolve()
         self.reload_interval_seconds = reload_interval_seconds
         self._scheduler: AsyncIOScheduler | None = None
-        self._planned: dict[str, PlannedJob] = {}
+        # Hash of the registered schedule config keyed by job id, so sync()
+        # ticks can skip re-adding APScheduler jobs whose config is unchanged.
+        self._known: dict[str, str] = {}
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -111,7 +115,7 @@ class SchedulerDaemon:
         self._scheduler.start()
         logger.info(
             "scheduler started: %d schedule(s), tz=%s, reload=%.1fs",
-            len(self._planned),
+            len(self._known),
             self.default_zone,
             self.reload_interval_seconds,
         )
@@ -162,7 +166,7 @@ class SchedulerDaemon:
 
         for stale in live_ids - active.keys():
             self._scheduler.remove_job(stale)
-            self._planned.pop(stale, None)
+            self._known.pop(stale, None)
             logger.info("removed schedule %s (no longer in store)", stale)
 
         for sid, job in active.items():
@@ -171,18 +175,39 @@ class SchedulerDaemon:
                 # daemon was previously running).
                 if sid in live_ids:
                     self._scheduler.remove_job(sid)
-                self._planned.pop(sid, None)
+                self._known.pop(sid, None)
                 continue
             self._register(job)
 
+    @staticmethod
+    def _config_hash(job: ScheduledJob) -> str:
+        """Hash the fields that decide what/when the daemon fires.
+
+        :param job: schedule whose config should be hashed
+        """
+        payload = {
+            "conduit_name": job.conduit_name,
+            "run_path": job.run_path,
+            "inputs": job.inputs,
+            "schedule": job.schedule.model_dump(mode="json"),
+        }
+        blob = json.dumps(payload, sort_keys=True, default=str).encode()
+        return hashlib.sha256(blob).hexdigest()
+
     def _register(self, job: ScheduledJob) -> None:
-        """Register or replace the APScheduler job for ``job`` and cache planning data.
+        """Register or replace the APScheduler job for ``job``.
+
+        Skips re-registration when the schedule config is byte-for-byte
+        identical to what's already known — saves the no-op churn from
+        every reload tick re-adding every active job.
 
         :param job: schedule to (re-)register
         """
         assert self._scheduler is not None
+        config_hash = self._config_hash(job)
+        if self._known.get(job.id) == config_hash:
+            return
         trigger = to_trigger(job, default_zone=self.default_zone)
-        working_dir = self._resolve_working_dir(job)
         self._scheduler.add_job(
             self._fire,
             trigger=trigger,
@@ -192,21 +217,13 @@ class SchedulerDaemon:
             max_instances=1,
             coalesce=True,
         )
+        self._known[job.id] = config_hash
         now = datetime.now(tz=self.default_zone)
-        next_fire = trigger.get_next_fire_time(None, now)
-        self._planned[job.id] = PlannedJob(
-            id=job.id,
-            name=job.schedule.name or job.id,
-            conduit_name=job.conduit_name,
-            next_fire_time=next_fire,
-            working_dir=working_dir,
-            schedule_kind=job.schedule.mode,
-        )
         logger.info(
             "registered schedule %s (%s): next fire %s",
             job.id,
             job.schedule.mode,
-            next_fire,
+            trigger.get_next_fire_time(None, now),
         )
 
     def _resolve_working_dir(self, job: ScheduledJob) -> Path:
@@ -260,8 +277,17 @@ class SchedulerDaemon:
     # ------------------------------------------------------------------ introspection
 
     def list_planned(self) -> list[PlannedJob]:
-        """Return the schedules currently registered with the daemon."""
-        return sorted(self._planned.values(), key=lambda p: p.id)
+        """Return the schedules currently visible to the daemon.
+
+        Delegates to :func:`compute_planned_view` so callers get a fresh
+        next-fire time computed against ``datetime.now`` rather than a
+        registration-time snapshot that may already be stale.
+        """
+        return compute_planned_view(
+            self.store,
+            default_zone=self.default_zone,
+            default_working_dir=self.default_working_dir,
+        )
 
 
 def compute_planned_view(
