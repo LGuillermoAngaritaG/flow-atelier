@@ -19,11 +19,11 @@ schedule:
   - 6
   - 7
   times:
-  - '09:00'
+  - 09:00
   - '11:00'
   - '13:00'
   - '15:00'
   - '17:00'
   - '19:00'
 created_at: 1779778874
-runs_completed: 5
+runs_completed: 26
