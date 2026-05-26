@@ -1,6 +1,7 @@
 """CLI smoke tests via Typer's CliRunner."""
 import io
 import os
+import sys
 from datetime import UTC, datetime
 
 import pytest
@@ -222,6 +223,7 @@ def test_logs_unknown_flow(workdir):
     assert "unknown flow" in result.output
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
 def test_logs_shows_task_output(workdir):
     """Verify `logs` prints stdout for every task in the flow.
 
@@ -238,6 +240,7 @@ def test_logs_shows_task_output(workdir):
     assert "beta-output" in result.output
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
 def test_logs_filter_by_task(workdir):
     """Verify `logs --task` filters output to the named task only.
 
@@ -252,6 +255,7 @@ def test_logs_filter_by_task(workdir):
     assert "beta-output" not in result.output
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
 def test_logs_show_stderr(workdir):
     """Verify `logs --show stderr` shows stderr and hides stdout.
 
@@ -396,6 +400,7 @@ def test_status_json(workdir):
     assert data["tasks"]["greet"]["status"] == "completed"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
 def test_logs_json(workdir):
     """Verify `logs --json` returns one entry per task with output.
 
@@ -638,6 +643,7 @@ def test_scheduler_status_alias(workdir, tmp_path):
     assert "nightly" in result.output
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
 def test_run_failure_prints_flow_id_and_status_hint(tmp_path, monkeypatch):
     """Failure output must include the flow_id and a next-step hint so
     the user can inspect what happened. Previously the flow_id was only

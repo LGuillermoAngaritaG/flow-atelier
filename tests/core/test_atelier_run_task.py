@@ -18,7 +18,7 @@ def atelier(tmp_path, monkeypatch):
     return Atelier(base_dir=tmp_path / ".atelier")
 
 
-async def test_run_single_task_runs_bash_echo_and_returns_logs(atelier):
+async def test_run_single_task_runs_bash_echo_and_returns_logs(atelier, tmp_path):
     """Verify run_single_task runs bash echo and returns logs with exit 0.
 
     :param atelier: Atelier facade fixture.
@@ -28,7 +28,7 @@ async def test_run_single_task_runs_bash_echo_and_returns_logs(atelier):
         description="ad-hoc echo",
         task="echo hello-from-task",
         tool="tool:bash",
-        run_path="/tmp",
+        run_path=str(tmp_path),
     )
     out = await atelier.run_single_task(payload)
     assert isinstance(out, RunTaskOutput)
@@ -38,7 +38,7 @@ async def test_run_single_task_runs_bash_echo_and_returns_logs(atelier):
     assert out.logs[-1].exit_code == 0
 
 
-async def test_run_single_task_persists_flow_dir(atelier):
+async def test_run_single_task_persists_flow_dir(atelier, tmp_path):
     """Verify run_single_task writes the flow's logs.json to disk.
 
     :param atelier: Atelier facade fixture.
@@ -48,14 +48,14 @@ async def test_run_single_task_persists_flow_dir(atelier):
         description="ad-hoc echo",
         task="echo persisted",
         tool="tool:bash",
-        run_path="/tmp",
+        run_path=str(tmp_path),
     )
     out = await atelier.run_single_task(payload)
     flow_dir = atelier.store._flow_dir(out.flow_id)
     assert (flow_dir / "logs.json").exists()
 
 
-async def test_run_single_task_failure_returns_non_zero_exit(atelier):
+async def test_run_single_task_failure_returns_non_zero_exit(atelier, tmp_path):
     """Verify run_single_task returns a non-zero exit code on failure.
 
     :param atelier: Atelier facade fixture.
@@ -65,7 +65,7 @@ async def test_run_single_task_failure_returns_non_zero_exit(atelier):
         description="explode",
         task="exit 7",
         tool="tool:bash",
-        run_path="/tmp",
+        run_path=str(tmp_path),
     )
     out = await atelier.run_single_task(payload)
     assert out.flow_id

@@ -1,4 +1,7 @@
 """BashExecutor tests."""
+import sys
+
+import pytest
 
 from app.schemas.conduit import TaskDefinition, ToolType
 from app.services.executor.base import FlowContext
@@ -47,6 +50,7 @@ async def test_failure_exit_code():
     assert not r.success
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax not supported in cmd.exe")
 async def test_stderr_captured():
     """Verify stderr output is captured separately from stdout."""
     r = await BashExecutor().execute(
