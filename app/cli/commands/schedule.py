@@ -119,11 +119,11 @@ def schedule_list_cmd(
     console.print(_render_planned_table(planned))
 
 
-@schedule_app.command("remove", help="Soft-delete a schedule by id or name.")
+@schedule_app.command("remove", help="Delete a schedule by id or name (hard delete).")
 def schedule_remove_cmd(
     ref: str = typer.Argument(..., help="Schedule id or schedule.name."),
 ) -> None:
-    """Soft-delete a schedule by id or name.
+    """Delete a schedule by id or name; the YAML file is unlinked.
 
     :param ref: schedule id or ``schedule.name`` to remove.
     """

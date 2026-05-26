@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import signal
 import sys
@@ -90,7 +92,9 @@ class SchedulerDaemon:
         self.default_working_dir = (default_working_dir or Path.cwd()).resolve()
         self.reload_interval_seconds = reload_interval_seconds
         self._scheduler: AsyncIOScheduler | None = None
-        self._planned: dict[str, PlannedJob] = {}
+        # Hash of the registered schedule config keyed by job id, so sync()
+        # ticks can skip re-adding APScheduler jobs whose config is unchanged.
+        self._known: dict[str, str] = {}
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -100,18 +104,18 @@ class SchedulerDaemon:
             return
         self._scheduler = AsyncIOScheduler(timezone=self.default_zone)
         self._scheduler.add_job(
-            self._sync_from_disk,
+            self.sync,
             trigger=IntervalTrigger(seconds=self.reload_interval_seconds),
             id=_RELOAD_JOB_ID,
             replace_existing=True,
             max_instances=1,
             coalesce=True,
         )
-        await self._sync_from_disk()
+        await self.sync()
         self._scheduler.start()
         logger.info(
             "scheduler started: %d schedule(s), tz=%s, reload=%.1fs",
-            len(self._planned),
+            len(self._known),
             self.default_zone,
             self.reload_interval_seconds,
         )
@@ -149,8 +153,8 @@ class SchedulerDaemon:
 
     # ------------------------------------------------------------------ sync
 
-    async def _sync_from_disk(self) -> None:
-        """Diff live jobs against active schedules; add/update/remove as needed."""
+    async def sync(self) -> None:
+        """Diff live jobs against persisted schedules; add/update/remove as needed."""
         if self._scheduler is None:
             return
         active = {j.id: j for j in self.store.list()}
@@ -162,8 +166,8 @@ class SchedulerDaemon:
 
         for stale in live_ids - active.keys():
             self._scheduler.remove_job(stale)
-            self._planned.pop(stale, None)
-            logger.info("removed schedule %s (not active)", stale)
+            self._known.pop(stale, None)
+            logger.info("removed schedule %s (no longer in store)", stale)
 
         for sid, job in active.items():
             if job.schedule.mode == "once" and self.store.fired_at(sid):
@@ -171,18 +175,39 @@ class SchedulerDaemon:
                 # daemon was previously running).
                 if sid in live_ids:
                     self._scheduler.remove_job(sid)
-                self._planned.pop(sid, None)
+                self._known.pop(sid, None)
                 continue
             self._register(job)
 
+    @staticmethod
+    def _config_hash(job: ScheduledJob) -> str:
+        """Hash the fields that decide what/when the daemon fires.
+
+        :param job: schedule whose config should be hashed
+        """
+        payload = {
+            "conduit_name": job.conduit_name,
+            "run_path": job.run_path,
+            "inputs": job.inputs,
+            "schedule": job.schedule.model_dump(mode="json"),
+        }
+        blob = json.dumps(payload, sort_keys=True, default=str).encode()
+        return hashlib.sha256(blob).hexdigest()
+
     def _register(self, job: ScheduledJob) -> None:
-        """Register or replace the APScheduler job for ``job`` and cache planning data.
+        """Register or replace the APScheduler job for ``job``.
+
+        Skips re-registration when the schedule config is byte-for-byte
+        identical to what's already known — saves the no-op churn from
+        every reload tick re-adding every active job.
 
         :param job: schedule to (re-)register
         """
         assert self._scheduler is not None
+        config_hash = self._config_hash(job)
+        if self._known.get(job.id) == config_hash:
+            return
         trigger = to_trigger(job, default_zone=self.default_zone)
-        working_dir = self._resolve_working_dir(job)
         self._scheduler.add_job(
             self._fire,
             trigger=trigger,
@@ -192,21 +217,13 @@ class SchedulerDaemon:
             max_instances=1,
             coalesce=True,
         )
+        self._known[job.id] = config_hash
         now = datetime.now(tz=self.default_zone)
-        next_fire = trigger.get_next_fire_time(None, now)
-        self._planned[job.id] = PlannedJob(
-            id=job.id,
-            name=job.schedule.name or job.id,
-            conduit_name=job.conduit_name,
-            next_fire_time=next_fire,
-            working_dir=working_dir,
-            schedule_kind=job.schedule.mode,
-        )
         logger.info(
             "registered schedule %s (%s): next fire %s",
             job.id,
             job.schedule.mode,
-            next_fire,
+            trigger.get_next_fire_time(None, now),
         )
 
     def _resolve_working_dir(self, job: ScheduledJob) -> Path:
@@ -226,12 +243,16 @@ class SchedulerDaemon:
     async def _fire(self, schedule_id: str) -> None:
         """Job function: re-read the latest schedule and dispatch it.
 
+        ``once`` schedules are marked fired regardless of executor outcome
+        so a single failure does not turn into an infinite retry loop.
+        ``runs_completed`` only advances when the executor returns cleanly.
+
         :param schedule_id: schedule identifier passed by APScheduler
         """
         job = self.store.get(schedule_id)
         if job is None:
             logger.warning(
-                "schedule %s not active before firing; skipping", schedule_id
+                "schedule %s not present before firing; skipping", schedule_id
             )
             return
         working_dir = self._resolve_working_dir(job)
@@ -241,20 +262,32 @@ class SchedulerDaemon:
             job.conduit_name,
             working_dir,
         )
+        succeeded = False
         try:
             await self.executor(job, working_dir)
+            succeeded = True
         except Exception:  # noqa: BLE001 — daemon must survive a single failed fire
             logger.exception("schedule %s failed", schedule_id)
-            return
-        if job.schedule.mode == "once":
-            self.store.mark_fired(schedule_id)
-        self.store.increment_runs(schedule_id)
+        finally:
+            if job.schedule.mode == "once":
+                self.store.mark_fired(schedule_id)
+        if succeeded:
+            self.store.increment_runs(schedule_id)
 
     # ------------------------------------------------------------------ introspection
 
     def list_planned(self) -> list[PlannedJob]:
-        """Return the schedules currently registered with the daemon."""
-        return sorted(self._planned.values(), key=lambda p: p.id)
+        """Return the schedules currently visible to the daemon.
+
+        Delegates to :func:`compute_planned_view` so callers get a fresh
+        next-fire time computed against ``datetime.now`` rather than a
+        registration-time snapshot that may already be stale.
+        """
+        return compute_planned_view(
+            self.store,
+            default_zone=self.default_zone,
+            default_working_dir=self.default_working_dir,
+        )
 
 
 def compute_planned_view(

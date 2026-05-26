@@ -46,7 +46,9 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
 
     Builds a fresh :class:`Atelier` per connection so swapping
     ``executors["tool:hitl"]`` for a :class:`WsHitlExecutor` does not
-    leak across sockets.
+    leak across sockets. When ``atelier.scheduler_bus`` is attached
+    (i.e. running under ``atelier serve``), the socket also subscribes
+    to scheduler broadcasts so scheduled fires reach the UI live.
 
     :param websocket: the incoming Starlette WebSocket connection.
     """
@@ -62,6 +64,9 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
             await websocket.send_json(payload)
 
     broker = WebSocketBroker(send=_send)
+    scheduler_bus = getattr(base_atelier, "scheduler_bus", None)
+    if scheduler_bus is not None:
+        scheduler_bus.subscribe(_send)
 
     try:
         while True:
@@ -97,6 +102,8 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
             elif isinstance(message, CancelMessage):
                 broker.cancel(message.flow_id)
     finally:
+        if scheduler_bus is not None:
+            scheduler_bus.unsubscribe(_send)
         if websocket.application_state == WebSocketState.CONNECTED:
             await websocket.close()
 

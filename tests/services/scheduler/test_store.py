@@ -69,14 +69,13 @@ def test_list_empty(store):
     assert store.list() == []
 
 
-def test_create_assigns_id_created_at_status(store):
-    """Verify create() assigns id, created_at, status, and counters.
+def test_create_assigns_id_created_at_counters(store):
+    """Verify create() assigns id, created_at, and counters.
 
     :param store: ScheduleStore fixture.
     """
     job = store.create(_recurring_payload())
     assert job.id.startswith("SCH-")
-    assert job.status == "active"
     assert job.runs_completed == 0
     assert job.created_at > 0
     assert job.conduit_name == "report"
@@ -131,8 +130,8 @@ def test_create_rejects_duplicate_slug(store):
         store.create(_recurring_payload())
 
 
-def test_list_returns_active_schedules_only(store):
-    """Verify list() excludes deleted schedules.
+def test_list_drops_deleted_schedules(store):
+    """Verify list() no longer surfaces a schedule whose file was deleted.
 
     :param store: ScheduleStore fixture.
     """
@@ -143,8 +142,8 @@ def test_list_returns_active_schedules_only(store):
     assert a.id in ids and b.id in ids
     store.delete(a.id)
     listed_after = store.list()
-    assert all(j.status == "active" for j in listed_after)
     assert a.id not in [j.id for j in listed_after]
+    assert b.id in [j.id for j in listed_after]
 
 
 def test_get_by_id(store):
@@ -178,7 +177,7 @@ def test_delete_removes_file(store):
     path = store.schedules_dir / "weekday-mornings.yaml"
     assert path.exists()
     deleted = store.delete(job.id)
-    assert deleted.status == "deleted"
+    assert deleted.id == job.id
     assert not path.exists()
 
 
@@ -251,6 +250,23 @@ def test_atomic_write_does_not_leave_tmp(store):
     store.create(_recurring_payload())
     leftovers = list(store.schedules_dir.glob("*.yaml.tmp"))
     assert leftovers == []
+
+
+def test_increment_runs_skips_when_file_gone(store, monkeypatch):
+    """Simulate the delete-then-increment race: ``_iter_jobs`` returns a
+    stale view of a job whose YAML file has since been unlinked.
+    ``increment_runs`` must NOT resurrect the file.
+
+    :param store: ScheduleStore fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    job = store.create(_recurring_payload())
+    path = store.schedules_dir / "weekday-mornings.yaml"
+    stale_view = [job]  # captured before the "concurrent" delete
+    path.unlink()
+    monkeypatch.setattr(store, "_iter_jobs", lambda: list(stale_view))
+    store.increment_runs(job.id)
+    assert not path.exists()
 
 
 def test_recreate_after_load_round_trips(store, tmp_path):

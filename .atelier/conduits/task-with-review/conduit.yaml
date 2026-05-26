@@ -1,0 +1,44 @@
+name: task-with-review
+description: Run a task with an AI agent and have a second agent judge whether it was completed
+timeout: 3600
+max_concurrency: 2
+
+inputs:
+  task: The task to perform
+
+tasks:
+  - do_task:
+      description: Execute the task with a coding agent
+      task: |
+        Perform the following task to completion:
+
+        {{inputs.task}}
+
+        When finished, describe concretely what you did so a reviewer
+        can independently judge whether the task was completed.
+      tool: harness:claude-code
+      depends_on: []
+
+  - review:
+      description: Review the work and emit a DONE or NOT_DONE verdict
+      task: |
+        You are reviewing whether a task was actually completed.
+
+        Original task:
+        {{inputs.task}}
+
+        Work performed by the executor:
+        {{do_task.output}}
+
+        Independently verify the claim. Inspect files, run commands, or
+        check state as needed to confirm the task was truly completed.
+
+        Respond with exactly two lines, nothing else:
+        VERDICT: DONE
+        REASON: <one short sentence>
+
+        or:
+        VERDICT: NOT_DONE
+        REASON: <one short sentence>
+      tool: harness:claude-code
+      depends_on: [do_task]

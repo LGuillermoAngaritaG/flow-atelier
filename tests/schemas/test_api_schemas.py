@@ -170,7 +170,7 @@ def test_create_schedule_input_assembles_full_payload():
 
 
 def test_scheduled_job_has_id_and_metadata():
-    """Verify ScheduledJob exposes id and status metadata."""
+    """Verify ScheduledJob exposes id and run-counter metadata."""
     sj = ScheduledJob.model_validate(
         {
             "id": "SCH-12345678",
@@ -184,12 +184,10 @@ def test_scheduled_job_has_id_and_metadata():
                 "times": ["06:00", "12:00"],
             },
             "created_at": 1745140800000,
-            "status": "active",
             "runs_completed": 0,
         }
     )
     assert sj.id == "SCH-12345678"
-    assert sj.status == "active"
     assert sj.runs_completed == 0
 
 
@@ -203,7 +201,6 @@ def test_scheduled_job_serializes_snake_case():
             "run_path": "/abs",
             "schedule": {"mode": "once", "name": "n", "run_at": "2026-05-01T08:00:00Z"},
             "created_at": 1,
-            "status": "active",
             "runs_completed": 0,
         }
     )

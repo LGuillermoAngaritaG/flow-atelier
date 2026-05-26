@@ -1,0 +1,34 @@
+id: d6af488f-03d0-465b-8716-8d24915ee00f
+conduit_name: autonomous-projects
+inputs:
+  projects_dir: /Users/ganga/Library/Mobile Documents/iCloud~md~obsidian/Documents/Cerebro/AUTONOMOUS_PROJECTS/WORKING
+  max_usage_pct: '70'
+  idle_hours: '1'
+  max_pending_review: '3'
+  token_limit: '19000000'
+run_path: /Users/ganga/Documents/personal_repos/flow-atelier
+schedule:
+  mode: recurring
+  name: autonomous-projects-night
+  days:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  times:
+  - '22:00'
+  - '23:00'
+  - 00:00
+  - 01:00
+  - 02:00
+  - 03:00
+  - 04:00
+  - 05:00
+  - 06:00
+  - 07:00
+  - 08:00
+created_at: 1779778874
+runs_completed: 5

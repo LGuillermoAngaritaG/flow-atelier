@@ -267,7 +267,7 @@ class Atelier:
     # ------------------------------------------------------------------ schedules
 
     def list_schedules(self) -> list[ScheduledJob]:
-        """Return active schedules persisted by this Atelier."""
+        """Return every schedule persisted by this Atelier."""
         return self.schedule_store.list()
 
     def create_schedule(self, payload: CreateScheduleInput) -> ScheduledJob:
@@ -279,10 +279,10 @@ class Atelier:
         return self.schedule_store.create(payload)
 
     def delete_schedule(self, schedule_id: str) -> ScheduledJob:
-        """Soft-delete a schedule by id.
+        """Delete a schedule by id (hard delete; the YAML file is removed).
 
         :param schedule_id: schedule identifier
-        :returns: the soft-deleted :class:`ScheduledJob`
+        :returns: the :class:`ScheduledJob` as it was just before removal
         :raises KeyError: if the schedule doesn't exist
         """
         return self.schedule_store.delete(schedule_id)

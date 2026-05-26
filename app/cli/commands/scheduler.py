@@ -57,14 +57,18 @@ def scheduler_start_cmd(
 
 @scheduler_app.command(
     "status",
-    help="Show registered schedules and their next fire times (no daemon required).",
+    help=(
+        "List schedules and their next fire times. "
+        "Reads .atelier/schedules/ directly — does NOT contact a running "
+        "daemon. To confirm the daemon is alive, check the process."
+    ),
 )
 def scheduler_status_cmd(
     json_mode: bool = typer.Option(
         False, "--json", help="Emit machine-readable JSON instead of a table."
     ),
 ) -> None:
-    """Show registered schedules and their next fire times.
+    """Compute next fire times from the on-disk store; no daemon contacted.
 
     :param json_mode: when true, emit machine-readable JSON instead of a table.
     """

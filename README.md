@@ -217,21 +217,21 @@ Endpoint surface:
 | `DELETE` | `/conduits/:name`          | Delete |
 | `POST`   | `/conduits/open-path`      | Reveal flow run path in OS file explorer |
 | `POST`   | `/tasks/run`               | Run an ad-hoc one-task conduit |
-| `GET`    | `/schedules`               | List active schedules |
+| `GET`    | `/schedules`               | List schedules |
 | `POST`   | `/schedules`               | Create (registers with the embedded daemon) |
-| `DELETE` | `/schedules/:id`           | Soft-delete |
+| `DELETE` | `/schedules/:id`           | Delete |
 | `GET`    | `/flows`                   | List prior flows |
 | `GET`    | `/flows/:id/logs`          | Per-flow log entries |
 | `WS`     | `/ws/run-conduit`          | Run flows + HITL gates over a multiplexed socket |
 
 ## Scheduler
 
-`atelier scheduler` runs conduits on a wall-clock schedule. Schedules
-live in `.atelier/schedules.json` (one JSON file per project,
-soft-deleted entries kept around so existing ids stay stable). The
-daemon (`atelier scheduler start` or, embedded, `atelier serve`) is a
-single foreground asyncio process that fires conduits identically on
-Linux, macOS, and Windows — put it under your preferred supervisor
+`atelier scheduler` runs conduits on a wall-clock schedule. Each
+schedule is one YAML file under `.atelier/schedules/<slug>.yaml`
+(slug derived from `schedule.name`). The daemon
+(`atelier scheduler start` or, embedded, `atelier serve`) is a single
+foreground asyncio process that fires conduits identically on Linux,
+macOS, and Windows — put it under your preferred supervisor
 (`systemd --user`, `launchd`, NSSM, etc.).
 
 Schedules use the same shape that the HTTP API consumes:
@@ -258,23 +258,31 @@ Behavior notes:
 
 - **Hot reload**: schedules added or removed via the CLI / HTTP API are
   picked up on the next reload tick (`--reload-interval`, default 30s).
-- **One-shot deduplication**: after a `once` schedule fires, its id is
-  recorded in `.atelier/scheduler_state.json`, so a daemon restart
-  never re-runs it.
+  Creates and deletes via `POST`/`DELETE /schedules` trigger a sync
+  immediately.
+- **Delete is hard**: `DELETE /schedules/:id` and
+  `atelier schedule remove` unlink the YAML file. There is no
+  resurrect; recreating yields a fresh `SCH-…` id and resets
+  `runs_completed`.
+- **No update endpoint**: to change a schedule, delete and recreate.
+  That mints a new id and zeroes the run counter — by design, to keep
+  the store trivial.
+- **One-shot fires exactly once**, success or failure: after a `once`
+  schedule's executor returns (even when it raises), the daemon writes
+  its id into `.atelier/scheduler_state.json` so a restart never
+  re-runs it. Failures are logged with full traceback.
 - **Concurrency**: each schedule runs at most one instance at a time
   (`max_instances=1`); missed fires are coalesced.
+- **`scheduler status` reads the store, not the daemon.** It shows the
+  next fire times for every persisted schedule whether or not a daemon
+  is alive. To confirm liveness, check the daemon process directly.
+- **Embedded mode broadcasts live.** When started under `atelier
+  serve`, scheduled fires fan out `scheduled_run_started`,
+  `scheduled_task_event`, and `scheduled_run_complete`/`_failed`
+  envelopes to every `/ws/run-conduit` client.
 - `atelier schedule run-now <id-or-name>` dispatches a schedule
   immediately without going through the daemon and without touching
   fired-state.
-
-### Migrating from YAML schedules
-
-Earlier versions of flow-atelier stored schedules as YAML files under
-`.atelier/schedules/<name>.yaml`. Those files are no longer read; the
-new JSON store is canonical. Existing YAML files are left on disk for
-your reference but ignored by the daemon — re-issue each schedule via
-`atelier schedule add` (passing a JSON or YAML file in the new shape)
-or `POST /schedules`.
 
 ## Conduit reference
 

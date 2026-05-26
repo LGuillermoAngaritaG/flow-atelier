@@ -10,7 +10,8 @@ wheels/
 # Virtual environments
 .venv*
 .claude
-.atelier
+.atelier/flows
 .devtool
 claude.md
 .pytest_cache
+.DS_Store

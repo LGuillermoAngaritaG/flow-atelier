@@ -1,0 +1,40 @@
+name: spec-plan-build
+description: >
+  Three-stage Claude Code pipeline: spec a task, plan it into tasks/, then
+  execute the plan. Each stage runs in the same working directory so files
+  written by the previous stage are visible to the next.
+timeout: 7200
+max_concurrency: 1
+
+inputs:
+  task: One-paragraph description of the task to spec, plan, and build.
+
+tasks:
+  - spec:
+      description: Write SPEC.md from the input task description.
+      tool: harness:claude-code
+      depends_on: []
+      interactive: true
+      task: |
+        /spec You are writing a specification for the following task:
+
+        ---
+        {{inputs.task}}
+        ---
+
+        Produce a single file at SPEC.md in the current working directory.
+
+  - plan:
+      description: Read SPEC.md and produce tasks/plan.md plus per-task files.
+      tool: harness:claude-code
+      depends_on: [spec]
+      task: |
+        /plan Read SPEC.md in the current working directory.
+
+
+  - build:
+      description: Execute the plan in tasks/ end-to-end.
+      tool: harness:claude-code
+      depends_on: [plan]
+      task: |
+        /build Execute the plan in @tasks/

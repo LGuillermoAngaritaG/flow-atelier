@@ -11,7 +11,10 @@ import typer
 from app.cli._shared import console
 from app.cli.main import app
 from app.core.atelier import Atelier
+from app.schemas.api import ScheduledJob
+from app.schemas.log import TaskEvent
 from app.services.api.app import FastApiServer
+from app.services.api.scheduler_bus import SchedulerEventBus
 from app.services.scheduler import SchedulerDaemon, default_local_zone
 
 
@@ -53,8 +56,66 @@ def serve_cmd(
     )
 
     atelier = Atelier()
+    bus = SchedulerEventBus()
+    # The WS route subscribes new sockets to this bus so scheduled fires
+    # (which don't originate from a connected socket) still reach UIs.
+    atelier.scheduler_bus = bus  # type: ignore[attr-defined]
+
+    async def _broadcasting_executor(job: ScheduledJob, working_dir: Path) -> None:
+        """Run the conduit and fan lifecycle envelopes out to the bus."""
+        base = {
+            "schedule_id": job.id,
+            "schedule_name": job.schedule.name,
+            "conduit_name": job.conduit_name,
+            "run_path": str(working_dir),
+        }
+        scheduled_atelier = Atelier(base_dir=working_dir / ".atelier")
+        captured: dict[str, str | None] = {"flow_id": None}
+
+        def _on_started(flow_id: str) -> None:
+            captured["flow_id"] = flow_id
+            asyncio.create_task(
+                bus.broadcast(
+                    {"type": "scheduled_run_started", "flow_id": flow_id, **base}
+                )
+            )
+
+        def _on_task_event(event: TaskEvent) -> None:
+            asyncio.create_task(
+                bus.broadcast(
+                    {
+                        "type": "scheduled_task_event",
+                        "flow_id": captured["flow_id"],
+                        "event": event.model_dump(mode="json"),
+                        **base,
+                    }
+                )
+            )
+
+        try:
+            flow_id = await scheduled_atelier.run_conduit(
+                job.conduit_name,
+                dict(job.inputs),
+                on_flow_started=_on_started,
+                on_task_event=_on_task_event,
+            )
+        except Exception as e:  # noqa: BLE001
+            await bus.broadcast(
+                {
+                    "type": "scheduled_run_failed",
+                    "flow_id": captured["flow_id"],
+                    "error": str(e),
+                    **base,
+                }
+            )
+            raise
+        await bus.broadcast(
+            {"type": "scheduled_run_complete", "flow_id": flow_id, **base}
+        )
+
     daemon = SchedulerDaemon(
         atelier.schedule_store,
+        executor=_broadcasting_executor,
         default_zone=default_local_zone(),
         default_working_dir=Path.cwd(),
         reload_interval_seconds=reload_interval,
