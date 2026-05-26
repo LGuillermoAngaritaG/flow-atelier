@@ -38,7 +38,6 @@ async def test_run_task_executes_bash_and_returns_logs(fixture):
         "description": "ad-hoc",
         "task": "echo task-api-output",
         "tool": "tool:bash",
-        "inputs": {},
         "run_path": "/tmp",
     }
     resp = await client.post("/tasks/run", json=payload)

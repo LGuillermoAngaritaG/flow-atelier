@@ -515,9 +515,9 @@ class TestInteractive:
 
 class TestPreset:
     def test_claude_harness_default_launch_cmd(self) -> None:
-        """Verify ClaudeHarness uses the claude-code-acp launch command."""
+        """Verify ClaudeHarness uses the claude-agent-acp launch command."""
         h = ClaudeHarness(sink=RecordingSink())
-        assert "claude-code-acp" in " ".join(h.launch_cmd)
+        assert "claude-agent-acp" in " ".join(h.launch_cmd)
 
     def test_claude_harness_override_launch_cmd(self) -> None:
         """Verify ClaudeHarness honors an explicit launch_cmd override."""
