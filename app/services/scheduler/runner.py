@@ -100,14 +100,14 @@ class SchedulerDaemon:
             return
         self._scheduler = AsyncIOScheduler(timezone=self.default_zone)
         self._scheduler.add_job(
-            self._sync_from_disk,
+            self.sync,
             trigger=IntervalTrigger(seconds=self.reload_interval_seconds),
             id=_RELOAD_JOB_ID,
             replace_existing=True,
             max_instances=1,
             coalesce=True,
         )
-        await self._sync_from_disk()
+        await self.sync()
         self._scheduler.start()
         logger.info(
             "scheduler started: %d schedule(s), tz=%s, reload=%.1fs",
@@ -149,8 +149,8 @@ class SchedulerDaemon:
 
     # ------------------------------------------------------------------ sync
 
-    async def _sync_from_disk(self) -> None:
-        """Diff live jobs against active schedules; add/update/remove as needed."""
+    async def sync(self) -> None:
+        """Diff live jobs against persisted schedules; add/update/remove as needed."""
         if self._scheduler is None:
             return
         active = {j.id: j for j in self.store.list()}
@@ -163,7 +163,7 @@ class SchedulerDaemon:
         for stale in live_ids - active.keys():
             self._scheduler.remove_job(stale)
             self._planned.pop(stale, None)
-            logger.info("removed schedule %s (not active)", stale)
+            logger.info("removed schedule %s (no longer in store)", stale)
 
         for sid, job in active.items():
             if job.schedule.mode == "once" and self.store.fired_at(sid):

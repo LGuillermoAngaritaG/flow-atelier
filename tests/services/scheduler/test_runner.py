@@ -146,7 +146,7 @@ async def test_start_with_no_schedules(daemon):
 
 
 async def test_sync_picks_up_added_schedules(daemon, store):
-    """Verify _sync_from_disk picks up schedules added after start.
+    """Verify sync() picks up schedules added after start.
 
     :param daemon: SchedulerDaemon fixture.
     :param store: ScheduleStore fixture.
@@ -154,12 +154,12 @@ async def test_sync_picks_up_added_schedules(daemon, store):
     await daemon.start()
     assert daemon.list_planned() == []
     job = store.create(_recurring())
-    await daemon._sync_from_disk()
+    await daemon.sync()
     assert [p.id for p in daemon.list_planned()] == [job.id]
 
 
 async def test_sync_drops_deleted_schedules(daemon, store):
-    """Verify _sync_from_disk drops schedules deleted from the store.
+    """Verify sync() drops schedules deleted from the store.
 
     :param daemon: SchedulerDaemon fixture.
     :param store: ScheduleStore fixture.
@@ -167,7 +167,7 @@ async def test_sync_drops_deleted_schedules(daemon, store):
     job = store.create(_recurring())
     await daemon.start()
     store.delete(job.id)
-    await daemon._sync_from_disk()
+    await daemon.sync()
     assert daemon.list_planned() == []
 
 
@@ -179,7 +179,7 @@ async def test_sync_reload_job_is_preserved(daemon, store):
     """
     await daemon.start()
     store.create(_recurring())
-    await daemon._sync_from_disk()
+    await daemon.sync()
     job_ids = {j.id for j in daemon._scheduler.get_jobs()}
     assert _RELOAD_JOB_ID in job_ids
 

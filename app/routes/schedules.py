@@ -1,6 +1,8 @@
 """``/schedules`` REST routes."""
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
@@ -8,6 +10,7 @@ from app.core.atelier import Atelier
 from app.schemas.api import CreateScheduleInput
 from app.services.api.base import get_atelier
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
 
@@ -23,7 +26,7 @@ def _error(message: str, code: int) -> JSONResponse:
 
 @router.get("")
 async def list_schedules(atelier: Atelier = Depends(get_atelier)) -> list[dict]:
-    """Return active :class:`ScheduledJob` records.
+    """Return every persisted :class:`ScheduledJob`.
 
     :param atelier: injected :class:`Atelier` facade.
     :returns: JSON-serializable dicts for each scheduled job.
@@ -46,9 +49,13 @@ async def create_schedule(
     daemon = getattr(atelier, "scheduler_daemon", None)
     if daemon is not None:
         try:
-            await daemon._sync_from_disk()  # noqa: SLF001
+            await daemon.sync()
         except Exception:  # noqa: BLE001 — daemon must survive sync errors
-            pass
+            logger.warning(
+                "scheduler sync after create failed (schedule %s)",
+                job.id,
+                exc_info=True,
+            )
     return job.model_dump(mode="json")
 
 
@@ -69,7 +76,11 @@ async def delete_schedule(
     daemon = getattr(atelier, "scheduler_daemon", None)
     if daemon is not None:
         try:
-            await daemon._sync_from_disk()  # noqa: SLF001
+            await daemon.sync()
         except Exception:  # noqa: BLE001
-            pass
+            logger.warning(
+                "scheduler sync after delete failed (schedule %s)",
+                schedule_id,
+                exc_info=True,
+            )
     return job.model_dump(mode="json")

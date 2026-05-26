@@ -125,3 +125,24 @@ async def test_delete_unknown_returns_404(fixture):
     client, _, _ = fixture
     resp = await client.delete("/schedules/SCH-nope")
     assert resp.status_code == 404
+
+
+async def test_create_logs_when_daemon_sync_fails(fixture, caplog):
+    """Verify a failing daemon.sync() during create is logged, not swallowed.
+
+    :param fixture: client+atelier+tmp_path tuple fixture.
+    :param caplog: pytest log capture fixture.
+    """
+    import logging
+
+    client, atelier, _ = fixture
+
+    class _BoomDaemon:
+        async def sync(self) -> None:
+            raise RuntimeError("boom")
+
+    atelier.scheduler_daemon = _BoomDaemon()
+    with caplog.at_level(logging.WARNING, logger="app.routes.schedules"):
+        resp = await client.post("/schedules", json=_payload())
+    assert resp.status_code == 201
+    assert any("scheduler sync after create failed" in r.message for r in caplog.records)
