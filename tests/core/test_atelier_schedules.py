@@ -67,14 +67,14 @@ def test_list_schedules_includes_created(atelier):
     assert [j.id for j in listed] == [job.id]
 
 
-def test_delete_schedule_soft_deletes(atelier):
-    """Verify delete_schedule soft-deletes and hides the schedule from list.
+def test_delete_schedule_removes_from_list(atelier):
+    """Verify delete_schedule hard-deletes and drops the schedule from list.
 
     :param atelier: Atelier facade fixture.
     """
     job = atelier.create_schedule(_payload())
     deleted = atelier.delete_schedule(job.id)
-    assert deleted.status == "deleted"
+    assert deleted.id == job.id
     assert atelier.list_schedules() == []
 
 

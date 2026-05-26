@@ -167,7 +167,6 @@ class ScheduledJob(BaseModel):
     run_path: str
     schedule: ScheduleConfig
     created_at: int
-    status: Literal["active", "deleted"] = "active"
     runs_completed: int = 0
 
 

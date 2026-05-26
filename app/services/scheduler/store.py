@@ -107,30 +107,26 @@ class ScheduleStore:
     # --------------------------------------------------------------- list / get
 
     def list(self) -> list[ScheduledJob]:
-        """Return all schedules with ``status == 'active'``."""
-        return [j for j in self._iter_jobs() if j.status == "active"]
-
-    def list_all(self) -> list[ScheduledJob]:
-        """Return every persisted schedule."""
+        """Return every persisted schedule, sorted by ``created_at``."""
         return self._iter_jobs()
 
     def get(self, schedule_id: str) -> ScheduledJob | None:
-        """Return the active schedule matching ``schedule_id`` or ``None``.
+        """Return the schedule matching ``schedule_id`` or ``None``.
 
         :param schedule_id: schedule identifier
         """
         for job in self._iter_jobs():
-            if job.id == schedule_id and job.status == "active":
+            if job.id == schedule_id:
                 return job
         return None
 
     def get_by_name(self, name: str) -> ScheduledJob | None:
-        """Find the first active schedule whose ``schedule.name`` matches.
+        """Find the first schedule whose ``schedule.name`` matches.
 
         :param name: schedule name to look up
         """
         for job in self._iter_jobs():
-            if job.status == "active" and job.schedule.name == name:
+            if job.schedule.name == name:
                 return job
         return None
 
@@ -158,7 +154,6 @@ class ScheduleStore:
             run_path=payload.run_path,
             schedule=payload.schedule,
             created_at=int(time.time() * 1000),
-            status="active",
             runs_completed=0,
         )
         self._save_job(job)
@@ -169,7 +164,7 @@ class ScheduleStore:
 
         :param schedule_id: schedule identifier
         :raises KeyError: if no schedule exists for ``schedule_id``
-        :returns: the deleted job with ``status='deleted'`` set in-memory
+        :returns: the job as it was on disk just before removal
         """
         for job in self._iter_jobs():
             if job.id == schedule_id:
@@ -177,16 +172,22 @@ class ScheduleStore:
                 if path.exists():
                     path.unlink()
                 self.clear_fired(schedule_id)
-                return job.model_copy(update={"status": "deleted"})
+                return job
         raise KeyError(f"schedule not found: {schedule_id}")
 
     def increment_runs(self, schedule_id: str) -> None:
         """Bump ``runs_completed`` for ``schedule_id`` if it still exists.
 
+        Re-checks that the YAML file still exists right before writing so a
+        concurrent delete cannot resurrect the schedule by losing the race
+        with the executor finishing.
+
         :param schedule_id: schedule identifier
         """
         for job in self._iter_jobs():
             if job.id == schedule_id:
+                if not self._path_for_name(job.schedule.name).exists():
+                    return
                 self._save_job(
                     job.model_copy(update={"runs_completed": job.runs_completed + 1})
                 )

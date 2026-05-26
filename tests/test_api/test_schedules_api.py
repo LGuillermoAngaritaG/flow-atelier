@@ -100,8 +100,8 @@ async def test_create_schedule_invalid_returns_400(fixture):
     assert resp.status_code in (400, 422)
 
 
-async def test_delete_schedule_marks_deleted(fixture):
-    """Verify DELETE /schedules/<id> marks it deleted and hides it from list.
+async def test_delete_schedule_removes_from_list(fixture):
+    """Verify DELETE /schedules/<id> removes it from disk and from the list.
 
     :param fixture: client+atelier+tmp_path tuple fixture.
     """
@@ -111,7 +111,7 @@ async def test_delete_schedule_marks_deleted(fixture):
 
     resp = await client.delete(f"/schedules/{sch_id}")
     assert resp.status_code == 200
-    assert resp.json()["status"] == "deleted"
+    assert resp.json()["id"] == sch_id
 
     listed = await client.get("/schedules")
     assert listed.json() == []

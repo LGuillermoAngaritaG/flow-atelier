@@ -29,7 +29,6 @@ def _job(schedule: dict, **overrides) -> ScheduledJob:
         "run_path": "/tmp",
         "schedule": schedule,
         "created_at": 0,
-        "status": "active",
         "runs_completed": 0,
     }
     base.update(overrides)
