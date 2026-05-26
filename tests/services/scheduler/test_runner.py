@@ -257,8 +257,8 @@ async def test_fire_does_not_mark_state_for_recurring(daemon, store, executor):
     assert store.fired_at(job.id) is None
 
 
-async def test_fire_failure_does_not_mark_state(daemon, store, executor):
-    """Verify executor failure does not mark a one-shot as fired.
+async def test_fire_failure_still_marks_one_shot_fired(daemon, store, executor):
+    """A failed one-shot fire MUST mark fired-state so it does not retry forever.
 
     :param daemon: SchedulerDaemon fixture.
     :param store: ScheduleStore fixture.
@@ -268,7 +268,23 @@ async def test_fire_failure_does_not_mark_state(daemon, store, executor):
     await daemon.start()
     executor.raise_on_next = True
     await daemon._fire(job.id)  # must NOT raise
-    assert store.fired_at(job.id) is None
+    assert store.fired_at(job.id) is not None
+
+
+async def test_fire_failure_does_not_increment_runs(daemon, store, executor):
+    """A failed fire MUST NOT advance the runs_completed counter.
+
+    :param daemon: SchedulerDaemon fixture.
+    :param store: ScheduleStore fixture.
+    :param executor: recording executor fixture.
+    """
+    job = store.create(_recurring())
+    await daemon.start()
+    executor.raise_on_next = True
+    await daemon._fire(job.id)
+    refreshed = store.get(job.id)
+    assert refreshed is not None
+    assert refreshed.runs_completed == 0
 
 
 async def test_fire_skips_deleted_schedules(daemon, store, executor):

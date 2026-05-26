@@ -226,12 +226,16 @@ class SchedulerDaemon:
     async def _fire(self, schedule_id: str) -> None:
         """Job function: re-read the latest schedule and dispatch it.
 
+        ``once`` schedules are marked fired regardless of executor outcome
+        so a single failure does not turn into an infinite retry loop.
+        ``runs_completed`` only advances when the executor returns cleanly.
+
         :param schedule_id: schedule identifier passed by APScheduler
         """
         job = self.store.get(schedule_id)
         if job is None:
             logger.warning(
-                "schedule %s not active before firing; skipping", schedule_id
+                "schedule %s not present before firing; skipping", schedule_id
             )
             return
         working_dir = self._resolve_working_dir(job)
@@ -241,14 +245,17 @@ class SchedulerDaemon:
             job.conduit_name,
             working_dir,
         )
+        succeeded = False
         try:
             await self.executor(job, working_dir)
+            succeeded = True
         except Exception:  # noqa: BLE001 — daemon must survive a single failed fire
             logger.exception("schedule %s failed", schedule_id)
-            return
-        if job.schedule.mode == "once":
-            self.store.mark_fired(schedule_id)
-        self.store.increment_runs(schedule_id)
+        finally:
+            if job.schedule.mode == "once":
+                self.store.mark_fired(schedule_id)
+        if succeeded:
+            self.store.increment_runs(schedule_id)
 
     # ------------------------------------------------------------------ introspection
 
