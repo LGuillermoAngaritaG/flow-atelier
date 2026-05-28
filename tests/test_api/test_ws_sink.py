@@ -62,5 +62,5 @@ async def test_request_permission_auto_approves() -> None:
         PermissionOption(id="allow", label="Allow"),
         PermissionOption(id="deny", label="Deny"),
     ]
-    with pytest.raises(PermissionError, match="does not support interactive permission"):
-        await sink.request_permission("summary", options)
+    result = await sink.request_permission("summary", options)
+    assert result == "allow"
