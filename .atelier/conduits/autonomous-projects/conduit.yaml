@@ -1,17 +1,18 @@
 name: autonomous-projects
 description: >
-  Pick the highest-priority idle project from a directory of project markdown
-  files and advance it via Claude Code. If no project is eligible (Claude usage
-  too high, every project recently touched, too many pending-review items, or
-  no projects at all), emit a SKIP reason and short-circuit.
+  Pick the highest-priority idle project from a folder-structured project
+  directory and advance it via Claude Code. Projects live in PROJECTS/, tasks
+  in TASKS/<name>/ with kanban folders (to-do, in-progress, pending-review,
+  done). PAUSED/ holds projects the human wants skipped. If no project is
+  eligible, emit SKIP and short-circuit.
 
 timeout: 7200
 max_concurrency: 1
 
 inputs:
   projects_dir: >-
-    Directory containing one .md file per project. Each file must have YAML
-    frontmatter with: description, goal, priority, location, use_git.
+    Path to the AUTONOMOUS_PROJECTS root directory containing PROJECTS/,
+    TASKS/, and PAUSED/ subdirectories.
   max_usage_pct: >-
     Skip if Claude Code 5h-window usage is at or above this percent.
     Recommended default: "80".
@@ -19,11 +20,11 @@ inputs:
     Project must have been untouched (no git commit or file edit under
     `location`) for at least this many hours. Recommended default: "2".
   max_pending_review: >-
-    Skip a project once its `# Pending-Review` section has at least this
-    many bullets (i.e. block at this count). Recommended default: "3".
+    Skip a project once its pending-review/ folder has at least this many
+    task files. Recommended default: "3".
   token_limit: >-
-    Token ceiling used to compute usage %. Pick a number that approximates
-    your 5h Claude Code session quota. Recommended default: "19000000".
+    Token ceiling used to compute usage %. Approximate your 5h Claude Code
+    session quota. Recommended default: "19000000".
 
 tasks:
   - pick_project:
@@ -43,41 +44,55 @@ tasks:
       description: Hand the chosen project to the goal conduit so it loops until a DONE verdict.
       task: task-with-review
       tool: tool:conduit
-      depends_on: 
-      - "pick_project.output.match(^READY: )"
+      depends_on:
+        - "pick_project.output.match(^READY: )"
       repeat: 100
       until: 'output.match(VERDICT:\s*DONE)'
       inputs:
         task: |
-          You are advancing an autonomous project tracked in a markdown file.
+          You are advancing an autonomous project tracked in a folder-structured project directory.
 
           The picker emitted:
           {{pick_project.output}}
 
           The project file path is on the line beginning with "READY: ".
-
-          The project's working directory is the `location` field in the
-          project markdown's YAML frontmatter. Always read the markdown
-          first and use that exact path for every cd, file check, git
-          command, and verification step. Never guess the working
-          directory from the project filename.
+          The projects root directory is: {{inputs.projects_dir}}
 
           Do the following:
-          1. Read the project markdown file. Parse the YAML frontmatter
-             (description, goal, priority, location, use_git).
-          2. cd into the `location` directory (the project's working dir).
-          3. If the `# To-Do's` section has at least one task, pick the top one.
-             Otherwise, review the project against its `goal`, propose one
-             concrete improvement, and add it to `# To-Do's` first.
-          4. BEFORE starting work, move that task from `# To-Do's` to
-             `# In-Progress` in the project markdown file, preserving format.
-          5. Do the work. Respect `use_git`: if true, commit the changes with a
-             clear message; if false, just edit files.
-          6. When finished, move the task from `# In-Progress` to
-             `# Pending-Review` and fill in `summary:` and `location:`
-             sub-bullets per the file's existing bullet format. Never move
-             tasks to `# Done` — that section is reserved for the human
-             reviewer and is the only place a human-approved task lives.
-          7. Save the project markdown file.
-
-
+          1. Read the project markdown file (path from the READY line). Parse the YAML
+             frontmatter (priority, location, use_git) and the `# Goal` section.
+          2. Read the `# Decisions Log` section carefully. This is the project's memory —
+             it records past decisions, findings, and ideas that were discarded. You MUST
+             respect it: do not re-attempt things already tried, do not suggest ideas that
+             were already rejected, and use it to understand what approaches have already
+             been ruled in or out.
+          3. The project name is the stem of the project markdown file. Find its task
+             directory at: {{inputs.projects_dir}}/TASKS/<project-name>/
+          4. If in-progress/ has a .md file, resume it — skip to step 6 to finish that
+             task before picking new work.
+          5. If to-do/ has at least one .md file, pick the top one. This is the task to work on.
+             If to-do/ is empty: review the project against its `# Goal` and `# Decisions
+             Log`, propose one concrete next step, and create a new task .md file there
+             with only a description:
+               ```
+               # Description
+               <what to do>
+               ```
+             Name the file with a descriptive slug (e.g. `setup-ci-pipeline.md`).
+             This new file is now the task to work on.
+          5. Move that file from to-do/ to in-progress/.
+          6. Read the task file. The `# Description` section tells you what to do.
+          7. cd into the project's `location` directory from the frontmatter.
+          8. Do the work. Respect `use_git`: if true, commit changes with a clear message;
+             if false, just edit files.
+          9. When finished, update the task file: fill in `# Summary of what was done` and
+             `# Location` (local path or PR URL). Then move the file from in-progress/ to
+             pending-review/. Never move tasks to done/ — that is reserved for the human
+             reviewer.
+          10. Append to the project markdown's `# Decisions Log` section. Log:
+              - Decisions you made and why (e.g. "Chose library X over Y because...")
+              - Ideas or approaches you discarded and why
+              - Things you tried that didn't work out
+              - Key findings about the codebase or project
+              This log prevents future runs from repeating work or re-suggesting rejected
+              ideas. Write concise bullet points — future-you will read this before starting.
