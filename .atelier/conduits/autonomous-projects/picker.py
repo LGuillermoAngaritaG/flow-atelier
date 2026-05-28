@@ -7,8 +7,8 @@ Stdout contract (single line, always exit 0):
 Filters, in order:
     1. Claude Code 5h-window usage gate
     2. PAUSED gate (skip if project name exists in PAUSED/)
-    3. Pending-Review gate (count files in TASKS/<name>/pending-review/)
-    4. To-Do gate (skip if TASKS/<name>/to-do/ is empty)
+    3. In-progress gate (resume project with a task in in-progress/)
+    4. Pending-Review gate (count files in TASKS/<name>/pending-review/)
     5. Idle time = max(latest git commit, latest mtime under `location`)
     6. Sort survivors by frontmatter priority asc; ties broken by oldest
        project file mtime.
@@ -173,15 +173,12 @@ def main() -> int:
             (project_tasks / sub).mkdir(parents=True, exist_ok=True)
         parsed.append((f, fm))
 
-    # 4. Global in-progress gate
-    global_ip = sum(
-        len(list((tasks_dir / f.stem / "in-progress").glob("*.md")))
-        for f, _fm in parsed
-        if (tasks_dir / f.stem / "in-progress").is_dir()
-    )
-    if global_ip > 0:
-        print(f"SKIP: {global_ip} task(s) still in-progress globally")
-        return 0
+    # 4. In-progress gate — pick the project with an unfinished task
+    for f, _fm in parsed:
+        ip_dir = tasks_dir / f.stem / "in-progress"
+        if ip_dir.is_dir() and any(ip_dir.glob("*.md")):
+            print(f"READY: {f}")
+            return 0
 
     # 5. Pending-Review gate
     survivors_pr: list[tuple[Path, dict[str, str]]] = []

@@ -73,8 +73,9 @@ Only the human moves tasks to `done/`. The bot never does.
 3. **Frontmatter parse.** Files without `---`-delimited frontmatter are
    warned to stderr and dropped. Task folders are auto-created for projects
    that don't have them yet.
-4. **Global in-progress gate.** If *any* project has a task in
-   `TASKS/<name>/in-progress/`, the picker skips — work is already underway.
+4. **In-progress gate.** If *any* project has a task in
+   `TASKS/<name>/in-progress/`, that project is returned immediately so the
+   loop can resume the unfinished task.
 5. **Pending-Review gate.** Projects with `max_pending_review` or more files
    in `TASKS/<name>/pending-review/` are dropped. This caps unreviewed work
    per project.
