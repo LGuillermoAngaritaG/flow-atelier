@@ -67,8 +67,10 @@ tasks:
              were already rejected, and use it to understand what approaches have already
              been ruled in or out.
           3. The project name is the stem of the project markdown file. Find its task
-             directory at: {{inputs.projects_dir}}/TASKS/<project-name>/to-do/
-          4. If to-do/ has at least one .md file, pick the top one. This is the task to work on.
+             directory at: {{inputs.projects_dir}}/TASKS/<project-name>/
+          4. If in-progress/ has a .md file, resume it — skip to step 6 to finish that
+             task before picking new work.
+          5. If to-do/ has at least one .md file, pick the top one. This is the task to work on.
              If to-do/ is empty: review the project against its `# Goal` and `# Decisions
              Log`, propose one concrete next step, and create a new task .md file there
              with only a description:

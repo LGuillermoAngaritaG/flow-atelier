@@ -173,7 +173,17 @@ def main() -> int:
             (project_tasks / sub).mkdir(parents=True, exist_ok=True)
         parsed.append((f, fm))
 
-    # 4. Pending-Review gate
+    # 4. Global in-progress gate
+    global_ip = sum(
+        len(list((tasks_dir / f.stem / "in-progress").glob("*.md")))
+        for f, _fm in parsed
+        if (tasks_dir / f.stem / "in-progress").is_dir()
+    )
+    if global_ip > 0:
+        print(f"SKIP: {global_ip} task(s) still in-progress globally")
+        return 0
+
+    # 5. Pending-Review gate
     survivors_pr: list[tuple[Path, dict[str, str]]] = []
     pr_filtered = 0
     for f, fm in parsed:
@@ -184,7 +194,7 @@ def main() -> int:
             continue
         survivors_pr.append((f, fm))
 
-    # 5. Idle gate
+    # 6. Idle gate
     now = time.time()
     idle_cutoff_secs = args.idle_hours * 3600.0
     survivors_idle: list[tuple[Path, dict[str, str], float]] = []

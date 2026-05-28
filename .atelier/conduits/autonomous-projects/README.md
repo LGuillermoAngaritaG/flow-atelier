@@ -64,7 +64,7 @@ Only the human moves tasks to `done/`. The bot never does.
 
 ## How the pick works
 
-`picker.py` runs five gates in order:
+`picker.py` runs six gates in order:
 
 1. **Claude usage gate.** Reads `~/.claude/rate-limit-cache.json` (written by
    the statusline hook) and skips if usage is `>= max_usage_pct`.
@@ -73,16 +73,19 @@ Only the human moves tasks to `done/`. The bot never does.
 3. **Frontmatter parse.** Files without `---`-delimited frontmatter are
    warned to stderr and dropped. Task folders are auto-created for projects
    that don't have them yet.
-4. **Pending-Review gate.** Projects with `max_pending_review` or more files
-   in `TASKS/<name>/pending-review/` are dropped. This caps unreviewed work.
-5. **Idle gate.** `last_touched = max(git_last_commit,
+4. **Global in-progress gate.** If *any* project has a task in
+   `TASKS/<name>/in-progress/`, the picker skips — work is already underway.
+5. **Pending-Review gate.** Projects with `max_pending_review` or more files
+   in `TASKS/<name>/pending-review/` are dropped. This caps unreviewed work
+   per project.
+6. **Idle gate.** `last_touched = max(git_last_commit,
    max_mtime_under(location))`. Projects touched in the last `idle_hours`
    are dropped. (`use_git: true` enables the git half; otherwise only mtime
    is considered.)
 
 Survivors are sorted by `priority` ascending. On ties, the project markdown
-file with the **oldest mtime** wins — the one whose task list has been
-untouched the longest.
+file with the **oldest mtime** wins — the one whose project file
+has been modified the longest ago.
 
 Stdout is always one line:
 - `READY: /abs/path/to/winner.md` — the worker task runs.

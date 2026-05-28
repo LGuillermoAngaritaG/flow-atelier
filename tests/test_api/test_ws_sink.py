@@ -4,6 +4,7 @@ from __future__ import annotations
 from app.modules.engine import _current_task_ctx
 from app.schemas.log import IntermediateStep, StepKind
 from app.services.api.ws_sink import WsPromptSink
+from app.services.executor.prompt_sink import PermissionOption
 
 
 async def test_display_step_sends_step_envelope() -> None:
@@ -50,8 +51,6 @@ async def test_display_step_reads_current_task_from_contextvar() -> None:
 
 async def test_request_permission_auto_approves() -> None:
     """request_permission should auto-approve with the first option."""
-    from app.services.executor.prompt_sink import PermissionOption
-
     sink = WsPromptSink(broker=None, flow_id="f1")  # type: ignore[arg-type]
     options = [
         PermissionOption(id="allow", label="Allow"),
