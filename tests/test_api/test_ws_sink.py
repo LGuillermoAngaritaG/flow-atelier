@@ -18,11 +18,14 @@ async def test_display_step_sends_step_envelope() -> None:
     broker = FakeBroker()
     sink = WsPromptSink(broker=broker, flow_id="flow-123")  # type: ignore[arg-type]
 
-    _current_task_ctx.set("my-task")
-    step = IntermediateStep(kind=StepKind.thinking, text="analyzing input")
-    await sink.display_step(step)
+    token = _current_task_ctx.set("my-task")
+    try:
+        step = IntermediateStep(kind=StepKind.thinking, text="analyzing input")
+        await sink.display_step(step)
 
-    assert len(sent) == 1
+        assert len(sent) == 1
+    finally:
+        _current_task_ctx.reset(token)
     msg = sent[0]
     assert msg["type"] == "step"
     assert msg["flow_id"] == "flow-123"
@@ -42,11 +45,14 @@ async def test_display_step_reads_current_task_from_contextvar() -> None:
     broker = FakeBroker()
     sink = WsPromptSink(broker=broker, flow_id="flow-456")  # type: ignore[arg-type]
 
-    _current_task_ctx.set("other-task")
-    step = IntermediateStep(kind=StepKind.tool_call, tool_name="Read")
-    await sink.display_step(step)
+    token = _current_task_ctx.set("other-task")
+    try:
+        step = IntermediateStep(kind=StepKind.tool_call, tool_name="Read")
+        await sink.display_step(step)
 
-    assert sent[0]["task"] == "other-task"
+        assert sent[0]["task"] == "other-task"
+    finally:
+        _current_task_ctx.reset(token)
 
 
 async def test_request_permission_auto_approves() -> None:
@@ -56,5 +62,5 @@ async def test_request_permission_auto_approves() -> None:
         PermissionOption(id="allow", label="Allow"),
         PermissionOption(id="deny", label="Deny"),
     ]
-    result = await sink.request_permission("summary", options)
-    assert result == "allow"
+    with pytest.raises(PermissionError, match="does not support interactive permission"):
+        await sink.request_permission("summary", options)

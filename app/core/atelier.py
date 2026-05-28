@@ -356,4 +356,3 @@ class Atelier:
             logger.warning("open_conduit_path failed: %s", e)
             return False
         return True
-        return target

@@ -245,7 +245,7 @@ tasks:
     assert p.tasks["bad"].status.value == "failed"
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="uses Unix tr/wc管道")
+@pytest.mark.skipif(sys.platform == "win32", reason="uses Unix tr/wc pipes")
 async def test_until_early_exit_with_real_bash(workdir):
     """Verify `until:` exits the repeat loop when the predicate matches.
 

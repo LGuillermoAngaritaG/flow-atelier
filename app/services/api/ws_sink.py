@@ -56,13 +56,16 @@ class WsPromptSink:
     async def request_permission(
         self, summary: str, options: list[PermissionOption]
     ) -> str:
-        """Auto-approve with the first available option.
+        """Deny all permission requests until interactive approval is implemented.
 
         :param summary: permission description (unused).
-        :param options: available permission choices.
-        :returns: the ``id`` of the first option.
+        :param options: available permission choices (unused).
+        :raises PermissionError: always, as interactive approval is not yet supported.
         """
-        return options[0].id if options else ""
+        raise PermissionError(
+            "WS sink does not support interactive permission approval: "
+            f"denied request '{summary}'"
+        )
 
     async def display_step(self, step: IntermediateStep) -> None:
         """Forward an intermediate step as a ``step`` envelope over WebSocket.

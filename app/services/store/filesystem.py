@@ -20,6 +20,7 @@ import json
 import os
 import shutil
 import time
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -181,7 +182,7 @@ class FilesystemStore(StoreBase):
         conduit_dir.mkdir(parents=True, exist_ok=True)
         payload = conduit.model_dump(mode="json", by_alias=True, exclude_none=True)
         path = self._conduit_yaml(conduit.name)
-        tmp = path.with_suffix(".yaml.tmp")
+        tmp = path.with_suffix(f".yaml.tmp.{uuid.uuid4().hex}")
         tmp.write_text(yaml.safe_dump(payload, sort_keys=False))
         _atomic_replace(tmp, path)
 
@@ -200,7 +201,7 @@ class FilesystemStore(StoreBase):
         conduit_dir.mkdir(parents=True, exist_ok=True)
         path = conduit_dir / "conduit.yaml"
         payload = conduit.model_dump(mode="json", by_alias=True, exclude_none=True)
-        tmp = path.with_suffix(".yaml.tmp")
+        tmp = path.with_suffix(f".yaml.tmp.{uuid.uuid4().hex}")
         tmp.write_text(yaml.safe_dump(payload, sort_keys=False))
         _atomic_replace(tmp, path)
 
@@ -383,7 +384,7 @@ class FilesystemStore(StoreBase):
             that did not complete)
         """
         path = self._flow_dir(flow_id) / "outputs.yaml"
-        tmp = path.with_suffix(".yaml.tmp")
+        tmp = path.with_suffix(f".yaml.tmp.{uuid.uuid4().hex}")
         tmp.write_text(yaml.safe_dump(outputs, sort_keys=False))
         _atomic_replace(tmp, path)
 
