@@ -1,6 +1,8 @@
 """Test WsPromptSink sends step envelopes via the broker."""
 from __future__ import annotations
 
+import pytest
+
 from app.modules.engine import _current_task_ctx
 from app.schemas.log import IntermediateStep, StepKind
 from app.services.api.ws_sink import WsPromptSink
@@ -55,12 +57,12 @@ async def test_display_step_reads_current_task_from_contextvar() -> None:
         _current_task_ctx.reset(token)
 
 
-async def test_request_permission_auto_approves() -> None:
-    """request_permission should auto-approve with the first option."""
+async def test_request_permission_denies_all_requests() -> None:
+    """request_permission should deny all requests with a PermissionError."""
     sink = WsPromptSink(broker=None, flow_id="f1")  # type: ignore[arg-type]
     options = [
         PermissionOption(id="allow", label="Allow"),
         PermissionOption(id="deny", label="Deny"),
     ]
-    result = await sink.request_permission("summary", options)
-    assert result == "allow"
+    with pytest.raises(PermissionError, match="does not support interactive permission"):
+        await sink.request_permission("summary", options)
