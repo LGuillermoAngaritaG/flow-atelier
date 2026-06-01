@@ -63,3 +63,25 @@ def test_resolve_unknown_expression():
 def test_resolve_non_template_string_unchanged():
     """Verify resolve() returns plain strings unchanged."""
     assert resolve("plain text", {}, {}) == "plain text"
+
+
+def test_resolve_loop_previous_empty_on_first_iteration():
+    """Verify {{loop.previous}} is empty when no iterations have run."""
+    assert resolve("p=[{{loop.previous}}]", {}, {}) == "p=[]"
+
+
+def test_resolve_loop_previous_returns_last_output():
+    """Verify {{loop.previous}} resolves to the most recent iteration output."""
+    out = resolve("p={{loop.previous}}", {}, {}, loop_history=["a", "b"])
+    assert out == "p=b"
+
+
+def test_resolve_loop_history_empty_on_first_iteration():
+    """Verify {{loop.history}} is empty when no iterations have run."""
+    assert resolve("h=[{{loop.history}}]", {}, {}) == "h=[]"
+
+
+def test_resolve_loop_history_numbers_iterations():
+    """Verify {{loop.history}} renders numbered, separated iteration blocks."""
+    out = resolve("{{loop.history}}", {}, {}, loop_history=["a", "b"])
+    assert out == "--- iteration 1 ---\na\n\n--- iteration 2 ---\nb"

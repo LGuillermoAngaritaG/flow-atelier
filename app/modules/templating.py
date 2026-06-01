@@ -1,12 +1,15 @@
 """Template resolution for task prompts and inputs.
 
-Supports two forms:
+Supports four forms:
     {{inputs.<name>}}           — replaced with conduit/hitl input value
     {{<task_name>.output}}      — replaced with upstream task's output
+    {{loop.previous}}           — this task's previous-iteration output
+    {{loop.history}}            — all prior iterations of this task, numbered
 
 Rules:
     - Missing `inputs.x`              -> TemplateError (immediate failure)
     - Reference to task not in outputs (or marked skipped/failed) -> SkipSignal
+    - `loop.*` resolves to "" before the first iteration completes
 """
 from __future__ import annotations
 
@@ -14,6 +17,17 @@ import re
 from typing import Any
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
+
+
+def _format_history(history: list[str]) -> str:
+    """Render prior loop iterations as numbered, separated blocks.
+
+    :param history: outputs of completed iterations, oldest first.
+    :returns: numbered history string, or "" when no iterations have run.
+    """
+    return "\n\n".join(
+        f"--- iteration {i} ---\n{out}" for i, out in enumerate(history, 1)
+    )
 
 
 class TemplateError(ValueError):
@@ -40,6 +54,7 @@ def resolve(
     inputs: dict[str, Any],
     task_outputs: dict[str, str],
     unavailable_tasks: set[str] | None = None,
+    loop_history: list[str] | None = None,
 ) -> str:
     """Resolve `{{...}}` expressions in ``template``.
 
@@ -48,10 +63,13 @@ def resolve(
     :param task_outputs: mapping of task name -> completed output string
     :param unavailable_tasks: names of tasks whose outputs cannot be used
         (skipped / failed / cancelled)
+    :param loop_history: this task's prior-iteration outputs, oldest first,
+        backing ``{{loop.previous}}`` and ``{{loop.history}}``
     :raises TemplateError: missing input or unknown identifier
     :raises SkipSignal: reference to a skipped/failed task output
     """
     unavailable = unavailable_tasks or set()
+    history = loop_history or []
 
     def _sub(match: re.Match[str]) -> str:
         """Replace a single ``{{...}}`` occurrence with its resolved value.
@@ -65,6 +83,10 @@ def resolve(
             if key not in inputs:
                 raise TemplateError(f"missing input: {key!r}")
             return str(inputs[key])
+        if expr == "loop.previous":
+            return history[-1] if history else ""
+        if expr == "loop.history":
+            return _format_history(history)
         if expr.endswith(".output"):
             task = expr[: -len(".output")]
             if task in unavailable:

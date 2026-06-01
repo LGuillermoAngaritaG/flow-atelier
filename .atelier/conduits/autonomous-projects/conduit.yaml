@@ -55,44 +55,44 @@ tasks:
           The picker emitted:
           {{pick_project.output}}
 
+          Reviewer feedback from your previous attempt this run (empty on the
+          first iteration):
+          {{loop.previous}}
+
+          If that feedback is a NOT_DONE verdict, treat its REASON as the
+          priority signal — address what the reviewer flagged before picking
+          unrelated work.
+
           The project file path is on the line beginning with "READY: ".
           The projects root directory is: {{inputs.projects_dir}}
 
           Do the following:
           1. Read the project markdown file (path from the READY line). Parse the YAML
-             frontmatter (priority, location, use_git) and the `# Goal` section.
-          2. Read the `# Decisions Log` section carefully. This is the project's memory —
-             it records past decisions, findings, and ideas that were discarded. You MUST
-             respect it: do not re-attempt things already tried, do not suggest ideas that
-             were already rejected, and use it to understand what approaches have already
-             been ruled in or out.
-          3. The project name is the stem of the project markdown file. Find its task
+             frontmatter (priority, location, use_git) and the `# Goal` section. Treat
+             this file as READ-ONLY: it is owned by the human. Never edit it.
+          2. The project name is the stem of the project markdown file. Find its task
              directory at: {{inputs.projects_dir}}/TASKS/<project-name>/
-          4. If in-progress/ has a .md file, resume it — skip to step 6 to finish that
+          3. For memory of what has already happened, skim the task files in `done/` and
+             `pending-review/` — their `# Summary of what was done` sections record past
+             work. Use them to avoid repeating work already completed or awaiting review.
+          4. If in-progress/ has a .md file, resume it — skip to step 7 to finish that
              task before picking new work.
           5. If to-do/ has at least one .md file, pick the top one. This is the task to work on.
-             If to-do/ is empty: review the project against its `# Goal` and `# Decisions
-             Log`, propose one concrete next step, and create a new task .md file there
-             with only a description:
+             If to-do/ is empty: review the project against its `# Goal` and the task
+             history from step 3, propose one concrete next step, and create a new task
+             .md file there with only a description:
                ```
                # Description
                <what to do>
                ```
              Name the file with a descriptive slug (e.g. `setup-ci-pipeline.md`).
              This new file is now the task to work on.
-          5. Move that file from to-do/ to in-progress/.
-          6. Read the task file. The `# Description` section tells you what to do.
-          7. cd into the project's `location` directory from the frontmatter.
-          8. Do the work. Respect `use_git`: if true, commit changes with a clear message;
+          6. Move that file from to-do/ to in-progress/.
+          7. Read the task file. The `# Description` section tells you what to do.
+          8. cd into the project's `location` directory from the frontmatter.
+          9. Do the work. Respect `use_git`: if true, commit changes with a clear message;
              if false, just edit files.
-          9. When finished, update the task file: fill in `# Summary of what was done` and
-             `# Location` (local path or PR URL). Then move the file from in-progress/ to
-             pending-review/. Never move tasks to done/ — that is reserved for the human
-             reviewer.
-          10. Append to the project markdown's `# Decisions Log` section. Log:
-              - Decisions you made and why (e.g. "Chose library X over Y because...")
-              - Ideas or approaches you discarded and why
-              - Things you tried that didn't work out
-              - Key findings about the codebase or project
-              This log prevents future runs from repeating work or re-suggesting rejected
-              ideas. Write concise bullet points — future-you will read this before starting.
+          10. When finished, update the task file: fill in `# Summary of what was done` and
+              `# Location` (local path or PR URL). Then move the file from in-progress/ to
+              pending-review/. Never move tasks to done/ — that is reserved for the human
+              reviewer.

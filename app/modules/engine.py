@@ -357,9 +357,11 @@ class Engine:
                     n for n, s in statuses.items()
                     if s in (TaskStatus.skipped, TaskStatus.failed, TaskStatus.cancelled)
                 }
+                loop_history: list[str] = []
                 try:
                     resolved = resolve(
-                        t.task, runtime_inputs, outputs, unavailable_tasks=unavailable
+                        t.task, runtime_inputs, outputs,
+                        unavailable_tasks=unavailable, loop_history=loop_history,
                     )
                 except SkipSignal as e:
                     mark_skipped(t.name, str(e))
@@ -393,6 +395,7 @@ class Engine:
                     run_nested_conduit=self._make_nested_runner(
                         on_task_event, show_steps=show_steps, working_dir=working_dir
                     ),
+                    loop_history=loop_history,
                 )
 
                 # Pre-parse the loop predicate once per task. Schema enforces
@@ -412,6 +415,12 @@ class Engine:
                 async with semaphore:
                     last_output = ""
                     for iteration in range(1, t.repeat + 1):
+                        if iteration > 1:
+                            resolved = resolve(
+                                t.task, runtime_inputs, outputs,
+                                unavailable_tasks=unavailable,
+                                loop_history=loop_history,
+                            )
                         mark_running(t.name, iteration)
                         started = _now()
                         start_ts = datetime.now(UTC)
@@ -466,6 +475,7 @@ class Engine:
                             if result.last_turn_output is not None
                             else result.output
                         )
+                        loop_history.append(last_output)
                         if loop_predicate is not None:
                             # Conduit tasks evaluate the predicate against the
                             # outputs of every nested sub-task (any-match),
