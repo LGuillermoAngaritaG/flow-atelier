@@ -34,11 +34,12 @@ use_git: true
 What you want done.
 # Description
 Short description of the project.
-# Decisions Log
 ```
 
-`# Decisions Log` is the AI's memory — it records past decisions, discarded
-ideas, and failed attempts so future runs don't repeat them.
+The project file is **owned by the human** — the bot treats it as read-only and
+never edits it. The bot's cross-run memory comes from the task files in
+`done/` and `pending-review/` (their `# Summary of what was done`), not from
+the project file.
 
 ## Task file format
 
@@ -96,12 +97,12 @@ Stdout is always one line:
 
 When a project is picked, the bot:
 
-1. Reads the project file, `# Goal`, and `# Decisions Log`
+1. Reads the project file (`# Goal`) — read-only — and skims past task
+   summaries in `done/` and `pending-review/` for context
 2. Picks the top task from `TASKS/<name>/to-do/` (or proposes a new one if
    the folder is empty)
 3. Moves it to `in-progress/`, does the work, commits if `use_git: true`
 4. Fills in summary and location, moves to `pending-review/`
-5. Appends decisions, discarded ideas, and findings to `# Decisions Log`
 
 ## Files
 

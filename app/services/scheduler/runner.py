@@ -102,6 +102,10 @@ class SchedulerDaemon:
         """Boot the APScheduler, install the reload job, and sync from disk."""
         if self._scheduler is not None:
             return
+        # APScheduler logs every job execution at INFO, including our 30s
+        # reload tick, which buries the actual schedule-fire logs. Quiet its
+        # executor logger so only our own fire logs (and real errors) surface.
+        logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
         self._scheduler = AsyncIOScheduler(timezone=self.default_zone)
         self._scheduler.add_job(
             self.sync,
@@ -257,8 +261,9 @@ class SchedulerDaemon:
             return
         working_dir = self._resolve_working_dir(job)
         logger.info(
-            "firing schedule %s → %s in %s",
+            "RUNNING schedule %s (%s) → conduit '%s' in %s",
             schedule_id,
+            job.schedule.name or schedule_id,
             job.conduit_name,
             working_dir,
         )
@@ -266,8 +271,13 @@ class SchedulerDaemon:
         try:
             await self.executor(job, working_dir)
             succeeded = True
+            logger.info(
+                "DONE schedule %s → conduit '%s'", schedule_id, job.conduit_name
+            )
         except Exception:  # noqa: BLE001 — daemon must survive a single failed fire
-            logger.exception("schedule %s failed", schedule_id)
+            logger.exception(
+                "FAILED schedule %s → conduit '%s'", schedule_id, job.conduit_name
+            )
         finally:
             if job.schedule.mode == "once":
                 self.store.mark_fired(schedule_id)

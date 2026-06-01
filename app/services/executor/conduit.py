@@ -39,7 +39,8 @@ class ConduitExecutor(ExecutorBase):
         for key, raw in task.inputs.items():
             if isinstance(raw, str):
                 child_inputs[key] = resolve(
-                    raw, context.inputs, context.task_outputs
+                    raw, context.inputs, context.task_outputs,
+                    loop_history=context.loop_history,
                 )
             else:
                 child_inputs[key] = raw

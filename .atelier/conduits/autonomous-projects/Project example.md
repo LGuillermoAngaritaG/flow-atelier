@@ -6,5 +6,3 @@ use_git: true/false
 # Goal
 
 # Description
-
-# Decisions Log

@@ -123,6 +123,40 @@ async def test_sub_outputs_includes_failed_iterations():
     assert result.sub_outputs == ["ok", "boom"]
 
 
+async def test_inputs_resolve_loop_previous_from_context_history():
+    """Verify nested-conduit inputs resolve {{loop.previous}} against the
+    loop history threaded in via FlowContext."""
+    captured: dict[str, Any] = {}
+
+    async def run_nested(name: str, inputs: dict[str, Any], parent: str) -> str:
+        """Capture the resolved child inputs, return a stub flow id.
+
+        :param name: nested conduit name.
+        :param inputs: resolved inputs passed to the nested conduit.
+        :param parent: parent flow id.
+        """
+        captured.update(inputs)
+        return "child-flow-id"
+
+    task = TaskDefinition(
+        name="outer",
+        description="d",
+        task="child",
+        tool=ToolType.conduit,
+        depends_on=[],
+        inputs={"task": "got=[{{loop.previous}}]"},
+    )
+    ctx = FlowContext(
+        flow_id="parent-flow-id",
+        store=_FakeStore([], FlowStatus.completed),  # type: ignore[arg-type]
+        inputs={},
+        run_nested_conduit=run_nested,
+        loop_history=["earlier"],
+    )
+    await ConduitExecutor().execute(task, "child", ctx)
+    assert captured["task"] == "got=[earlier]"
+
+
 def test_execution_result_default_sub_outputs_is_empty_list():
     """Verify ExecutionResult.sub_outputs defaults to a fresh empty list."""
     r = ExecutionResult()

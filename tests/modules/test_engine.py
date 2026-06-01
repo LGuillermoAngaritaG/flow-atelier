@@ -1051,3 +1051,66 @@ async def test_engine_falls_back_to_output_when_last_turn_is_none(store):
     flow_id = await engine.run(conduit, {})
     data = yaml.safe_load((store._flow_dir(flow_id) / "outputs.yaml").read_text())
     assert data == {"a": "alpha"}
+
+
+# ---------------------------------------------------------------- loop feedback
+
+
+class RecordingScriptedExecutor(ScriptedExecutor):
+    """Scripted executor that also records each resolved command string."""
+
+    def __init__(self, outputs_per_call: list[str]):
+        """Initialize and prepare a command-capture list.
+
+        :param outputs_per_call: outputs returned, one per call, in order.
+        """
+        super().__init__(outputs_per_call)
+        self.commands: list[str] = []
+
+    async def execute(self, task, resolved_command, context):
+        """Record the resolved command, then defer to the scripted output.
+
+        :param task: task definition being executed.
+        :param resolved_command: command string after template resolution.
+        :param context: flow context provided by the engine.
+        """
+        self.commands.append(resolved_command)
+        return await super().execute(task, resolved_command, context)
+
+
+async def test_loop_previous_feeds_prior_iteration_output(store):
+    """Verify {{loop.previous}} injects the prior iteration's output.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "refine", "description": "d", "task": "prev=[{{loop.previous}}]",
+             "tool": "tool:bash", "depends_on": [], "repeat": 3},
+        ]
+    )
+    fake = RecordingScriptedExecutor(["o1", "o2", "o3"])
+    engine = Engine({"tool:bash": fake}, store)
+    await engine.run(conduit, {})
+    assert fake.commands == ["prev=[]", "prev=[o1]", "prev=[o2]"]
+
+
+async def test_loop_history_accumulates_all_iterations(store):
+    """Verify {{loop.history}} accumulates every prior iteration's output.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "refine", "description": "d", "task": "{{loop.history}}",
+             "tool": "tool:bash", "depends_on": [], "repeat": 3},
+        ]
+    )
+    fake = RecordingScriptedExecutor(["o1", "o2", "o3"])
+    engine = Engine({"tool:bash": fake}, store)
+    await engine.run(conduit, {})
+    assert fake.commands == [
+        "",
+        "--- iteration 1 ---\no1",
+        "--- iteration 1 ---\no1\n\n--- iteration 2 ---\no2",
+    ]

@@ -33,6 +33,11 @@ class FlowContext:
     ``task.interactive`` (which gates raw message-chunk streaming)."""
     run_nested_conduit: Callable[[str, dict[str, Any], str], Awaitable[str]] | None = None
     """Callback: (conduit_name, inputs, parent_flow_id) -> child flow_id."""
+    loop_history: list[str] = field(default_factory=list)
+    """This task's prior-iteration outputs, oldest first. Backs
+    ``{{loop.previous}}`` / ``{{loop.history}}`` when an executor resolves
+    its own templates (e.g. nested-conduit / hitl inputs). Shared by
+    reference with the engine, so it reflects iterations completed so far."""
 
 
 class ExecutorBase(ABC):
