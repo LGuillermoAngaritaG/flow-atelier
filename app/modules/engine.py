@@ -168,6 +168,8 @@ class Engine:
         parsed_deps = _validate_dag(conduit)
 
         flow_id = self.store.create_flow(conduit.name, inputs, parent_flow_id)
+        if working_dir:
+            self.store.append_input(flow_id, "run_path", str(working_dir))
         if on_flow_started is not None:
             try:
                 on_flow_started(flow_id)

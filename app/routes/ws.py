@@ -169,6 +169,23 @@ async def _spawn_run(
         # Engine fires task events synchronously; schedule the async work.
         asyncio.create_task(_on_task_event(event))
 
+    def _on_task_starting(name: str, tool: str) -> None:
+        """Emit a step_status=running envelope when a task starts.
+
+        :param name: task name entering the running state.
+        :param tool: tool kind string for the task.
+        """
+        asyncio.create_task(
+            broker.send(
+                {
+                    "type": "step_status",
+                    "flow_id": message.flow_id,
+                    "step": name,
+                    "status": "running",
+                }
+            )
+        )
+
     async def _run_and_report() -> None:
         """Drive one flow end-to-end and broadcast its lifecycle envelopes."""
         try:
@@ -191,6 +208,7 @@ async def _spawn_run(
                     conduit,
                     dict(message.inputs),
                     on_task_event=_on_task_event_sync,
+                    on_task_starting=_on_task_starting,
                     working_dir=Path(message.run_path) if message.run_path else None,
                 )
             except asyncio.CancelledError:

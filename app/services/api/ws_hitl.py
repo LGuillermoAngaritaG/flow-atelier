@@ -61,6 +61,7 @@ class WsHitlExecutor(ExecutorBase):
             {
                 "type": "hitl_request",
                 "flow_id": self.flow_id,
+                "task": task.name,
                 "inputs": inputs_descriptor,
             }
         )

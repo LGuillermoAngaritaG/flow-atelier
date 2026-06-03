@@ -34,4 +34,4 @@ async def get_flow_logs(
         logs = atelier.get_flow_logs(flow_id)
     except FileNotFoundError as e:
         return JSONResponse(status_code=404, content={"error": str(e)})
-    return [entry.model_dump(mode="json") for entry in logs]
+    return {"run_path": atelier.store.read_input(flow_id).get("run_path"), "logs": [entry.model_dump(mode="json") for entry in logs]}
