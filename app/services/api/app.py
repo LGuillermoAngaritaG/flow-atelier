@@ -7,16 +7,15 @@ facade; routes do at most: validate → call facade → serialize.
 from __future__ import annotations
 
 from collections.abc import Iterable
-
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.core.atelier import Atelier
 from app.services.api.base import ApiServerBase
-from fastapi.staticfiles import StaticFiles
 
 _STATIC_DIR = Path(__file__).resolve().parents[3] / "dist"
 
