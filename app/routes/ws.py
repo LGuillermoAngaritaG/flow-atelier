@@ -1,10 +1,11 @@
 """``/ws/run-conduit`` WebSocket route."""
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, WebSocket

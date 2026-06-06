@@ -19,7 +19,11 @@ from app.schemas.log import TaskEvent
 
 @app.command(
     "run",
-    help="Start a new flow for the named conduit. Use --input key=value to pass inputs. Use --resume <flow_id> to pick up a failed run.",
+    help=(
+        "Start a new flow for the named conduit. "
+        "Use --input key=value to pass inputs. "
+        "Use --resume <flow_id> to pick up a failed run."
+    ),
 )
 def run_cmd(
     conduit_name: str = typer.Argument(

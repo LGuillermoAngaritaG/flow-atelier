@@ -4,7 +4,6 @@ from __future__ import annotations
 import pytest
 
 from app.schemas.flow import new_flow_id
-from app.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
 from app.services.store.filesystem import FilesystemStore
 
 

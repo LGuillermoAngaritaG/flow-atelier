@@ -1,12 +1,13 @@
 """Tests for Atelier.resume_flow facade method and get_flow_logs child merging."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.core.atelier import Atelier
 from app.core.settings import AtelierSettings
 from app.schemas.api import RunTaskInput
-from app.schemas.progress import FlowStatus
 
 
 @pytest.fixture
