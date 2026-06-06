@@ -22,7 +22,6 @@ class RunMessage(_WsBase):
     """Client tells the server to start a flow."""
 
     type: Literal["run"] = "run"
-    flow_id: str
     conduit_name: str
     inputs: dict[str, Any] = Field(default_factory=dict)
     run_path: str
@@ -43,8 +42,15 @@ class CancelMessage(_WsBase):
     flow_id: str
 
 
+class ResumeMessage(_WsBase):
+    """Client tells the server to resume a failed flow."""
+
+    type: Literal["resume"] = "resume"
+    flow_id: str
+
+
 ClientMessage = Annotated[
-    RunMessage | HitlAnswerMessage | CancelMessage,
+    RunMessage | HitlAnswerMessage | CancelMessage | ResumeMessage,
     Field(discriminator="type"),
 ]
 
@@ -57,6 +63,9 @@ class StartedMessage(_WsBase):
 
     type: Literal["started"] = "started"
     flow_id: str
+    parent_flow_id: str | None = None
+    parent_task: str | None = None
+    conduit_name: str = ""
 
 
 class LogMessage(_WsBase):

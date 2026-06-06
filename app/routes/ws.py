@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, WebSocket
@@ -11,12 +12,15 @@ from pydantic import TypeAdapter, ValidationError
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from app.core.atelier import Atelier
+from app.modules.engine import _current_flow_ctx, _current_task_ctx
+from app.schemas.flow import new_flow_id, parse_flow_id
 from app.schemas.log import TaskEvent
-from app.schemas.progress import TaskStatus
+from app.schemas.progress import FlowStatus, TaskStatus
 from app.schemas.ws import (
     CancelMessage,
     ClientMessage,
     HitlAnswerMessage,
+    ResumeMessage,
     RunMessage,
 )
 from app.services.api.base import get_atelier
@@ -88,6 +92,8 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
                 continue
             if isinstance(message, RunMessage):
                 await _spawn_run(base_atelier, broker, message)
+            elif isinstance(message, ResumeMessage):
+                await _spawn_resume(base_atelier, broker, message)
             elif isinstance(message, HitlAnswerMessage):
                 try:
                     await broker.deliver_hitl_answer(
@@ -113,6 +119,214 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
             pass
 
 
+# ── Shared WS helpers ─────────────────────────────────────────────────────
+
+
+def _wire_atelier(
+    base_atelier: Atelier,
+    broker: WebSocketBroker,
+    flow_id: str,
+) -> tuple[Atelier, Callable[[TaskEvent], None], Callable[[str, str], None], Callable[[str], None]]:
+    """Create a per-flow Atelier wired for WebSocket broadcasting.
+
+    :param base_atelier: connection-scoped Atelier used as template.
+    :param broker: WebSocketBroker for fan-out.
+    :param flow_id: flow identifier for this run.
+    :returns: the atelier, task-event callback, task-starting callback,
+        and flow-started callback.
+    """
+    atelier = Atelier(
+        base_dir=base_atelier.settings.global_atelier_dir,
+        prompt_sink=WsPromptSink(broker, flow_id),
+    )
+    broker.register_flow(flow_id)
+    atelier.executors["tool:hitl"] = WsHitlExecutor(
+        broker=broker, flow_id=flow_id
+    )
+
+    async def _on_task_event(event: TaskEvent) -> None:
+        """Emit per-step and step-status envelopes for a task event.
+
+        Uses ``event.flow_id`` so nested conduit events carry the child's
+        flow identity instead of the parent's.
+
+        :param event: task event produced by the engine.
+        """
+        fid = event.flow_id or flow_id
+        if not event.tool.startswith("harness:"):
+            for step in event.steps:
+                await broker.send(
+                    {
+                        "type": "step",
+                        "flow_id": fid,
+                        "task": event.task,
+                        "step": step.model_dump(mode="json"),
+                    }
+                )
+        await broker.send(
+            {
+                "type": "step_status",
+                "flow_id": fid,
+                "step": event.task,
+                "status": _step_status_for(event),
+            }
+        )
+
+    def on_task_event_sync(event: TaskEvent) -> None:
+        """Schedule the async task-event handler from sync engine code.
+
+        :param event: task event produced by the engine.
+        """
+        asyncio.create_task(_on_task_event(event))
+
+    def on_task_starting(name: str, tool: str) -> None:
+        """Emit a step_status=running envelope when a task starts.
+
+        Reads ``_current_flow_ctx`` so nested conduit tasks are attributed
+        to the child flow.
+
+        :param name: task name entering the running state.
+        :param tool: tool kind string for the task.
+        """
+        fid = _current_flow_ctx.get(flow_id)
+        asyncio.create_task(
+            broker.send(
+                {
+                    "type": "step_status",
+                    "flow_id": fid,
+                    "step": name,
+                    "status": "running",
+                }
+            )
+        )
+
+    def on_flow_started(child_flow_id: str) -> None:
+        """Send a ``started`` envelope for a (possibly child) flow.
+
+        For child flows the message includes ``parent_flow_id`` and
+        ``parent_task`` so the frontend can nest the display.
+
+        :param child_flow_id: the flow id of the flow that just started.
+        """
+        if child_flow_id != flow_id:
+            broker.register_flow(child_flow_id)
+        cname = ""
+        try:
+            cname, _, _ = parse_flow_id(child_flow_id)
+        except ValueError:
+            pass
+        parent_task = _current_task_ctx.get("") or None
+        asyncio.create_task(
+            broker.send(
+                {
+                    "type": "started",
+                    "flow_id": child_flow_id,
+                    "parent_flow_id": flow_id if child_flow_id != flow_id else None,
+                    "parent_task": parent_task,
+                    "conduit_name": cname,
+                }
+            )
+        )
+
+    return atelier, on_task_event_sync, on_task_starting, on_flow_started
+
+
+async def _send_children_lifecycle(
+    atelier: Atelier,
+    broker: WebSocketBroker,
+    flow_id: str,
+) -> None:
+    """Recursively send logs + lifecycle events for child flows (deepest first).
+
+    Gracefully handles flows that were never persisted to disk (e.g. when
+    the conduit was not found).
+
+    :param atelier: per-flow Atelier instance.
+    :param broker: WebSocketBroker for fan-out.
+    :param flow_id: parent flow whose children to process.
+    """
+    try:
+        child_ids = atelier.store.list_child_flows(flow_id)
+    except FileNotFoundError:
+        return
+    for child_id in child_ids:
+        await _send_children_lifecycle(atelier, broker, child_id)
+        for entry in atelier.store.read_logs(child_id):
+            await broker.send(
+                {
+                    "type": "log",
+                    "flow_id": child_id,
+                    "entry": entry.model_dump(mode="json"),
+                }
+            )
+        try:
+            progress = atelier.store.read_progress(child_id)
+            if progress.status == FlowStatus.completed:
+                await broker.send({"type": "flow_complete", "flow_id": child_id})
+            else:
+                await broker.send(
+                    {"type": "flow_failed", "flow_id": child_id, "error": "child flow failed"}
+                )
+        except (FileNotFoundError, ValueError):
+            await broker.send(
+                {"type": "flow_failed", "flow_id": child_id, "error": "status unknown"}
+            )
+        broker.unregister_flow(child_id)
+
+
+async def _drive_lifecycle(
+    atelier: Atelier,
+    broker: WebSocketBroker,
+    flow_id: str,
+    coro: Awaitable[None],
+) -> None:
+    """Drive a flow to completion and broadcast lifecycle envelopes.
+
+    Sends ``started``, awaits *coro*, then streams logs and sends
+    ``flow_complete``.  On cancellation or error sends ``flow_failed``.
+    Child flow logs and lifecycle are sent before the parent's own.
+    Unregisters the flow from the broker on completion.
+
+    :param atelier: per-flow Atelier instance.
+    :param broker: WebSocketBroker for fan-out.
+    :param flow_id: flow identifier for this run.
+    :param coro: the engine run or resume coroutine.
+    """
+    try:
+        await broker.send({"type": "started", "flow_id": flow_id})
+        try:
+            await coro
+        except asyncio.CancelledError:
+            await _send_children_lifecycle(atelier, broker, flow_id)
+            await broker.send(
+                {"type": "flow_failed", "flow_id": flow_id, "error": "cancelled"}
+            )
+            raise
+        except Exception as e:  # noqa: BLE001
+            await _send_children_lifecycle(atelier, broker, flow_id)
+            await broker.send(
+                {"type": "flow_failed", "flow_id": flow_id, "error": str(e)}
+            )
+            return
+
+        await _send_children_lifecycle(atelier, broker, flow_id)
+
+        for entry in atelier.store.read_logs(flow_id):
+            await broker.send(
+                {
+                    "type": "log",
+                    "flow_id": flow_id,
+                    "entry": entry.model_dump(mode="json"),
+                }
+            )
+        await broker.send({"type": "flow_complete", "flow_id": flow_id})
+    finally:
+        broker.unregister_flow(flow_id)
+
+
+# ── Spawn entry-points ────────────────────────────────────────────────────
+
+
 async def _spawn_run(
     base_atelier: Atelier,
     broker: WebSocketBroker,
@@ -124,125 +338,46 @@ async def _spawn_run(
     :param broker: :class:`WebSocketBroker` that fans envelopes out.
     :param message: :class:`RunMessage` describing what to run.
     """
-    # Per-connection Atelier instance keeps executor swaps from leaking
-    # across sockets (SPEC §10 / risk table).
-    atelier = Atelier(
-        base_dir=base_atelier.settings.global_atelier_dir,
-        prompt_sink=WsPromptSink(broker, message.flow_id),
-    )
-    broker.register_flow(message.flow_id)
-    atelier.executors["tool:hitl"] = WsHitlExecutor(
-        broker=broker, flow_id=message.flow_id
-    )
+    flow_id = new_flow_id(message.conduit_name)
+    atelier, on_event, on_starting, on_started = _wire_atelier(base_atelier, broker, flow_id)
 
-    async def _on_task_event(event: TaskEvent) -> None:
-        """Emit per-step and step-status envelopes for a task event.
-
-        :param event: task event produced by the engine.
-        """
-        # Harness tasks stream steps live via WsPromptSink.display_step;
-        # only emit batched steps for non-harness tools (bash, hitl, conduit).
-        if not event.tool.startswith("harness:"):
-            for step in event.steps:
-                await broker.send(
-                    {
-                        "type": "step",
-                        "flow_id": message.flow_id,
-                        "task": event.task,
-                        "step": step.model_dump(mode="json"),
-                    }
-                )
-        await broker.send(
-            {
-                "type": "step_status",
-                "flow_id": message.flow_id,
-                "step": event.task,
-                "status": _step_status_for(event),
-            }
+    async def _run() -> None:
+        conduit = atelier.store.read_conduit(message.conduit_name)
+        await atelier.engine.run(
+            conduit,
+            dict(message.inputs),
+            on_task_event=on_event,
+            on_task_starting=on_starting,
+            on_flow_started=on_started,
+            working_dir=Path(message.run_path) if message.run_path else None,
+            flow_id=flow_id,
         )
 
-    def _on_task_event_sync(event: TaskEvent) -> None:
-        """Schedule the async task-event handler from sync engine code.
+    task = asyncio.create_task(_drive_lifecycle(atelier, broker, flow_id, _run()))
+    broker.track_run(flow_id, task)
 
-        :param event: task event produced by the engine.
-        """
-        # Engine fires task events synchronously; schedule the async work.
-        asyncio.create_task(_on_task_event(event))
 
-    def _on_task_starting(name: str, tool: str) -> None:
-        """Emit a step_status=running envelope when a task starts.
+async def _spawn_resume(
+    base_atelier: Atelier,
+    broker: WebSocketBroker,
+    message: ResumeMessage,
+) -> None:
+    """Wire a per-flow Atelier and resume a failed run.
 
-        :param name: task name entering the running state.
-        :param tool: tool kind string for the task.
-        """
-        asyncio.create_task(
-            broker.send(
-                {
-                    "type": "step_status",
-                    "flow_id": message.flow_id,
-                    "step": name,
-                    "status": "running",
-                }
-            )
+    :param base_atelier: connection-scoped :class:`Atelier` used as template.
+    :param broker: :class:`WebSocketBroker` that fans envelopes out.
+    :param message: :class:`ResumeMessage` with the flow id to resume.
+    """
+    flow_id = message.flow_id
+    atelier, on_event, on_starting, on_started = _wire_atelier(base_atelier, broker, flow_id)
+
+    async def _resume() -> None:
+        await atelier.resume_flow(
+            flow_id,
+            on_task_event=on_event,
+            on_task_starting=on_starting,
+            on_flow_started=on_started,
         )
 
-    async def _run_and_report() -> None:
-        """Drive one flow end-to-end and broadcast its lifecycle envelopes."""
-        try:
-            await broker.send(
-                {"type": "started", "flow_id": message.flow_id}
-            )
-            try:
-                conduit = atelier.store.read_conduit(message.conduit_name)
-            except FileNotFoundError as e:
-                await broker.send(
-                    {
-                        "type": "flow_failed",
-                        "flow_id": message.flow_id,
-                        "error": str(e),
-                    }
-                )
-                return
-            try:
-                flow_id = await atelier.engine.run(
-                    conduit,
-                    dict(message.inputs),
-                    on_task_event=_on_task_event_sync,
-                    on_task_starting=_on_task_starting,
-                    working_dir=Path(message.run_path) if message.run_path else None,
-                )
-            except asyncio.CancelledError:
-                await broker.send(
-                    {
-                        "type": "flow_failed",
-                        "flow_id": message.flow_id,
-                        "error": "cancelled",
-                    }
-                )
-                raise
-            except Exception as e:  # noqa: BLE001
-                await broker.send(
-                    {
-                        "type": "flow_failed",
-                        "flow_id": message.flow_id,
-                        "error": str(e),
-                    }
-                )
-                return
-
-            for entry in atelier.store.read_logs(flow_id):
-                await broker.send(
-                    {
-                        "type": "log",
-                        "flow_id": message.flow_id,
-                        "entry": entry.model_dump(mode="json"),
-                    }
-                )
-            await broker.send(
-                {"type": "flow_complete", "flow_id": message.flow_id}
-            )
-        finally:
-            broker.unregister_flow(message.flow_id)
-
-    task = asyncio.create_task(_run_and_report())
-    broker.track_run(message.flow_id, task)
+    task = asyncio.create_task(_drive_lifecycle(atelier, broker, flow_id, _resume()))
+    broker.track_run(flow_id, task)
