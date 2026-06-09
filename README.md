@@ -257,20 +257,6 @@ so the dashboard treats them identically. The `step_status` envelope
 now also fires with `"running"` when a task begins execution, giving
 the frontend real-time visibility into in-progress work.
 
-The flow logs endpoint (`GET /flows/:id/logs`) now returns a richer
-shape:
-
-```json
-{
-  "run_path": "/abs/path/to/working/dir",
-  "logs": [...],
-  "children": ["child_flow_id_1", "child_flow_id_2"]
-}
-```
-
-Child flow logs are included and tagged with `extra.flow_id` so callers
-can distinguish their origin.
-
 ## Scheduler
 
 `atelier scheduler` runs conduits on a wall-clock schedule. Each
