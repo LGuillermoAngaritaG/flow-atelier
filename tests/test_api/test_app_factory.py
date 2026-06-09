@@ -20,7 +20,7 @@ def atelier(tmp_path, monkeypatch):
 
 
 async def test_create_app_returns_fastapi_with_liveness(atelier):
-    """Verify create_app returns a FastAPI exposing the liveness endpoint.
+    """Verify create_app returns a FastAPI instance that responds to requests.
 
     :param atelier: atelier fixture.
     """
@@ -28,9 +28,8 @@ async def test_create_app_returns_fastapi_with_liveness(atelier):
     app = server.create_app(atelier)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/")
+        resp = await client.get("/flows")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
 
 
 async def test_create_app_registers_cors(atelier):

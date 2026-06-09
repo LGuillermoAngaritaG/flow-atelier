@@ -56,12 +56,16 @@ class StoreBase(ABC):
         conduit_name: str,
         inputs: dict[str, Any],
         parent_flow_id: str | None = None,
+        *,
+        flow_id: str | None = None,
     ) -> str:
         """Returns the new flow_id.
 
         :param conduit_name: conduit being run
         :param inputs: initial input map persisted with the flow
         :param parent_flow_id: optional parent flow for nested runs
+        :param flow_id: optional pre-generated flow id; when ``None`` the
+            store generates one via :func:`new_flow_id`
         """
 
     @abstractmethod
@@ -69,6 +73,15 @@ class StoreBase(ABC):
         """List top-level flow ids, optionally filtered by conduit.
 
         :param conduit_name: when set, only flows for this conduit are returned
+        """
+        ...
+
+    @abstractmethod
+    def list_child_flows(self, parent_flow_id: str) -> list[str]:
+        """List flow ids that are children of ``parent_flow_id``.
+
+        :param parent_flow_id: parent flow identifier
+        :returns: sorted list of child flow ids
         """
         ...
 
@@ -110,6 +123,16 @@ class StoreBase(ABC):
         ...
 
     # --- outputs.yaml ---
+
+    @abstractmethod
+    def read_outputs(self, flow_id: str) -> dict[str, Any]:
+        """Return the per-task output map for ``flow_id`` (empty if missing).
+
+        :param flow_id: flow identifier
+        :returns: mapping of task name to output string
+        """
+        ...
+
     @abstractmethod
     def write_outputs(self, flow_id: str, outputs: dict[str, Any]) -> None:
         """Persist the per-task output map for ``flow_id``.

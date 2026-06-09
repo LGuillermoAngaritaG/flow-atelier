@@ -137,6 +137,12 @@ atelier run hello --input name=world
 # flow_id: hello_7a3c9f2e_20260412T153004Z
 ```
 
+If the flow fails, resume it (skips already-completed tasks):
+
+```bash
+atelier run --resume hello_7a3c9f2e_20260412T153004Z
+```
+
 Check status:
 
 ```bash
@@ -175,6 +181,7 @@ per project when a specific repo needs different steps.
 ```
 atelier init
 atelier run <conduit> [--input key=value ...]
+atelier run --resume <flow_id>
 atelier status <flow_id>
 atelier list conduits
 atelier list flows [--conduit <name>]
@@ -197,8 +204,9 @@ atelier serve [--host 127.0.0.1] [--port 8000] \
 
 `atelier serve` boots a single uvicorn process that hosts both the
 FastAPI HTTP API and the in-process scheduler daemon (one event loop,
-clean SIGTERM cascade). It is the entry point the Flow Atelier visual
-frontend connects to.
+clean SIGTERM cascade). When a `dist/` directory is present (the built
+frontend dashboard), it is served as a SPA with catch-all fallback —
+API and WebSocket routes take priority over static files.
 
 - Binds to `127.0.0.1:8000` by default. Pass `--host 0.0.0.0` to expose
   on the LAN.
@@ -222,7 +230,32 @@ Endpoint surface:
 | `DELETE` | `/schedules/:id`           | Delete |
 | `GET`    | `/flows`                   | List prior flows |
 | `GET`    | `/flows/:id/logs`          | Per-flow log entries |
-| `WS`     | `/ws/run-conduit`          | Run flows + HITL gates over a multiplexed socket |
+| `WS`     | `/ws/run-conduit`          | Run/resume flows + HITL gates over a multiplexed socket |
+
+## Resuming failed flows
+
+A flow that ended in `failed` status can be resumed — already-completed
+tasks are skipped and their persisted outputs are reused:
+
+```bash
+# CLI
+atelier run --resume <flow_id>
+
+# prefix matching works too
+atelier run --resume hello_7a3c
+```
+
+Over the WebSocket, send a `resume` message instead of `run`:
+
+```json
+{"type": "resume", "flow_id": "hello_7a3c9f2e_20260412T153004Z"}
+```
+
+Resumed runs emit the same lifecycle envelopes (`started`, `step`,
+`step_status`, `log`, `flow_complete` / `flow_failed`) as a fresh run,
+so the dashboard treats them identically. The `step_status` envelope
+now also fires with `"running"` when a task begins execution, giving
+the frontend real-time visibility into in-progress work.
 
 ## Scheduler
 

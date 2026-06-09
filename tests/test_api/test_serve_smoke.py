@@ -9,6 +9,7 @@ import pytest
 import uvicorn
 
 from app.core.atelier import Atelier
+from app.core.settings import AtelierSettings
 from app.services.api.app import FastApiServer
 from app.services.scheduler import SchedulerDaemon, default_local_zone
 
@@ -22,7 +23,13 @@ async def test_serve_smoke_boots_and_serves_conduits(tmp_path, monkeypatch):
     :param monkeypatch: pytest monkeypatch fixture.
     """
     monkeypatch.delenv("ATELIER_GLOBAL_ATELIER_DIR", raising=False)
-    atelier = Atelier(base_dir=tmp_path / ".atelier")
+    monkeypatch.delenv("ATELIER_ATELIER_DIR", raising=False)
+    atelier = Atelier(
+        settings=AtelierSettings(
+            atelier_dir=tmp_path / ".atelier",
+            global_atelier_dir=tmp_path / ".atelier-global",
+        ),
+    )
     daemon = SchedulerDaemon(
         atelier.schedule_store,
         default_zone=default_local_zone(),

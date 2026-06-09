@@ -79,8 +79,9 @@ async def test_get_logs_round_trips(fixture, tmp_path):
     flow_id = await _seed_flow(atelier, run_path=str(tmp_path))
     resp = await client.get(f"/flows/{flow_id}/logs")
     assert resp.status_code == 200
-    logs = resp.json()
-    assert isinstance(logs, list)
+    body = resp.json()
+    assert isinstance(body, dict)
+    logs = body["logs"]
     assert any(
         "flow-api-output" in (entry.get("stdout") or "") for entry in logs
     )

@@ -13,6 +13,7 @@ from app.schemas.ws import (
     HitlAnswerMessage,
     HitlRequestMessage,
     LogMessage,
+    ResumeMessage,
     RunMessage,
     ServerMessage,
     StartedMessage,
@@ -42,14 +43,13 @@ def test_client_run_validates():
     msg = _client(
         {
             "type": "run",
-            "flow_id": "T-1",
             "conduit_name": "x",
             "inputs": {"a": 1},
             "run_path": "/abs",
         }
     )
     assert isinstance(msg, RunMessage)
-    assert msg.flow_id == "T-1"
+    assert msg.conduit_name == "x"
     assert msg.run_path == "/abs"
 
 
@@ -186,10 +186,50 @@ def test_step_message_dump():
 def test_run_message_dump_uses_snake_case():
     """Verify RunMessage.model_dump produces snake_case fields."""
     msg = RunMessage(
-        flow_id="T-1", conduit_name="x", inputs={}, run_path="/abs"
+        conduit_name="x", inputs={}, run_path="/abs"
     )
     dumped = msg.model_dump()
     assert dumped["type"] == "run"
-    assert "flow_id" in dumped
     assert "conduit_name" in dumped
     assert "run_path" in dumped
+
+
+def test_client_resume_validates():
+    """Verify a client `resume` message validates into ResumeMessage."""
+    msg = _client({"type": "resume", "flow_id": "20260101_abc123_test"})
+    assert isinstance(msg, ResumeMessage)
+    assert msg.flow_id == "20260101_abc123_test"
+
+
+def test_resume_message_dump():
+    """Verify ResumeMessage.model_dump produces the expected fields."""
+    msg = ResumeMessage(flow_id="20260101_abc123_test")
+    dumped = msg.model_dump()
+    assert dumped["type"] == "resume"
+    assert dumped["flow_id"] == "20260101_abc123_test"
+
+
+def test_server_started_with_parent_fields():
+    """Verify a server `started` message accepts parent_flow_id and conduit_name."""
+    msg = _server(
+        {
+            "type": "started",
+            "flow_id": "child-1",
+            "parent_flow_id": "parent-1",
+            "parent_task": "run-child",
+            "conduit_name": "nested",
+        }
+    )
+    assert isinstance(msg, StartedMessage)
+    assert msg.parent_flow_id == "parent-1"
+    assert msg.parent_task == "run-child"
+    assert msg.conduit_name == "nested"
+
+
+def test_server_started_defaults_parent_fields_to_none():
+    """Verify parent_flow_id and conduit_name default to None/empty."""
+    msg = _server({"type": "started", "flow_id": "T-1"})
+    assert isinstance(msg, StartedMessage)
+    assert msg.parent_flow_id is None
+    assert msg.parent_task is None
+    assert msg.conduit_name == ""

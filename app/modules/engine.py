@@ -32,6 +32,7 @@ from app.modules.conditions import (
 )
 from app.modules.templating import SkipSignal, TemplateError, resolve
 from app.schemas.conduit import Conduit, TaskDefinition, ToolType
+from app.schemas.flow import parse_flow_id
 from app.schemas.log import ExecutionResult, LogEntry, TaskEvent
 
 TaskEventCallback = Callable[[TaskEvent], None]
@@ -55,6 +56,7 @@ def _now() -> str:
 
 
 _current_task_ctx: ContextVar[str] = ContextVar("current_task_name", default="")
+_current_flow_ctx: ContextVar[str] = ContextVar("current_flow_id", default="")
 
 
 def _validate_dag(conduit: Conduit) -> dict[str, list]:
@@ -139,6 +141,8 @@ class Engine:
         on_task_starting: TaskStartingCallback | None = None,
         show_steps: bool = True,
         working_dir: Path | None = None,
+        flow_id: str | None = None,
+        resume_from: str | None = None,
     ) -> str:
         """Execute a conduit to completion, returning the flow id.
 
@@ -155,6 +159,11 @@ class Engine:
             transitions to running for the first time, with ``(task_name, tool)``.
         :param show_steps: whether nested executors should surface per-step
             progress events.
+        :param working_dir: working directory for task execution.
+        :param flow_id: optional pre-generated flow id; when ``None`` the
+            store generates one. Ignored when ``resume_from`` is set.
+        :param resume_from: flow id of a prior failed run to resume; skips
+            already-completed tasks and reuses their persisted outputs.
         :returns: the new flow id on success
         :raises ConduitValidationError: DAG is invalid (cycle, unknown dep, bad regex)
         :raises ValueError: required inputs are missing
@@ -167,8 +176,16 @@ class Engine:
 
         parsed_deps = _validate_dag(conduit)
 
-        flow_id = self.store.create_flow(conduit.name, inputs, parent_flow_id)
-        if on_flow_started is not None:
+        if resume_from is not None:
+            flow_id = resume_from
+            prior = self.store.read_progress(flow_id)
+            prior_outputs = self.store.read_outputs(flow_id)
+        else:
+            flow_id = self.store.create_flow(conduit.name, inputs, parent_flow_id, flow_id=flow_id)
+        _current_flow_ctx.set(flow_id)
+        if working_dir:
+            self.store.append_input(flow_id, "run_path", str(working_dir))
+        if on_flow_started is not None and resume_from is None:
             try:
                 on_flow_started(flow_id)
             except Exception as cb_exc:  # noqa: BLE001
@@ -197,6 +214,15 @@ class Engine:
         outputs: dict[str, str] = {}
         skip_reasons: dict[str, str] = {}
         task_map = {t.name: t for t in conduit.tasks}
+
+        # Seed state from prior run when resuming
+        if resume_from is not None:
+            for tname, tp in prior.tasks.items():
+                if tp.status == TaskStatus.completed:
+                    statuses[tname] = TaskStatus.completed
+                    outputs[tname] = prior_outputs.get(tname, "")
+                    progress.tasks[tname] = tp
+            self.store.write_progress(flow_id, progress)
 
         runtime_inputs = dict(inputs)  # mutable copy (HITL may append)
 
@@ -240,6 +266,7 @@ class Engine:
             """
             _safe_emit(
                 TaskEvent(
+                    flow_id=flow_id,
                     task=t.name,
                     tool=t.tool.value,
                     iteration=iteration,
@@ -268,6 +295,7 @@ class Engine:
             t = task_map[name]
             _safe_emit(
                 TaskEvent(
+                    flow_id=flow_id,
                     task=t.name,
                     tool=t.tool.value,
                     of=t.repeat,
@@ -351,6 +379,7 @@ class Engine:
             """
             nonlocal failed, failure_error
             _current_task_ctx.set(t.name)
+            _current_flow_ctx.set(flow_id)
             try:
                 # Resolve {{task.output}} templates now (inputs resolved per-iteration)
                 unavailable = {
@@ -393,7 +422,11 @@ class Engine:
                     working_dir=working_dir,
                     show_steps=show_steps,
                     run_nested_conduit=self._make_nested_runner(
-                        on_task_event, show_steps=show_steps, working_dir=working_dir
+                        on_task_event,
+                        on_flow_started=on_flow_started,
+                        on_task_starting=on_task_starting,
+                        show_steps=show_steps,
+                        working_dir=working_dir,
                     ),
                     loop_history=loop_history,
                 )
@@ -490,6 +523,7 @@ class Engine:
                                 break
                     outputs[t.name] = last_output
                     mark_completed(t.name, iteration)
+                    self.store.write_outputs(flow_id, outputs)
             except asyncio.CancelledError:
                 if statuses[t.name] not in (
                     TaskStatus.completed, TaskStatus.failed, TaskStatus.skipped
@@ -594,6 +628,12 @@ class Engine:
                 raise failure_error or RuntimeError("flow failed")
             return flow_id
         except BaseException:
+            # Cancel running tasks so child flows get cleaned up and
+            # their progress is written as failed instead of left as running.
+            if running:
+                for rt in running.values():
+                    rt.cancel()
+                await asyncio.gather(*running.values(), return_exceptions=True)
             # Ensure progress reflects failure on unexpected errors
             progress.current_tasks = []
             progress.finished_at = _now()
@@ -604,15 +644,48 @@ class Engine:
 
     # ------------------------------------------------------------------ helpers
 
+    def _find_child_to_resume(
+        self, parent_flow_id: str, conduit_name: str
+    ) -> str | None:
+        """Find the most recent resumable child flow for a conduit.
+
+        Matches children whose status is not ``completed`` — i.e. ``failed``,
+        ``running`` (orphaned by a prior cancel), or any other non-terminal
+        state.
+
+        :param parent_flow_id: parent flow to search under
+        :param conduit_name: child conduit name to match
+        :returns: child flow id to resume, or None
+        """
+        for fid in reversed(self.store.list_child_flows(parent_flow_id)):
+            try:
+                cname, _, _ = parse_flow_id(fid)
+            except ValueError:
+                continue
+            if cname != conduit_name:
+                continue
+            try:
+                p = self.store.read_progress(fid)
+            except (FileNotFoundError, ValueError):
+                continue
+            if p.status in (FlowStatus.failed, FlowStatus.running):
+                return fid
+            return None  # most recent child for this conduit already completed
+        return None
+
     def _make_nested_runner(
         self,
         on_task_event: TaskEventCallback | None = None,
+        on_flow_started: FlowStartedCallback | None = None,
+        on_task_starting: TaskStartingCallback | None = None,
         show_steps: bool = True,
         working_dir: Path | None = None,
     ):
         """Build the nested-conduit runner passed to executors via FlowContext.
 
         :param on_task_event: optional task-event callback forwarded to the child run.
+        :param on_flow_started: optional flow-started callback forwarded to the child.
+        :param on_task_starting: optional task-starting callback forwarded to the child.
         :param show_steps: whether the nested run should surface per-step progress.
         :param working_dir: working directory forwarded to nested runs.
         :returns: an async callable ``(conduit_name, child_inputs, parent_flow_id)``
@@ -626,11 +699,30 @@ class Engine:
             :param parent_flow_id: flow id of the parent run, for linkage.
             """
             child_conduit = self.store.read_conduit(conduit_name)
+
+            # Resume an existing failed child if one exists
+            resume_id = self._find_child_to_resume(parent_flow_id, conduit_name)
+            if resume_id is not None:
+                prior_inputs = self.store.read_input(resume_id)
+                return await self.run(
+                    child_conduit,
+                    prior_inputs,
+                    parent_flow_id,
+                    resume_from=resume_id,
+                    on_task_event=on_task_event,
+                    on_flow_started=on_flow_started,
+                    on_task_starting=on_task_starting,
+                    show_steps=show_steps,
+                    working_dir=working_dir,
+                )
+
             return await self.run(
                 child_conduit,
                 child_inputs,
                 parent_flow_id,
                 on_task_event=on_task_event,
+                on_flow_started=on_flow_started,
+                on_task_starting=on_task_starting,
                 show_steps=show_steps,
                 working_dir=working_dir,
             )

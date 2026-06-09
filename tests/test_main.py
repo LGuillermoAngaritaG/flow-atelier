@@ -666,8 +666,8 @@ def test_run_failure_prints_flow_id_and_status_hint(tmp_path, monkeypatch):
     result = runner.invoke(app, ["run", "failing"])
     assert result.exit_code != 0, result.output
     assert "flow_id" in result.output
-    # Hint should point the user at how to investigate.
-    assert "atelier status" in result.output
+    # Hint should point the user at how to resume the failed run.
+    assert "atelier run --resume" in result.output
     # The id should match the <date>_<uid>_failing shape.
     assert "_failing" in result.output
 

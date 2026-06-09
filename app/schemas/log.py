@@ -106,6 +106,7 @@ class TaskEvent(BaseModel):
     silently dropping them.
     """
 
+    flow_id: str = ""
     task: str
     tool: str
     iteration: int = 1

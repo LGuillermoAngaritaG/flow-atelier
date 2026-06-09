@@ -7,12 +7,17 @@ facade; routes do at most: validate → call facade → serialize.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.core.atelier import Atelier
 from app.services.api.base import ApiServerBase
+
+_STATIC_DIR = Path(__file__).resolve().parents[3] / "dist"
 
 
 class FastApiServer(ApiServerBase):
@@ -41,14 +46,27 @@ class FastApiServer(ApiServerBase):
             allow_headers=["*"],
         )
 
-        @app.get("/")
-        async def liveness() -> dict[str, str]:
-            """Return a small JSON body confirming the server is up."""
-            return {"status": "ok"}
-
         # Routes mount themselves below — imported here to avoid
         # circular imports between routes and the app factory.
         from app.routes import register_routes
 
         register_routes(app)
+
+        # SPA static files — registered last so API/WS routes take priority.
+        if _STATIC_DIR.is_dir():
+
+            app.mount(
+                "/assets",
+                StaticFiles(directory=_STATIC_DIR / "assets"),
+                name="spa-assets",
+            )
+
+            @app.get("/favicon.svg")
+            async def _favicon():
+                return FileResponse(_STATIC_DIR / "favicon.svg")
+
+            @app.get("/{full_path:path}")
+            async def _spa_fallback(full_path: str):
+                return FileResponse(_STATIC_DIR / "index.html")
+
         return app
