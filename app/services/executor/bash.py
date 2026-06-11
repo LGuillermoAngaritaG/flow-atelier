@@ -30,21 +30,44 @@ class BashExecutor(ExecutorBase):
             stderr=asyncio.subprocess.PIPE,
             cwd=str(context.working_dir) if context.working_dir else None,
         )
+        # Streams are pumped incrementally (not via communicate()) so a
+        # timeout can kill the process and still keep the partial output:
+        # cancelling communicate() discards data it already buffered, and
+        # orphaned grandchildren can hold the pipes open past the kill.
+        stdout_buf = bytearray()
+        stderr_buf = bytearray()
+
+        async def _pump(stream: asyncio.StreamReader, sink: bytearray) -> None:
+            while chunk := await stream.read(65536):
+                sink.extend(chunk)
+
+        pumps = [
+            asyncio.create_task(_pump(proc.stdout, stdout_buf)),
+            asyncio.create_task(_pump(proc.stderr, stderr_buf)),
+        ]
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=context.timeout
-            )
+            await asyncio.wait_for(proc.wait(), timeout=context.timeout)
         except TimeoutError:
             proc.kill()
-            await proc.wait()
+            # No proc.wait() here: its waiter only wakes once all pipes
+            # close, and an orphaned grandchild can hold them open long
+            # after the kill. The loop's child watcher reaps the shell.
+            await asyncio.wait(pumps, timeout=0.5)
+            for p in pumps:
+                p.cancel()
+            await asyncio.gather(*pumps, return_exceptions=True)
+            stdout = stdout_buf.decode("utf-8", errors="replace")
+            stderr = stderr_buf.decode("utf-8", errors="replace")
+            timeout_note = f"timeout after {context.timeout}s"
             return ExecutionResult(
                 exit_code=124,
-                stdout="",
-                stderr=f"timeout after {context.timeout}s",
-                output="",
+                stdout=stdout,
+                stderr=f"{stderr}\n{timeout_note}" if stderr else timeout_note,
+                output=stdout,
             )
-        stdout = stdout_bytes.decode("utf-8", errors="replace")
-        stderr = stderr_bytes.decode("utf-8", errors="replace")
+        await asyncio.gather(*pumps)
+        stdout = stdout_buf.decode("utf-8", errors="replace")
+        stderr = stderr_buf.decode("utf-8", errors="replace")
         return ExecutionResult(
             exit_code=proc.returncode or 0,
             stdout=stdout,

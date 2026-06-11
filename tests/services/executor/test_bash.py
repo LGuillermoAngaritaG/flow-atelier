@@ -71,3 +71,14 @@ async def test_timeout_kills_process():
     )
     assert r.exit_code == 124
     assert "timeout" in r.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax not supported in cmd.exe")
+async def test_timeout_preserves_partial_output():
+    """Verify output printed before the timeout survives the kill."""
+    cmd = "echo hello; sleep 5"
+    r = await BashExecutor().execute(_task(cmd), cmd, _ctx(timeout=1))
+    assert r.exit_code == 124
+    assert "hello" in r.stdout
+    assert "hello" in r.output
+    assert "timeout" in r.stderr
