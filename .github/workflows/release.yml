@@ -113,6 +113,9 @@ jobs:
           path: artifacts
       - name: Flatten artifacts
         run: mkdir -p release && find artifacts -type f -exec cp {} release/ \;
+      - name: Generate SHA256SUMS
+        working-directory: release
+        run: sha256sum * > SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
           files: release/*
