@@ -123,6 +123,38 @@ def test_resolve_loop_history_under_limit_unchanged():
     assert out == "--- iteration 1 ---\na"
 
 
+def test_resolve_loop_history_entry_truncated_head_and_tail():
+    """Verify oversized history entries keep head and tail around a marker."""
+    out = resolve(
+        "{{loop.history}}", {}, {},
+        loop_history=["A" * 6 + "MIDDLE" + "B" * 6],
+        loop_history_entry_chars=12,
+    )
+    assert out == (
+        "--- iteration 1 ---\n"
+        "AAAAAA\n[... 6 chars truncated ...]\nBBBBBB"
+    )
+
+
+def test_resolve_loop_history_entry_under_budget_unchanged():
+    """Verify entries within the char budget render untouched."""
+    out = resolve(
+        "{{loop.history}}", {}, {},
+        loop_history=["short"], loop_history_entry_chars=100,
+    )
+    assert out == "--- iteration 1 ---\nshort"
+
+
+def test_resolve_loop_history_entry_chars_zero_unlimited():
+    """Verify entry_chars <= 0 disables per-entry truncation."""
+    big = "x" * 500
+    out = resolve(
+        "{{loop.history}}", {}, {},
+        loop_history=[big], loop_history_entry_chars=0,
+    )
+    assert big in out
+
+
 def test_extract_task_refs_finds_output_refs():
     """Verify extract_task_refs returns task names from .output expressions."""
     refs = extract_task_refs("a={{build.output}} b={{ test.output }}")

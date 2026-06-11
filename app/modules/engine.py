@@ -131,6 +131,7 @@ class Engine:
         executors: dict[str, ExecutorBase],
         store: StoreBase,
         loop_history_limit: int = 10,
+        loop_history_entry_chars: int = 40000,
     ) -> None:
         """Wire the engine with its executor registry and persistence store.
 
@@ -138,10 +139,13 @@ class Engine:
         :param store: :class:`StoreBase` used to read conduits and persist flow state.
         :param loop_history_limit: max iterations ``{{loop.history}}`` renders,
             newest kept; <= 0 means unlimited.
+        :param loop_history_entry_chars: max characters per rendered
+            ``{{loop.history}}`` entry; <= 0 means unlimited.
         """
         self.executors = executors
         self.store = store
         self.loop_history_limit = loop_history_limit
+        self.loop_history_entry_chars = loop_history_entry_chars
 
     # ------------------------------------------------------------------ public
 
@@ -238,6 +242,7 @@ class Engine:
         task_map = {t.name: t for t in conduit.tasks}
 
         # Seed state from prior run when resuming
+        prior_iterations: dict[str, list[str]] = {}
         if resume_from is not None:
             for tname, tp in prior.tasks.items():
                 if tp.status == TaskStatus.completed:
@@ -245,6 +250,19 @@ class Engine:
                     outputs[tname] = prior_outputs.get(tname, "")
                     progress.tasks[tname] = tp
             self.store.write_progress(flow_id, progress)
+            # Rebuild loop history for tasks that will re-run, so they
+            # continue at the next iteration with {{loop.*}} context intact.
+            # Append order is chronological even across repeated resumes.
+            for entry in self.store.read_logs(flow_id):
+                if entry.exit_code != 0:
+                    continue
+                if statuses.get(entry.task) == TaskStatus.completed:
+                    continue
+                prior_iterations.setdefault(entry.task, []).append(
+                    entry.last_turn_output
+                    if entry.last_turn_output is not None
+                    else entry.output
+                )
 
         runtime_inputs = dict(inputs)  # mutable copy (HITL may append)
 
@@ -341,11 +359,15 @@ class Engine:
             self.store.write_progress(flow_id, progress)
             emit_disposition(name, TaskStatus.skipped, reason)
 
-        def mark_running(name: str, iteration: int) -> None:
+        def mark_running(
+            name: str, iteration: int, start_iteration: int = 1
+        ) -> None:
             """Transition a task to running state and persist progress.
 
             :param name: task name entering the running state.
             :param iteration: 1-based iteration number about to execute.
+            :param start_iteration: first iteration this run executes (> 1
+                when resuming); the starting callback fires on it.
             """
             statuses[name] = TaskStatus.running
             progress.tasks[name] = TaskProgress(
@@ -357,23 +379,28 @@ class Engine:
                 n for n, s in statuses.items() if s == TaskStatus.running
             ]
             self.store.write_progress(flow_id, progress)
-            if iteration == 1 and on_task_starting is not None:
+            if iteration == start_iteration and on_task_starting is not None:
                 try:
                     on_task_starting(name, task_map[name].tool.value)
                 except Exception:  # noqa: BLE001
                     pass
 
-        def mark_completed(name: str, iteration: int) -> None:
+        def mark_completed(
+            name: str, iteration: int, reason: str = ""
+        ) -> None:
             """Mark a task as completed at ``iteration`` and persist progress.
 
             :param name: task name that has finished successfully.
             :param iteration: 1-based iteration number that completed the task.
+            :param reason: optional note recorded on the task progress
+                (e.g. loop exhaustion without a predicate match).
             """
             statuses[name] = TaskStatus.completed
             progress.tasks[name] = TaskProgress(
                 status=TaskStatus.completed,
                 iteration=iteration,
                 of=task_map[name].repeat,
+                reason=reason or None,
             )
             progress.current_tasks = [
                 n for n, s in statuses.items() if s == TaskStatus.running
@@ -406,13 +433,15 @@ class Engine:
                     n for n, s in statuses.items()
                     if s in (TaskStatus.skipped, TaskStatus.failed, TaskStatus.cancelled)
                 }
-                loop_history: list[str] = []
+                loop_history: list[str] = list(prior_iterations.get(t.name, []))
+                start_iteration = min(len(loop_history) + 1, t.repeat)
 
                 def _resolve_task() -> str:
                     return resolve(
                         t.task, runtime_inputs, outputs,
                         unavailable_tasks=unavailable, loop_history=loop_history,
                         loop_history_limit=self.loop_history_limit,
+                        loop_history_entry_chars=self.loop_history_entry_chars,
                     )
 
                 try:
@@ -454,6 +483,7 @@ class Engine:
                     ),
                     loop_history=loop_history,
                     loop_history_limit=self.loop_history_limit,
+                    loop_history_entry_chars=self.loop_history_entry_chars,
                 )
 
                 # Pre-parse the loop predicate once per task. Schema enforces
@@ -472,8 +502,12 @@ class Engine:
 
                 async with semaphore:
                     last_output = ""
-                    for iteration in range(1, t.repeat + 1):
-                        if iteration > 1:
+                    predicate_matched = False
+                    # Identical-output streak over this run only; seeded
+                    # resume history must not insta-trip the guard.
+                    stagnant_streak = 0
+                    for iteration in range(start_iteration, t.repeat + 1):
+                        if iteration > start_iteration:
                             try:
                                 resolved = _resolve_task()
                             except (SkipSignal, TemplateError) as e:
@@ -487,7 +521,7 @@ class Engine:
                                         f"{iteration}: {e}"
                                     )
                                 return
-                        mark_running(t.name, iteration)
+                        mark_running(t.name, iteration, start_iteration)
                         started = _now()
                         start_ts = datetime.now(UTC)
                         try:
@@ -525,6 +559,7 @@ class Engine:
                                 stderr=result.stderr,
                                 exit_code=result.exit_code,
                                 output=result.output,
+                                last_turn_output=result.last_turn_output,
                                 started_at=started,
                                 finished_at=finished,
                                 duration_seconds=round(duration, 3),
@@ -541,12 +576,31 @@ class Engine:
                                     f"stderr={result.stderr.strip()[:200]}"
                                 )
                             return
+                        previous_output = last_output
                         last_output = (
                             result.last_turn_output
                             if result.last_turn_output is not None
                             else result.output
                         )
                         loop_history.append(last_output)
+                        if t.stagnation_limit is not None:
+                            if (
+                                iteration > start_iteration
+                                and last_output == previous_output
+                            ):
+                                stagnant_streak += 1
+                            else:
+                                stagnant_streak = 1
+                            if stagnant_streak >= t.stagnation_limit:
+                                mark_failed(t.name)
+                                if not failed:
+                                    failed = True
+                                    failure_error = RuntimeError(
+                                        f"task {t.name!r} stagnated: "
+                                        f"{stagnant_streak} identical "
+                                        "consecutive outputs"
+                                    )
+                                return
                         if loop_predicate is not None:
                             # Conduit tasks evaluate the predicate against the
                             # outputs of every nested sub-task (any-match),
@@ -554,13 +608,33 @@ class Engine:
                             if t.tool == ToolType.conduit:
                                 scope_outputs = result.sub_outputs
                             else:
-                                scope_outputs = [result.output]
+                                # Match against the last turn only (same value
+                                # history stores): full output can echo prior
+                                # iterations via {{loop.history}} and
+                                # false-positive the predicate.
+                                scope_outputs = [last_output]
                             if evaluate_loop_predicate(
                                 loop_predicate, scope_outputs, loop_mode
                             ):
+                                predicate_matched = True
                                 break
+                    completion_reason = ""
+                    if loop_predicate is not None and not predicate_matched:
+                        if t.on_exhaust == "fail":
+                            mark_failed(t.name)
+                            if not failed:
+                                failed = True
+                                failure_error = RuntimeError(
+                                    f"task {t.name!r} exhausted {t.repeat} "
+                                    "iterations without matching its loop "
+                                    "predicate"
+                                )
+                            return
+                        completion_reason = (
+                            "loop exhausted without predicate match"
+                        )
                     outputs[t.name] = last_output
-                    mark_completed(t.name, iteration)
+                    mark_completed(t.name, iteration, reason=completion_reason)
                     self.store.write_outputs(flow_id, outputs)
             except asyncio.CancelledError:
                 if statuses[t.name] not in (

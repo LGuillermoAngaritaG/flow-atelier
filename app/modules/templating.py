@@ -19,11 +19,29 @@ from typing import Any
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
 
 
-def _format_history(history: list[str], limit: int = 0) -> str:
+def _truncate_entry(text: str, entry_chars: int) -> str:
+    """Cap one history entry, keeping its head and tail around a marker.
+
+    :param text: the entry text.
+    :param entry_chars: max characters to keep; <= 0 means unlimited.
+    :returns: the entry, truncated in the middle when over budget.
+    """
+    if entry_chars <= 0 or len(text) <= entry_chars:
+        return text
+    keep = entry_chars // 2
+    cut = len(text) - 2 * keep
+    return f"{text[:keep]}\n[... {cut} chars truncated ...]\n{text[-keep:]}"
+
+
+def _format_history(
+    history: list[str], limit: int = 0, entry_chars: int = 0
+) -> str:
     """Render prior loop iterations as numbered, separated blocks.
 
     :param history: outputs of completed iterations, oldest first.
     :param limit: max iterations to render, newest kept; <= 0 means all.
+    :param entry_chars: max characters per rendered entry; <= 0 means
+        unlimited.
     :returns: numbered history string, or "" when no iterations have run.
     """
     omitted = 0
@@ -32,7 +50,7 @@ def _format_history(history: list[str], limit: int = 0) -> str:
         omitted = len(history) - limit
         shown = history[-limit:]
     blocks = [
-        f"--- iteration {i} ---\n{out}"
+        f"--- iteration {i} ---\n{_truncate_entry(out, entry_chars)}"
         for i, out in enumerate(shown, omitted + 1)
     ]
     if omitted:
@@ -86,6 +104,7 @@ def resolve(
     unavailable_tasks: set[str] | None = None,
     loop_history: list[str] | None = None,
     loop_history_limit: int = 0,
+    loop_history_entry_chars: int = 0,
 ) -> str:
     """Resolve `{{...}}` expressions in ``template``.
 
@@ -98,6 +117,8 @@ def resolve(
         backing ``{{loop.previous}}`` and ``{{loop.history}}``
     :param loop_history_limit: max iterations ``{{loop.history}}`` renders,
         newest kept; <= 0 means unlimited
+    :param loop_history_entry_chars: max characters per rendered history
+        entry; <= 0 means unlimited
     :raises TemplateError: missing input or unknown identifier
     :raises SkipSignal: reference to a skipped/failed task output
     """
@@ -119,7 +140,9 @@ def resolve(
         if expr == "loop.previous":
             return history[-1] if history else ""
         if expr == "loop.history":
-            return _format_history(history, loop_history_limit)
+            return _format_history(
+                history, loop_history_limit, loop_history_entry_chars
+            )
         if expr.endswith(".output"):
             task = expr[: -len(".output")]
             if task in unavailable:

@@ -6,6 +6,7 @@ import yaml
 
 from app.schemas.conduit import Conduit, ToolType
 from app.schemas.flow import FLOW_ID_RE, new_flow_id, parse_flow_id
+from app.schemas.log import LogEntry
 from app.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
 
 SAMPLE_YAML = """
@@ -123,6 +124,77 @@ def test_duplicate_task_names_rejected():
                 ],
             }
         )
+
+
+def test_on_exhaust_requires_loop_predicate():
+    """Verify on_exhaust: fail is rejected without until/while."""
+    with pytest.raises(Exception, match="on_exhaust requires until or while"):
+        Conduit.model_validate(
+            {
+                "name": "x",
+                "description": "d",
+                "tasks": [
+                    {"a": {"description": "d", "task": "x", "tool": "tool:bash",
+                           "depends_on": [], "repeat": 3, "on_exhaust": "fail"}}
+                ],
+            }
+        )
+
+
+def test_on_exhaust_fail_with_until_accepted():
+    """Verify on_exhaust: fail validates alongside an until predicate."""
+    c = Conduit.model_validate(
+        {
+            "name": "x",
+            "description": "d",
+            "tasks": [
+                {"a": {"description": "d", "task": "x", "tool": "tool:bash",
+                       "depends_on": [], "repeat": 3,
+                       "until": "output.match(ok)", "on_exhaust": "fail"}}
+            ],
+        }
+    )
+    assert c.tasks[0].on_exhaust == "fail"
+
+
+@pytest.mark.parametrize(
+    ("repeat", "limit", "msg"),
+    [
+        (1, 2, "stagnation_limit requires repeat > 1"),
+        (3, 1, "stagnation_limit must be >= 2"),
+    ],
+)
+def test_stagnation_limit_validation(repeat, limit, msg):
+    """Verify stagnation_limit constraints are enforced at load time.
+
+    :param repeat: parametrized repeat value.
+    :param limit: parametrized stagnation_limit value.
+    :param msg: expected validation error fragment.
+    """
+    with pytest.raises(Exception, match=msg):
+        Conduit.model_validate(
+            {
+                "name": "x",
+                "description": "d",
+                "tasks": [
+                    {"a": {"description": "d", "task": "x", "tool": "tool:bash",
+                           "depends_on": [], "repeat": repeat,
+                           "stagnation_limit": limit}}
+                ],
+            }
+        )
+
+
+def test_log_entry_last_turn_output_optional():
+    """Verify last_turn_output round-trips and defaults to None for legacy entries."""
+    base = {
+        "task": "t", "tool": "tool:bash",
+        "started_at": "2026-06-11T00:00:00Z", "finished_at": "2026-06-11T00:00:01Z",
+    }
+    legacy = LogEntry.model_validate(base)
+    assert legacy.last_turn_output is None
+    entry = LogEntry.model_validate({**base, "last_turn_output": "tail"})
+    assert LogEntry.model_validate(entry.model_dump()).last_turn_output == "tail"
 
 
 @pytest.mark.parametrize("bad_name", ["my-task", "a.b", "a b", ""])

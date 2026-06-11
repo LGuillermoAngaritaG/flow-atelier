@@ -41,6 +41,9 @@ class FlowContext:
     loop_history_limit: int = 0
     """Max iterations ``{{loop.history}}`` renders, newest kept; <= 0 means
     unlimited. Mirrors the engine's configured limit."""
+    loop_history_entry_chars: int = 0
+    """Max characters per rendered ``{{loop.history}}`` entry; <= 0 means
+    unlimited. Mirrors the engine's configured limit."""
 
 
 class ExecutorBase(ABC):

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -52,6 +52,8 @@ class TaskDefinition(BaseModel):
     repeat: int = 1
     until: str | None = None
     while_: str | None = Field(default=None, alias="while")
+    on_exhaust: Literal["complete", "fail"] = "complete"
+    stagnation_limit: int | None = None
     interactive: bool = False
     inputs: dict[str, Any] = Field(default_factory=dict)
 
@@ -92,6 +94,17 @@ class TaskDefinition(BaseModel):
             raise ValueError(
                 "until and while are mutually exclusive — set only one"
             )
+        if (
+            self.on_exhaust != "complete"
+            and self.until is None
+            and self.while_ is None
+        ):
+            raise ValueError("on_exhaust requires until or while")
+        if self.stagnation_limit is not None:
+            if self.repeat <= 1:
+                raise ValueError("stagnation_limit requires repeat > 1")
+            if self.stagnation_limit < 2:
+                raise ValueError("stagnation_limit must be >= 2")
         for field_name, expr in (("until", self.until), ("while", self.while_)):
             if expr is None:
                 continue

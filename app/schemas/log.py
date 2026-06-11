@@ -86,6 +86,7 @@ class LogEntry(BaseModel):
     stderr: str = ""
     exit_code: int = 0
     output: str = ""
+    last_turn_output: str | None = None
     started_at: str
     finished_at: str
     duration_seconds: float = 0.0
