@@ -412,6 +412,60 @@ async def test_unknown_template_ref_rejected(store):
         await engine.run(conduit, {})
 
 
+async def test_validate_rejects_ref_not_in_deps(store):
+    """A {{ref.output}} to a task outside the depends_on chain must fail
+    validation: whether it resolves at runtime is a scheduling race.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+            {"name": "b", "description": "d", "task": "use {{a.output}}",
+             "tool": "tool:bash", "depends_on": []},
+        ]
+    )
+    engine = Engine({"tool:bash": FakeExecutor()}, store)
+    with pytest.raises(ConduitValidationError, match="not in its depends_on chain"):
+        await engine.run(conduit, {})
+
+
+async def test_validate_accepts_transitive_ref(store):
+    """A ref to a transitive dependency (a <- b <- c, c uses a) is valid.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+            {"name": "b", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": ["a"]},
+            {"name": "c", "description": "d", "task": "use {{a.output}}",
+             "tool": "tool:bash", "depends_on": ["b"]},
+        ]
+    )
+    engine = Engine({"tool:bash": FakeExecutor()}, store)
+    flow_id = await engine.run(conduit, {})
+    assert store.read_progress(flow_id).status == FlowStatus.completed
+
+
+async def test_validate_accepts_ref_via_conditional_dep(store):
+    """A ref through a conditional dependency target counts as declared.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+            {"name": "b", "description": "d", "task": "use {{a.output}}",
+             "tool": "tool:bash", "depends_on": ["a.output.match(out-a)"]},
+        ]
+    )
+    engine = Engine({"tool:bash": FakeExecutor()}, store)
+    flow_id = await engine.run(conduit, {})
+    assert store.read_progress(flow_id).status == FlowStatus.completed
+
+
 async def test_mid_loop_template_error_marks_task_failed(store):
     """Verify a TemplateError on iteration >= 2 fails the task (not stuck running).
 

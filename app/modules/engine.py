@@ -90,11 +90,6 @@ def _validate_dag(conduit: Conduit) -> dict[str, list]:
                 raise ConduitValidationError(
                     f"task {t.name!r} depends on unknown task {d.task!r}"
                 )
-        for ref in sorted(extract_task_refs(t.task)):
-            if ref not in task_names:
-                raise ConduitValidationError(
-                    f"task {t.name!r} references unknown task {ref!r}"
-                )
         parsed[t.name] = parsed_deps
 
     # Cycle detection via DFS
@@ -121,6 +116,36 @@ def _validate_dag(conduit: Conduit) -> dict[str, list]:
 
     for name in parsed:
         visit(name, [])
+
+    # Template refs must point at a (transitive) dependency: resolution
+    # order is otherwise a scheduling race — the ref resolves if the
+    # other task happens to finish first and silently skips if not.
+    closure: dict[str, set[str]] = {}
+
+    def reachable(name: str) -> set[str]:
+        """Return the set of task names transitively reachable from ``name``.
+
+        :param name: task whose dependency closure to compute.
+        """
+        if name not in closure:
+            deps = {d.task for d in parsed[name]}
+            closure[name] = deps.union(
+                *(reachable(d) for d in deps)
+            ) if deps else set()
+        return closure[name]
+
+    for t in conduit.tasks:
+        allowed = reachable(t.name)
+        for ref in sorted(extract_task_refs(t.task)):
+            if ref not in task_names:
+                raise ConduitValidationError(
+                    f"task {t.name!r} references unknown task {ref!r}"
+                )
+            if ref not in allowed:
+                raise ConduitValidationError(
+                    f"task {t.name!r} references {ref!r} which is not in its "
+                    f"depends_on chain; add it as a dependency"
+                )
 
     return parsed
 
