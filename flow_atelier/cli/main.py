@@ -38,6 +38,9 @@ def _root(
 
     :param version: eager flag handled by :func:`_version_callback`.
     """
+    from flow_atelier.cli.updater import start_background_update_check
+
+    start_background_update_check()
 
 
 list_app = typer.Typer(

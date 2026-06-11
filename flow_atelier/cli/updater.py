@@ -19,15 +19,15 @@ import platform
 import sys
 import threading
 import urllib.request
-from typing import Any, Optional
+from typing import Any
 
 OWNER = "LGuillermoAngaritaG"
 REPO = "flow-atelier"
 RELEASES_API = f"https://api.github.com/repos/{OWNER}/{REPO}/releases/latest"
 
 # Module-level state shared between the daemon thread and the atexit handler.
-_pending_update: Optional[bytes] = None
-_pending_asset_name: Optional[str] = None
+_pending_update: bytes | None = None
+_pending_asset_name: str | None = None
 _lock = threading.Lock()
 
 
@@ -76,7 +76,7 @@ def _download_and_verify(
     asset_url: str,
     asset_name: str,
     sums_url: str,
-) -> Optional[bytes]:
+) -> bytes | None:
     """Download *asset_url*, verify its SHA-256 against *sums_url*, return bytes.
 
     Returns ``None`` on any failure (network error, hash mismatch, etc.).
@@ -87,7 +87,7 @@ def _download_and_verify(
     except Exception:
         return None
 
-    expected_hash: Optional[str] = None
+    expected_hash: str | None = None
     for line in sums_text.splitlines():
         parts = line.split()
         if len(parts) >= 2 and parts[1] == asset_name:
@@ -127,8 +127,8 @@ def _background_check() -> None:
 
         # Build asset download URLs from the release assets list.
         asset_name = _platform_asset_name()
-        asset_url: Optional[str] = None
-        sums_url: Optional[str] = None
+        asset_url: str | None = None
+        sums_url: str | None = None
 
         for asset in release.get("assets", []):
             name = asset.get("name", "")
