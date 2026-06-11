@@ -20,30 +20,40 @@ inputs:
     \ exactly.\n  - Use `mv` with absolute paths.\n  - If you cannot confidently classify\
     \ (unknown project, ambiguous topic),\n    move the file to `00_INBOX/_needs_review/`\
     \ instead and log\n    \"needs review: <reason>\". Never guess.\n\nPASS 2 \u2014\
-    \ Excalidraw renames (all three locations)\nFor each `.excalidraw.md` under `00_INBOX/`,\
-    \ `Excalidraw/`, and\n`41_EXCALIDRAW/`:\n  - If the filename already matches `{project}\
-    \ - {topic}.excalidraw.md`\n    (with a known project code), skip it.\n  - Otherwise\
-    \ open the file (it's JSON inside markdown) and infer a topic\n    from any text\
-    \ elements or title metadata. Derive a\n    `{project} - {topic}.excalidraw.md`\
-    \ name.\n  - If you cannot confidently determine a project, move the file to\n\
-    \    `00_INBOX/_needs_review/` with its original name.\n  - Excalidraw files stay\
-    \ where they live (do not move them between\n    `41_EXCALIDRAW/` and `Excalidraw/`).\n\
-    \nPASS 3 \u2014 Delete empties\nConservative deletion only:\n  - `.md` files in\
-    \ `00_INBOX/` whose body (after any frontmatter) is empty\n    or consists only\
-    \ of template scaffolding (e.g. just an `# Title`\n    placeholder and nothing\
-    \ else).\n  - `.excalidraw.md` files whose JSON has an empty or missing `elements`\n\
-    \    array.\nIf in doubt, do NOT delete \u2014 move to `_needs_review/` instead.\n\
-    \nPASS 4 \u2014 Daily-note bootstrap\nCompute today's date in YYYY-MM-DD form\
-    \ (America/Bogota). If\n`01_DAILY/<YYYY-MM-DD>.md` does not exist, create it by\
-    \ copying\n`40_TEMPLATES/daily.md` verbatim. Do not modify the template file.\n\
-    \nPASS 5 \u2014 Daily-note log\nAppend (or create if absent) a section in today's\
-    \ daily note:\n\n    ## Vault Organizer Agent\n    ### Run at <HH:MM local time>\n\
-    \    - <one line per action taken \u2014 moves, renames, deletes, needs-review>\n\
-    \nIf the schedule fires multiple times in a day, add a new\n`### Run at HH:MM`\
-    \ block under the same `## Vault Organizer Agent`\nheading rather than duplicating\
-    \ the heading.\n\nFinal output\nEnd your response with a one-paragraph summary\
-    \ that a reviewer can verify\nwith `ls` and `cat` \u2014 concrete filenames and\
-    \ destination paths, not\ngeneralities. The reviewer agent will spot-check.\n"
+    \ File Excalidraw diagrams by content\nGoal: every `.excalidraw.md` ends up in\
+    \ the folder that matches its\ncontent, and the plugin's `Excalidraw/` folder\
+    \ is left EMPTY.\n\nFor each `.excalidraw.md` under `Excalidraw/`, `00_INBOX/`,\
+    \ and\n`41_EXCALIDRAW/`:\n  - Open the file (it's JSON inside markdown) and read\
+    \ its text elements\n    and title metadata to infer (a) the project or domain\
+    \ it belongs to\n    and (b) a short topic.\n  - When you can confidently derive\
+    \ a project, rename it to the canonical\n    `{project} - {topic}.excalidraw.md`\
+    \ form. If it already matches, keep\n    the name.\n  - Choose the destination\
+    \ folder by matching the inferred project to the\n    EXISTING vault folder structure\
+    \ (e.g. that project's folder under\n    `20_WORK/**`, preferring an existing\
+    \ diagram/canvas subfolder if one\n    exists; use `41_EXCALIDRAW/` only for genuinely\
+    \ general or\n    cross-project canvases). DO NOT create new folders. Match the\
+    \ existing\n    casing exactly.\n  - Use `mv` with absolute paths.\n  - If you\
+    \ cannot confidently determine the project OR the destination\n    folder, move\
+    \ the file to `00_INBOX/_needs_review/` with its original\n    name and log \"\
+    needs review: <reason>\". Never guess.\n  - When the pass finishes, `Excalidraw/`\
+    \ must contain no `.excalidraw.md`\n    files \u2014 each one has been filed to\
+    \ a matching folder or moved to\n    `_needs_review/`.\n\nPASS 3 \u2014 Delete\
+    \ empties\nConservative deletion only:\n  - `.md` files in `00_INBOX/` whose body\
+    \ (after any frontmatter) is empty\n    or consists only of template scaffolding\
+    \ (e.g. just an `# Title`\n    placeholder and nothing else).\n  - `.excalidraw.md`\
+    \ files whose JSON has an empty or missing `elements`\n    array.\nIf in doubt,\
+    \ do NOT delete \u2014 move to `_needs_review/` instead.\n\nPASS 4 \u2014 Daily-note\
+    \ bootstrap\nCompute today's date in YYYY-MM-DD form (America/Bogota). If\n`01_DAILY/<YYYY-MM-DD>.md`\
+    \ does not exist, create it by copying\n`40_TEMPLATES/daily.md` verbatim. Do not\
+    \ modify the template file.\n\nPASS 5 \u2014 Daily-note log\nAppend (or create\
+    \ if absent) a section in today's daily note:\n\n    ## Vault Organizer Agent\n\
+    \    ### Run at <HH:MM local time>\n    - <one line per action taken \u2014 moves,\
+    \ renames, deletes, needs-review>\n\nIf the schedule fires multiple times in a\
+    \ day, add a new\n`### Run at HH:MM` block under the same `## Vault Organizer\
+    \ Agent`\nheading rather than duplicating the heading.\n\nFinal output\nEnd your\
+    \ response with a one-paragraph summary that a reviewer can verify\nwith `ls`\
+    \ and `cat` \u2014 concrete filenames and destination paths, not\ngeneralities.\
+    \ The reviewer agent will spot-check.\n"
 run_path: /Users/ganga/Documents/personal_repos/flow-atelier
 schedule:
   mode: recurring
@@ -61,4 +71,4 @@ schedule:
   - '12:30'
   - '18:30'
 created_at: 1779781588
-runs_completed: 8
+runs_completed: 9

@@ -1,10 +1,13 @@
 """Conduit and task schemas."""
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+_TASK_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
 
 class ToolType(str, Enum):
@@ -25,6 +28,17 @@ class HitlInput(BaseModel):
     description: str
 
 
+class InputSpec(BaseModel):
+    """A declared conduit input: a description and an optional default.
+
+    When ``default`` is set, the input is optional — callers that omit it get
+    the default; callers that supply it override it.
+    """
+
+    description: str = ""
+    default: str | None = None
+
+
 class TaskDefinition(BaseModel):
     """A single task within a conduit."""
 
@@ -40,6 +54,21 @@ class TaskDefinition(BaseModel):
     while_: str | None = Field(default=None, alias="while")
     interactive: bool = False
     inputs: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("name")
+    @classmethod
+    def _name_valid(cls, v: str) -> str:
+        """Restrict task names to the grammar shared by deps and templating.
+
+        :param v: the proposed task name.
+        :returns: the validated name unchanged.
+        """
+        if not _TASK_NAME_RE.match(v):
+            raise ValueError(
+                f"invalid task name {v!r}: only letters, digits and "
+                "underscores are allowed"
+            )
+        return v
 
     @field_validator("repeat")
     @classmethod
@@ -88,19 +117,27 @@ class Conduit(BaseModel):
     description: str
     timeout: int = 3600
     max_concurrency: int = 3
-    inputs: dict[str, str] = Field(default_factory=dict)
+    inputs: dict[str, InputSpec] = Field(default_factory=dict)
     tasks: list[TaskDefinition]
 
     @model_validator(mode="before")
     @classmethod
     def _normalize_tasks(cls, data: Any) -> Any:
-        """Accept YAML's list-of-single-key-dicts form for tasks.
+        """Accept YAML's list-of-single-key-dicts form for tasks, and the
+        plain-string shorthand for inputs.
 
         :param data: raw input passed to the model; only ``dict`` payloads are normalized.
-        :returns: ``data`` with its ``tasks`` list flattened into plain task dicts.
+        :returns: ``data`` with its ``tasks`` list flattened into plain task dicts
+            and its ``inputs`` values coerced to ``InputSpec`` mappings.
         """
         if not isinstance(data, dict):
             return data
+        raw_inputs = data.get("inputs")
+        if isinstance(raw_inputs, dict):
+            data["inputs"] = {
+                key: {"description": value} if isinstance(value, str) else value
+                for key, value in raw_inputs.items()
+            }
         raw_tasks = data.get("tasks")
         if not isinstance(raw_tasks, list):
             return data

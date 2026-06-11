@@ -4,7 +4,6 @@ These tests exercise the real ``claude`` and ``codex`` CLIs. They're slow
 and cost tokens. If a harness flakes, the test is marked xfail (per the
 user's instruction) rather than aborting the suite.
 """
-import json
 import shutil
 
 import pytest
@@ -71,7 +70,7 @@ tasks:
     if p.status.value != "completed":
         pytest.xfail(f"claude flow status: {p.status.value}")
 
-    logs = json.loads((a.store._flow_dir(flow_id) / "logs.json").read_text())
+    logs = [e.model_dump() for e in a.store.read_logs(flow_id)]
     output = logs[0]["output"].lower()
     assert "paris" in output, f"expected 'paris' in claude output, got: {output[:400]}"
 
@@ -106,7 +105,7 @@ tasks:
     if p.status.value != "completed":
         pytest.xfail(f"codex flow status: {p.status.value}")
 
-    logs = json.loads((a.store._flow_dir(flow_id) / "logs.json").read_text())
+    logs = [e.model_dump() for e in a.store.read_logs(flow_id)]
     output = logs[0]["output"].lower()
     assert "paris" in output, f"expected 'paris' in codex output, got: {output[:400]}"
 
@@ -143,7 +142,7 @@ tasks:
     if p.status.value != "completed":
         pytest.xfail(f"claude interactive flow status: {p.status.value}")
 
-    logs = json.loads((a.store._flow_dir(flow_id) / "logs.json").read_text())
+    logs = [e.model_dump() for e in a.store.read_logs(flow_id)]
     output = logs[0]["output"]
     assert "[ATELIER_DONE]" not in output
     assert "paris" in output.lower()
@@ -181,7 +180,7 @@ tasks:
     if p.status.value != "completed":
         pytest.xfail(f"codex interactive flow status: {p.status.value}")
 
-    logs = json.loads((a.store._flow_dir(flow_id) / "logs.json").read_text())
+    logs = [e.model_dump() for e in a.store.read_logs(flow_id)]
     output = logs[0]["output"]
     assert "[ATELIER_DONE]" not in output
     assert "paris" in output.lower()

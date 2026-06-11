@@ -6,7 +6,7 @@ Manages the on-disk layout:
     ├── conduits/<name>/conduit.yaml
     └── flows/<flow_id>/
         ├── input.yaml
-        ├── logs.json
+        ├── logs.jsonl
         ├── progress.json
         └── flows/<child_flow_id>/...
 
@@ -267,8 +267,8 @@ class FilesystemStore(StoreBase):
         self._flow_paths[flow_id] = flow_dir
         # input.yaml
         (flow_dir / "input.yaml").write_text(yaml.safe_dump(inputs, sort_keys=False))
-        # logs.json
-        (flow_dir / "logs.json").write_text("[]\n")
+        # logs.jsonl (one JSON entry per line, appended as tasks run)
+        (flow_dir / "logs.jsonl").write_text("")
         # progress.json (empty shell; engine writes real content immediately)
         (flow_dir / "progress.json").write_text(
             json.dumps(
@@ -324,31 +324,48 @@ class FilesystemStore(StoreBase):
         return lock
 
     async def append_log(self, flow_id: str, entry: LogEntry) -> None:
-        """Append ``entry`` to the flow's ``logs.json`` under a per-flow lock.
+        """Append ``entry`` to the flow's ``logs.jsonl`` under a per-flow lock.
+
+        One JSON document per line — O(1) append instead of rewriting the
+        whole log, and the blocking write runs off the event loop.
 
         :param flow_id: flow identifier
         :param entry: log entry to append
         """
-        path = self._flow_dir(flow_id) / "logs.json"
+        path = self._flow_dir(flow_id) / "logs.jsonl"
+        line = json.dumps(entry.model_dump()) + "\n"
+
+        def _write() -> None:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line)
+
         async with self._lock_for(flow_id):
-            try:
-                existing = json.loads(path.read_text())
-            except (FileNotFoundError, json.JSONDecodeError):
-                existing = []
-            existing.append(entry.model_dump())
-            tmp = path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(existing, indent=2))
-            _atomic_replace(tmp, path)
+            await asyncio.to_thread(_write)
 
     def read_logs(self, flow_id: str) -> list[LogEntry]:
         """Return all log entries for ``flow_id`` in append order.
 
+        Reads ``logs.jsonl``; falls back to the legacy ``logs.json`` array
+        for flow dirs created before the JSONL switch.
+
         :param flow_id: flow identifier
         :returns: parsed list of :class:`LogEntry` — empty if missing/unreadable
         """
-        path = self._flow_dir(flow_id) / "logs.json"
+        flow_dir = self._flow_dir(flow_id)
+        jsonl_path = flow_dir / "logs.jsonl"
+        if jsonl_path.exists():
+            entries: list[LogEntry] = []
+            for line in jsonl_path.read_text().splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    entries.append(LogEntry.model_validate(json.loads(line)))
+                except (json.JSONDecodeError, ValueError):
+                    continue
+            return entries
+        legacy_path = flow_dir / "logs.json"
         try:
-            raw = json.loads(path.read_text())
+            raw = json.loads(legacy_path.read_text())
         except (FileNotFoundError, json.JSONDecodeError):
             return []
         return [LogEntry.model_validate(item) for item in raw]
@@ -414,4 +431,6 @@ class FilesystemStore(StoreBase):
             if isinstance(loaded, dict):
                 existing = loaded
         existing[key] = value
-        path.write_text(yaml.safe_dump(existing, sort_keys=False))
+        tmp = path.with_suffix(f".yaml.tmp.{uuid.uuid4().hex}")
+        tmp.write_text(yaml.safe_dump(existing, sort_keys=False))
+        _atomic_replace(tmp, path)

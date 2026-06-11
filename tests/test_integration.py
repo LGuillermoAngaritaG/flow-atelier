@@ -1,6 +1,5 @@
 """End-to-end integration tests (no live harnesses)."""
 import builtins
-import json
 import sys
 
 import pytest
@@ -77,8 +76,7 @@ tasks:
     assert p.tasks["deploy"].status.value == "completed"
     assert p.tasks["rollback"].status.value == "skipped"
 
-    logs_path = a.store._flow_dir(flow_id) / "logs.json"
-    logs = json.loads(logs_path.read_text())
+    logs = [e.model_dump() for e in a.store.read_logs(flow_id)]
     hello_log = next(e for e in logs if e["task"] == "hello")
     assert "hello world" in hello_log["output"]
 
@@ -105,7 +103,7 @@ tasks:
     )
     a = Atelier()
     flow_id = await a.run_conduit("rep", {})
-    logs = json.loads((a.store._flow_dir(flow_id) / "logs.json").read_text())
+    logs = [e.model_dump() for e in a.store.read_logs(flow_id)]
     ticks = [l for l in logs if l["task"] == "tick"]
     assert len(ticks) == 4
     assert [l["iteration"] for l in ticks] == [1, 2, 3, 4]
@@ -147,7 +145,7 @@ tasks:
     p = a.get_status(flow_id)
     assert p.status.value == "completed"
 
-    logs = json.loads((a.store._flow_dir(flow_id) / "logs.json").read_text())
+    logs = [e.model_dump() for e in a.store.read_logs(flow_id)]
     greet_log = next(l for l in logs if l["task"] == "greet")
     assert "alice says yes" in greet_log["output"]
 
@@ -208,7 +206,7 @@ tasks:
     child_flows = list((parent_dir / "flows").iterdir())
     assert len(child_flows) == 1
     child_dir = child_flows[0]
-    child_logs = json.loads((child_dir / "logs.json").read_text())
+    child_logs = [e.model_dump() for e in a.store.read_logs(child_dir.name)]
     assert any("child-setup-done" in e["output"] for e in child_logs)
 
 
@@ -275,7 +273,7 @@ tasks:
     assert p.tasks["poll"].iteration == 3
     assert p.tasks["poll"].of == 5
 
-    logs = json.loads((a.store._flow_dir(flow_id) / "logs.json").read_text())
+    logs = [e.model_dump() for e in a.store.read_logs(flow_id)]
     poll_logs = [l for l in logs if l["task"] == "poll"]
     assert len(poll_logs) == 3
     assert "HIT" in poll_logs[-1]["output"]
@@ -312,7 +310,7 @@ tasks:
     assert p.tasks["poll"].iteration == 3
     assert p.tasks["poll"].of == 5
 
-    logs = json.loads((a.store._flow_dir(flow_id) / "logs.json").read_text())
+    logs = [e.model_dump() for e in a.store.read_logs(flow_id)]
     poll_logs = [l for l in logs if l["task"] == "poll"]
     assert len(poll_logs) == 3
     assert "retry" in poll_logs[0]["output"]
@@ -388,7 +386,7 @@ tasks:
     # not on the aggregate output.
     pass_count = 0
     for child_dir in child_flows:
-        child_logs = json.loads((child_dir / "logs.json").read_text())
+        child_logs = [e.model_dump() for e in a.store.read_logs(child_dir.name)]
         tests_log = next(l for l in child_logs if l["task"] == "tests")
         finalize_log = next(l for l in child_logs if l["task"] == "finalize")
         if "PASS" in tests_log["output"]:

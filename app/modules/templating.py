@@ -19,15 +19,45 @@ from typing import Any
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
 
 
-def _format_history(history: list[str]) -> str:
+def _format_history(history: list[str], limit: int = 0) -> str:
     """Render prior loop iterations as numbered, separated blocks.
 
     :param history: outputs of completed iterations, oldest first.
+    :param limit: max iterations to render, newest kept; <= 0 means all.
     :returns: numbered history string, or "" when no iterations have run.
     """
-    return "\n\n".join(
-        f"--- iteration {i} ---\n{out}" for i, out in enumerate(history, 1)
-    )
+    omitted = 0
+    shown = history
+    if limit > 0 and len(history) > limit:
+        omitted = len(history) - limit
+        shown = history[-limit:]
+    blocks = [
+        f"--- iteration {i} ---\n{out}"
+        for i, out in enumerate(shown, omitted + 1)
+    ]
+    if omitted:
+        blocks.insert(0, f"--- {omitted} earlier iterations omitted ---")
+    return "\n\n".join(blocks)
+
+
+def extract_task_refs(template: str) -> set[str]:
+    """Return the task names referenced as ``{{<task>.output}}`` in ``template``.
+
+    ``inputs.*`` and ``loop.*`` expressions are not task references and are
+    ignored. Used at validation time to reject references to unknown tasks
+    before a flow starts.
+
+    :param template: the raw task/template string to scan.
+    :returns: set of referenced task names (may be empty).
+    """
+    refs: set[str] = set()
+    for match in _TEMPLATE_RE.finditer(template):
+        expr = match.group(1).strip()
+        if expr.startswith("inputs.") or expr in ("loop.previous", "loop.history"):
+            continue
+        if expr.endswith(".output"):
+            refs.add(expr[: -len(".output")])
+    return refs
 
 
 class TemplateError(ValueError):
@@ -55,6 +85,7 @@ def resolve(
     task_outputs: dict[str, str],
     unavailable_tasks: set[str] | None = None,
     loop_history: list[str] | None = None,
+    loop_history_limit: int = 0,
 ) -> str:
     """Resolve `{{...}}` expressions in ``template``.
 
@@ -65,6 +96,8 @@ def resolve(
         (skipped / failed / cancelled)
     :param loop_history: this task's prior-iteration outputs, oldest first,
         backing ``{{loop.previous}}`` and ``{{loop.history}}``
+    :param loop_history_limit: max iterations ``{{loop.history}}`` renders,
+        newest kept; <= 0 means unlimited
     :raises TemplateError: missing input or unknown identifier
     :raises SkipSignal: reference to a skipped/failed task output
     """
@@ -86,7 +119,7 @@ def resolve(
         if expr == "loop.previous":
             return history[-1] if history else ""
         if expr == "loop.history":
-            return _format_history(history)
+            return _format_history(history, loop_history_limit)
         if expr.endswith(".output"):
             task = expr[: -len(".output")]
             if task in unavailable:

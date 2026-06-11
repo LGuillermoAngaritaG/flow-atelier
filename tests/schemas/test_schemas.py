@@ -89,6 +89,27 @@ def test_defaults():
     assert c.tasks[0].interactive is False
 
 
+def test_inputs_accept_string_and_object_forms():
+    """Verify plain-string inputs and {description, default} objects both parse."""
+    c = Conduit.model_validate(
+        {
+            "name": "x",
+            "description": "d",
+            "inputs": {
+                "plain": "just a description",
+                "rich": {"description": "with default", "default": "dv"},
+            },
+            "tasks": [
+                {"t": {"description": "d", "task": "echo hi", "tool": "tool:bash", "depends_on": []}}
+            ],
+        }
+    )
+    assert c.inputs["plain"].description == "just a description"
+    assert c.inputs["plain"].default is None
+    assert c.inputs["rich"].description == "with default"
+    assert c.inputs["rich"].default == "dv"
+
+
 def test_duplicate_task_names_rejected():
     """Verify duplicate task names cause Conduit validation to fail."""
     with pytest.raises(Exception):
@@ -99,6 +120,30 @@ def test_duplicate_task_names_rejected():
                 "tasks": [
                     {"a": {"description": "d", "task": "echo 1", "tool": "tool:bash", "depends_on": []}},
                     {"a": {"description": "d", "task": "echo 2", "tool": "tool:bash", "depends_on": []}},
+                ],
+            }
+        )
+
+
+@pytest.mark.parametrize("bad_name", ["my-task", "a.b", "a b", ""])
+def test_invalid_task_names_rejected(bad_name):
+    """Verify task names outside [A-Za-z0-9_]+ are rejected at load time.
+
+    :param bad_name: parametrized invalid task name under test.
+    """
+    with pytest.raises(Exception, match="invalid task name"):
+        Conduit.model_validate(
+            {
+                "name": "x",
+                "description": "d",
+                "tasks": [
+                    {
+                        "name": bad_name,
+                        "description": "d",
+                        "task": "echo 1",
+                        "tool": "tool:bash",
+                        "depends_on": [],
+                    }
                 ],
             }
         )

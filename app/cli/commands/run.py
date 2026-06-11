@@ -46,14 +46,18 @@ def run_cmd(
 
     # Prompt for missing inputs when running interactively.
     conduit = atelier.store.read_conduit(conduit_name)
-    missing = [k for k in conduit.inputs if k not in inputs]
+    missing = [
+        k
+        for k, spec in conduit.inputs.items()
+        if k not in inputs and spec.default is None
+    ]
     if missing and sys.stdin.isatty():
         from app.cli.rendering.multiline_input import multiline_input_sync
 
         try:
             for key in missing:
                 value = multiline_input_sync(
-                    f"  {key} ({conduit.inputs[key]}): ",
+                    f"  {key} ({conduit.inputs[key].description}): ",
                     hint="Alt+Enter to submit",
                 )
                 inputs[key] = value

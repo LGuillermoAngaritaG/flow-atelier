@@ -689,15 +689,20 @@ class AcpHarnessExecutor(ExecutorBase):
         :returns: :class:`ExecutionResult` with exit_code 0 on normal stops.
         """
         output = "".join(client.buffer)
-        if stop_reason in ("end_turn", "max_tokens"):
+        if stop_reason == "end_turn":
             return ExecutionResult(
                 exit_code=0, stdout=output, stderr="", output=output,
                 steps=client.steps,
             )
+        if stop_reason == "max_tokens":
+            # Truncated output must not flow downstream as if complete.
+            stderr = "agent hit max_tokens; output truncated"
+        else:
+            stderr = f"agent stopped with reason={stop_reason}"
         return ExecutionResult(
             exit_code=1,
             stdout=output,
-            stderr=f"agent stopped with reason={stop_reason}",
+            stderr=stderr,
             output=output,
             steps=client.steps,
         )

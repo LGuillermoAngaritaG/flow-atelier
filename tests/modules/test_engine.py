@@ -298,6 +298,72 @@ async def test_missing_input_raises(store):
         await engine.run(conduit, {})
 
 
+class _Capturing(FakeExecutor):
+    def __init__(self):
+        """Capture the resolved command of the single task it runs."""
+        super().__init__()
+        self.cmd: str | None = None
+
+    async def execute(self, task, resolved_command, context):
+        """Record the resolved command and report success.
+
+        :param task: task definition being executed.
+        :param resolved_command: command string after template resolution.
+        :param context: flow context provided by the engine.
+        """
+        self.cmd = resolved_command
+        return ExecutionResult(exit_code=0, output="ok")
+
+
+async def test_default_input_applied_when_missing(store):
+    """Verify a declared default is used when the caller omits the input.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [{"name": "a", "description": "d", "task": "echo {{inputs.x}}",
+          "tool": "tool:bash", "depends_on": []}],
+        inputs={"x": {"description": "d", "default": "fallback"}},
+    )
+    fake = _Capturing()
+    engine = Engine({"tool:bash": fake}, store)
+    await engine.run(conduit, {})
+    assert fake.cmd == "echo fallback"
+
+
+async def test_supplied_input_overrides_default(store):
+    """Verify a supplied value wins over the declared default.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [{"name": "a", "description": "d", "task": "echo {{inputs.x}}",
+          "tool": "tool:bash", "depends_on": []}],
+        inputs={"x": {"description": "d", "default": "fallback"}},
+    )
+    fake = _Capturing()
+    engine = Engine({"tool:bash": fake}, store)
+    await engine.run(conduit, {"x": "override"})
+    assert fake.cmd == "echo override"
+
+
+async def test_required_input_still_raises_when_others_defaulted(store):
+    """Verify defaults don't excuse a sibling input that has no default.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [{"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []}],
+        inputs={
+            "opt": {"description": "d", "default": "v"},
+            "req": "required",
+        },
+    )
+    engine = Engine({"tool:bash": FakeExecutor()}, store)
+    with pytest.raises(ValueError, match="missing required inputs"):
+        await engine.run(conduit, {})
+
+
 async def test_cycle_detection(store):
     """Verify a cycle in the DAG raises ConduitValidationError.
 
@@ -326,6 +392,69 @@ async def test_unknown_dep_target(store):
     )
     engine = Engine({"tool:bash": FakeExecutor()}, store)
     with pytest.raises(ConduitValidationError, match="unknown"):
+        await engine.run(conduit, {})
+
+
+async def test_unknown_template_ref_rejected(store):
+    """Verify a {{ref.output}} to an unknown task fails validation at run start.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+            {"name": "b", "description": "d", "task": "use {{ghost.output}}",
+             "tool": "tool:bash", "depends_on": ["a"]},
+        ]
+    )
+    engine = Engine({"tool:bash": FakeExecutor()}, store)
+    with pytest.raises(ConduitValidationError, match="references unknown task 'ghost'"):
+        await engine.run(conduit, {})
+
+
+async def test_mid_loop_template_error_marks_task_failed(store):
+    """Verify a TemplateError on iteration >= 2 fails the task (not stuck running).
+
+    :param store: FilesystemStore fixture.
+    """
+    class InputEatingExecutor(FakeExecutor):
+        async def execute(self, task, resolved_command, context):
+            """Remove input 'x' so the next iteration's resolve fails.
+
+            :param task: task definition being executed.
+            :param resolved_command: command string after template resolution.
+            :param context: flow context provided by the engine.
+            """
+            context.inputs.pop("x", None)
+            return await super().execute(task, resolved_command, context)
+
+    conduit = _conduit(
+        [{"name": "a", "description": "d", "task": "{{inputs.x}}",
+          "tool": "tool:bash", "depends_on": [], "repeat": 2}],
+        inputs={"x": "desc"},
+    )
+    engine = Engine({"tool:bash": InputEatingExecutor()}, store)
+    captured: list[str] = []
+    with pytest.raises(ValueError, match="iteration 2"):
+        await engine.run(conduit, {"x": "v"}, on_flow_started=captured.append)
+    p = store.read_progress(captured[0])
+    assert p.status == FlowStatus.failed
+    assert p.tasks["a"].status == TaskStatus.failed
+
+
+async def test_first_failure_error_preserved(store):
+    """Verify the first failing task's error wins when several fail together.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+            {"name": "b", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+        ]
+    )
+    engine = Engine({"tool:bash": FakeExecutor(fail={"a", "b"})}, store)
+    with pytest.raises(RuntimeError, match="task 'a' failed"):
         await engine.run(conduit, {})
 
 
@@ -981,7 +1110,7 @@ async def test_run_does_not_write_outputs_yaml_on_failure(store):
     flow_id = store.list_flows()[0]
     flow_dir = store._flow_dir(flow_id)
     assert not (flow_dir / "outputs.yaml").exists()
-    assert (flow_dir / "logs.json").exists()
+    assert (flow_dir / "logs.jsonl").exists()
 
 
 async def test_run_outputs_yaml_preserves_declaration_order(store):
@@ -1113,4 +1242,25 @@ async def test_loop_history_accumulates_all_iterations(store):
         "",
         "--- iteration 1 ---\no1",
         "--- iteration 1 ---\no1\n\n--- iteration 2 ---\no2",
+    ]
+
+
+async def test_loop_history_respects_engine_limit(store):
+    """Verify the engine's loop_history_limit caps {{loop.history}} rendering.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "refine", "description": "d", "task": "{{loop.history}}",
+             "tool": "tool:bash", "depends_on": [], "repeat": 3},
+        ]
+    )
+    fake = RecordingScriptedExecutor(["o1", "o2", "o3"])
+    engine = Engine({"tool:bash": fake}, store, loop_history_limit=1)
+    await engine.run(conduit, {})
+    assert fake.commands == [
+        "",
+        "--- iteration 1 ---\no1",
+        "--- 1 earlier iterations omitted ---\n\n--- iteration 2 ---\no2",
     ]

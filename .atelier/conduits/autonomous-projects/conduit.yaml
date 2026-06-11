@@ -1,30 +1,40 @@
 name: autonomous-projects
 description: >
-  Pick the highest-priority idle project from a folder-structured project
-  directory and advance it via Claude Code. Projects live in PROJECTS/, tasks
-  in TASKS/<name>/ with kanban folders (to-do, in-progress, pending-review,
-  done). PAUSED/ holds projects the human wants skipped. If no project is
-  eligible, emit SKIP and short-circuit.
+  Pick the highest-priority idle project from this conduit's own project
+  folders and advance it via Claude Code. Projects live in projects/working/,
+  tasks in tasks/<name>/ with kanban folders (to-do, in-progress,
+  pending-review, done). projects/paused/ holds projects the human wants
+  skipped. If no project is eligible, emit SKIP and short-circuit.
 
 timeout: 7200
 max_concurrency: 1
 
 inputs:
-  projects_dir: >-
-    Path to the AUTONOMOUS_PROJECTS root directory containing PROJECTS/,
-    TASKS/, and PAUSED/ subdirectories.
-  max_usage_pct: >-
-    Skip if Claude Code 5h-window usage is at or above this percent.
-    Recommended default: "80".
-  idle_hours: >-
-    Project must have been untouched (no git commit or file edit under
-    `location`) for at least this many hours. Recommended default: "2".
-  max_pending_review: >-
-    Skip a project once its pending-review/ folder has at least this many
-    task files. Recommended default: "3".
-  token_limit: >-
-    Token ceiling used to compute usage %. Approximate your 5h Claude Code
-    session quota. Recommended default: "19000000".
+  projects_dir:
+    description: >-
+      Root directory holding `projects/working/`, `projects/paused/`, and
+      `tasks/`. Defaults to this conduit's own directory; point it elsewhere
+      to keep projects outside the repo.
+    default: .atelier/conduits/autonomous-projects
+  max_usage_pct:
+    description: >-
+      Skip if Claude Code 5h-window usage is at or above this percent.
+    default: "80"
+  idle_hours:
+    description: >-
+      Project must have been untouched (no git commit or file edit under
+      `location`) for at least this many hours.
+    default: "2"
+  max_pending_review:
+    description: >-
+      Skip a project once its pending-review/ folder has at least this many
+      task files.
+    default: "3"
+  token_limit:
+    description: >-
+      Token ceiling used to compute usage %. Approximate your 5h Claude Code
+      session quota.
+    default: "19000000"
 
 tasks:
   - pick_project:
@@ -33,7 +43,7 @@ tasks:
       depends_on: []
       task: |
         set -euo pipefail
-        python3 /Users/ganga/Documents/personal_repos/flow-atelier/.atelier/conduits/autonomous-projects/picker.py \
+        python3 .atelier/conduits/autonomous-projects/picker.py \
           --projects-dir "{{inputs.projects_dir}}" \
           --max-usage-pct "{{inputs.max_usage_pct}}" \
           --idle-hours "{{inputs.idle_hours}}" \
@@ -63,36 +73,42 @@ tasks:
           priority signal — address what the reviewer flagged before picking
           unrelated work.
 
-          The project file path is on the line beginning with "READY: ".
-          The projects root directory is: {{inputs.projects_dir}}
+          The project file path is on the line beginning with "READY: ". It lives at
+          {{inputs.projects_dir}}/projects/working/<name>.md.
 
           Do the following:
           1. Read the project markdown file (path from the READY line). Parse the YAML
-             frontmatter (priority, location, use_git) and the `# Goal` section. Treat
-             this file as READ-ONLY: it is owned by the human. Never edit it.
+             frontmatter (priority, location, use_git), the `# Goal` section, and the
+             `# Constraints` section if present. Treat this file as READ-ONLY: it is
+             owned by the human. Never edit it. The constraints are binding — every task
+             you propose or execute must respect them. If a constraint blocks the obvious
+             next step or names a decision only the human can make, do not work around it:
+             record the conflict in the task's `# Validation process` and pick work that
+             does not depend on the unresolved decision.
           2. The project name is the stem of the project markdown file. Find its task
-             directory at: {{inputs.projects_dir}}/TASKS/<project-name>/
+             directory at: {{inputs.projects_dir}}/tasks/<project-name>/
           3. For memory of what has already happened, skim the task files in `done/` and
-             `pending-review/` — their `# Summary of what was done` sections record past
-             work. Use them to avoid repeating work already completed or awaiting review.
+             `pending-review/` — their `# What` and `# Validation process` sections record
+             past work. Use them to avoid repeating work already completed or awaiting review.
           4. If in-progress/ has a .md file, resume it — skip to step 7 to finish that
              task before picking new work.
           5. If to-do/ has at least one .md file, pick the top one. This is the task to work on.
              If to-do/ is empty: review the project against its `# Goal` and the task
-             history from step 3, propose one concrete next step, and create a new task
-             .md file there with only a description:
-               ```
-               # Description
-               <what to do>
-               ```
-             Name the file with a descriptive slug (e.g. `setup-ci-pipeline.md`).
-             This new file is now the task to work on.
+             history from step 3, propose one concrete next step, and create a new task .md
+             file there by copying `.atelier/conduits/autonomous-projects/task template.md`
+             and filling in `# What`
+             (the next step), `# Why`, and `# How`. Leave the frontmatter and
+             `# Validation process` for the completion step. Name the file with a descriptive
+             slug (e.g. `setup-ci-pipeline.md`). This new file is now the task to work on.
           6. Move that file from to-do/ to in-progress/.
-          7. Read the task file. The `# Description` section tells you what to do.
+          7. Read the task file. The `# What` section tells you what to do.
           8. cd into the project's `location` directory from the frontmatter.
           9. Do the work. Respect `use_git`: if true, commit changes with a clear message;
              if false, just edit files.
-          10. When finished, update the task file: fill in `# Summary of what was done` and
-              `# Location` (local path or PR URL). Then move the file from in-progress/ to
-              pending-review/. Never move tasks to done/ — that is reserved for the human
-              reviewer.
+          10. When finished, update the task file: fill in the frontmatter (`datetime`
+              — the completion date AND time, e.g. the output of
+              `date '+%Y-%m-%d %H:%M:%S %Z'`; `location` (local path or PR URL);
+              `commits`) and the `# Validation process`
+              section describing how you verified the work. Then move the file from
+              in-progress/ to pending-review/. Never move tasks to done/ — that is reserved
+              for the human reviewer.

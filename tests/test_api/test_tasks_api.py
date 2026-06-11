@@ -1,8 +1,6 @@
 """/tasks/run REST tests."""
 from __future__ import annotations
 
-import json
-
 import httpx
 import pytest
 
@@ -50,8 +48,7 @@ async def test_run_task_executes_bash_and_returns_logs(fixture):
         for entry in body["logs"]
     )
 
-    flow_dir = atelier.store._flow_dir(body["flow_id"])
-    raw_logs = json.loads((flow_dir / "logs.json").read_text())
+    raw_logs = [e.model_dump() for e in atelier.store.read_logs(body["flow_id"])]
     assert raw_logs
 
 

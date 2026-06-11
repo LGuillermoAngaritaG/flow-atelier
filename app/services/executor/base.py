@@ -38,6 +38,9 @@ class FlowContext:
     ``{{loop.previous}}`` / ``{{loop.history}}`` when an executor resolves
     its own templates (e.g. nested-conduit / hitl inputs). Shared by
     reference with the engine, so it reflects iterations completed so far."""
+    loop_history_limit: int = 0
+    """Max iterations ``{{loop.history}}`` renders, newest kept; <= 0 means
+    unlimited. Mirrors the engine's configured limit."""
 
 
 class ExecutorBase(ABC):

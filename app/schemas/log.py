@@ -75,7 +75,7 @@ class ExecutionResult(BaseModel):
 
 
 class LogEntry(BaseModel):
-    """One entry in the flow's logs.json."""
+    """One entry in the flow's logs.jsonl."""
 
     task: str
     tool: str

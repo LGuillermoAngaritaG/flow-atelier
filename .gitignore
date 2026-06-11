@@ -6,6 +6,7 @@ dist/
 wheels/
 *.egg-info
 *.spec
+.ruff_cache/
 
 # Virtual environments
 .venv*
@@ -17,3 +18,4 @@ claude.md
 .DS_Store
 .opencode
 AGENTS.md
+.agents/
