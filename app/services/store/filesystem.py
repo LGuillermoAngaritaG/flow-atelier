@@ -69,6 +69,8 @@ class FilesystemStore(StoreBase):
             except OSError:
                 # Read-only HOME / sandbox — degrade to project-only mode.
                 self.global_dir = None
+        # Both caches grow with distinct flow ids and are never pruned;
+        # entries are tiny and bounded by process lifetime, so that's fine.
         self._log_locks: dict[str, asyncio.Lock] = {}
         self._flow_paths: dict[str, Path] = {}
 
@@ -112,7 +114,13 @@ class FilesystemStore(StoreBase):
         """
         if flow_id in self._flow_paths:
             return self._flow_paths[flow_id]
-        # fall-back: search (for CLI `status`/`list` after restart)
+        # Top-level flows live at a deterministic path; only nested child
+        # flows (under <parent>/flows/<id>) need the recursive search.
+        top_level = self.base_dir / "flows" / flow_id
+        if top_level.is_dir():
+            self._flow_paths[flow_id] = top_level
+            return top_level
+        # fall-back: search (for nested flows after restart)
         for candidate in self.base_dir.rglob(flow_id):
             if candidate.is_dir() and candidate.name == flow_id:
                 self._flow_paths[flow_id] = candidate
@@ -389,6 +397,10 @@ class FilesystemStore(StoreBase):
         return [LogEntry.model_validate(item) for item in raw]
 
     # ------------------------------------------------------------------ progress
+
+    # write_progress / write_outputs / append_input are intentionally
+    # synchronous: the files are tiny, writes are atomic-replace, and
+    # crash-resume depends on state transitions hitting disk in order.
 
     def write_progress(self, flow_id: str, progress: Progress) -> None:
         """Atomically write ``progress.json`` for ``flow_id``.

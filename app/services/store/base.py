@@ -105,6 +105,8 @@ class StoreBase(ABC):
         ...
 
     # --- progress ---
+    # State writes are deliberately synchronous (unlike append_log): the
+    # payloads are tiny and crash-resume relies on ordered persistence.
     @abstractmethod
     def write_progress(self, flow_id: str, progress: Progress) -> None:
         """Persist the progress snapshot for ``flow_id``.

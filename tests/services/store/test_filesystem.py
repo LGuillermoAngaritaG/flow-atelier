@@ -189,6 +189,34 @@ def test_append_input_overwrites(store):
     assert data == {"existing": "changed", "new": "added"}
 
 
+def test_flow_dir_resolves_top_level_without_scan(store, monkeypatch):
+    """A fresh store instance must resolve top-level flow dirs from the
+    deterministic path, never via the recursive rglob fallback.
+
+    :param store: seeded FilesystemStore fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    fid = store.create_flow("hello", {})
+    fresh = FilesystemStore(store.base_dir)
+
+    def _no_scan(self, pattern):
+        raise AssertionError("rglob fallback must not be used for top-level flows")
+
+    monkeypatch.setattr(type(fresh.base_dir), "rglob", _no_scan)
+    assert fresh._flow_dir(fid).name == fid
+
+
+def test_flow_dir_falls_back_to_scan_for_nested(store):
+    """Nested child flows are still found via the recursive fallback.
+
+    :param store: seeded FilesystemStore fixture.
+    """
+    parent = store.create_flow("hello", {})
+    child = store.create_flow("hello", {}, parent_flow_id=parent)
+    fresh = FilesystemStore(store.base_dir)
+    assert fresh._flow_dir(child).parent.name == "flows"
+
+
 def test_read_unknown_conduit_raises(store):
     """Verify read_conduit raises FileNotFoundError for unknown names.
 
