@@ -28,23 +28,37 @@ class FastApiServer(ApiServerBase):
         atelier: Atelier,
         *,
         cors_origins: Iterable[str] | None = None,
+        api_token: str | None = None,
     ) -> FastAPI:
         """Build the FastAPI app, attach CORS, and register all routes.
 
         :param atelier: facade exposed via ``app.state.atelier``
-        :param cors_origins: explicit CORS origins; ``None`` means ``["*"]``
+        :param cors_origins: explicit CORS origins; ``None`` means
+            localhost-only origins (the API can run shell commands, so a
+            wildcard would let any webpage drive it cross-origin)
+        :param api_token: bearer token required on every request when set;
+            ``None`` disables auth (local trust)
         """
         app = FastAPI(title="flow-atelier", version="0.1.0")
         app.state.atelier = atelier
+        app.state.api_token = api_token or ""
 
-        origins = list(cors_origins) if cors_origins else ["*"]
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=origins,
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+        if cors_origins:
+            app.add_middleware(
+                CORSMiddleware,
+                allow_origins=list(cors_origins),
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
+        else:
+            app.add_middleware(
+                CORSMiddleware,
+                allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
 
         # Routes mount themselves below — imported here to avoid
         # circular imports between routes and the app factory.

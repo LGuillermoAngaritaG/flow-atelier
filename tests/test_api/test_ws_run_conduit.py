@@ -184,3 +184,46 @@ def test_ws_run_unknown_conduit_emits_flow_failed(env, tmp_path):
                 ws, lambda e: e["type"] in ("flow_failed", "error")
             )
     assert envelopes[-1]["type"] in ("flow_failed", "error")
+
+
+def test_ws_rejects_bad_token(env):
+    """With an api_token configured, a WS without the right ?token= closes.
+
+    :param env: env fixture providing (atelier, app).
+    """
+    atelier, _ = env
+    app = FastApiServer().create_app(atelier, api_token="s3cret")
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/run-conduit") as ws:
+            closed = ws.receive()
+        assert closed["type"] == "websocket.close"
+        assert closed["code"] == 1008
+
+        with client.websocket_connect("/ws/run-conduit?token=wrong") as ws:
+            closed = ws.receive()
+        assert closed["type"] == "websocket.close"
+        assert closed["code"] == 1008
+
+
+def test_ws_accepts_valid_token(env, tmp_path):
+    """With an api_token configured, ?token=<token> connects and runs.
+
+    :param env: env fixture providing (atelier, app).
+    :param tmp_path: pytest temp directory fixture.
+    """
+    atelier, _ = env
+    app = FastApiServer().create_app(atelier, api_token="s3cret")
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/run-conduit?token=s3cret") as ws:
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "run",
+                        "conduit_name": "hello",
+                        "inputs": {},
+                        "run_path": str(tmp_path),
+                    }
+                )
+            )
+            envelopes = _drain_until(ws, lambda e: e["type"] == "flow_complete")
+    assert envelopes[-1]["type"] == "flow_complete"

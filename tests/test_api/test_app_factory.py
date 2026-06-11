@@ -54,8 +54,9 @@ async def test_create_app_registers_cors(atelier):
     )
 
 
-async def test_create_app_default_cors_is_wildcard(atelier):
-    """Verify the default CORS policy is wildcard (or echoed origin).
+async def test_create_app_default_cors_is_localhost_only(atelier):
+    """Verify the default CORS policy allows localhost origins only —
+    the API can run shell commands, so '*' would let any webpage drive it.
 
     :param atelier: atelier fixture.
     """
@@ -63,13 +64,67 @@ async def test_create_app_default_cors_is_wildcard(atelier):
     app = server.create_app(atelier)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.options(
+        ok = await client.options(
+            "/",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        denied = await client.options(
             "/",
             headers={
                 "Origin": "http://example.com",
                 "Access-Control-Request-Method": "GET",
             },
         )
-    # Either wildcard or echoed origin is acceptable.
-    allow = resp.headers.get("access-control-allow-origin")
-    assert allow in ("*", "http://example.com")
+    assert ok.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    assert denied.headers.get("access-control-allow-origin") is None
+
+
+def _client(app) -> httpx.AsyncClient:
+    """Build an in-process httpx client for the given app.
+
+    :param app: FastAPI instance under test.
+    """
+    transport = httpx.ASGITransport(app=app)
+    return httpx.AsyncClient(transport=transport, base_url="http://test")
+
+
+async def test_no_token_configured_allows_anonymous(atelier):
+    """Without an api_token, requests need no Authorization header.
+
+    :param atelier: atelier fixture.
+    """
+    app = FastApiServer().create_app(atelier)
+    async with _client(app) as client:
+        resp = await client.get("/flows")
+    assert resp.status_code == 200
+
+
+async def test_token_rejects_missing_or_wrong_bearer(atelier):
+    """With an api_token set, missing or wrong bearers get 401.
+
+    :param atelier: atelier fixture.
+    """
+    app = FastApiServer().create_app(atelier, api_token="s3cret")
+    async with _client(app) as client:
+        missing = await client.get("/flows")
+        wrong = await client.get(
+            "/flows", headers={"Authorization": "Bearer nope"}
+        )
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+
+
+async def test_token_accepts_valid_bearer(atelier):
+    """With an api_token set, the matching bearer is accepted.
+
+    :param atelier: atelier fixture.
+    """
+    app = FastApiServer().create_app(atelier, api_token="s3cret")
+    async with _client(app) as client:
+        resp = await client.get(
+            "/flows", headers={"Authorization": "Bearer s3cret"}
+        )
+    assert resp.status_code == 200

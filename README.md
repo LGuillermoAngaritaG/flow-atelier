@@ -210,7 +210,16 @@ API and WebSocket routes take priority over static files.
 
 - Binds to `127.0.0.1:8000` by default. Pass `--host 0.0.0.0` to expose
   on the LAN.
-- `--cors-origin` is repeatable; absent means `["*"]`.
+- `--cors-origin` is repeatable; absent means localhost origins only
+  (the API can run shell commands, so a wildcard would let any webpage
+  drive a local server cross-origin).
+- Optional auth: set `ATELIER_API_TOKEN=<secret>` and every REST request
+  must send `Authorization: Bearer <secret>`; WebSocket connections must
+  pass `?token=<secret>`. Unset means no auth (local trust). `serve`
+  warns when binding a non-loopback host without a token. Note: the
+  bundled dashboard does not send a token yet, so setting one breaks the
+  SPA until the frontend adds support — the token is for headless/API
+  use today.
 - All JSON payloads are snake_case; the frontend translates camelCase ↔
   snake_case on its side.
 

@@ -35,7 +35,7 @@ def serve_cmd(
     ),
     cors_origin: list[str] = typer.Option(
         [], "--cors-origin",
-        help="Allowed CORS origin (repeatable). Default = '*'."
+        help="Allowed CORS origin (repeatable). Default = localhost only."
     ),
     log_level: str = typer.Option(
         "INFO", "--log-level",
@@ -47,7 +47,8 @@ def serve_cmd(
     :param host: bind host for the HTTP server.
     :param port: bind port (use 0 for an ephemeral port).
     :param reload_interval: seconds between schedule store rescans.
-    :param cors_origin: allowed CORS origins (defaults to ``*`` when empty).
+    :param cors_origin: allowed CORS origins (defaults to localhost-only
+        origins when empty).
     :param log_level: logging level for uvicorn and the daemon.
     """
     import uvicorn
@@ -140,8 +141,17 @@ def serve_cmd(
         finally:
             await daemon.stop()
 
+    if host not in ("127.0.0.1", "localhost", "::1") and not settings.api_token:
+        console.print(
+            "[yellow]warning:[/yellow] serving on a non-loopback host without "
+            "ATELIER_API_TOKEN — anyone who can reach this address can run "
+            "shell commands via the API."
+        )
+
     cors = list(cors_origin) if cors_origin else None
-    api_app = FastApiServer().create_app(atelier, cors_origins=cors)
+    api_app = FastApiServer().create_app(
+        atelier, cors_origins=cors, api_token=settings.api_token or None
+    )
     api_app.router.lifespan_context = _lifespan
 
     config = uvicorn.Config(

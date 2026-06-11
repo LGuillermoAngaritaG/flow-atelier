@@ -78,3 +78,12 @@ class AtelierSettings(BaseSettings):
         ),
     )
     done_marker: str = "[ATELIER_DONE]"
+    api_token: str = Field(
+        default="",
+        description=(
+            "Optional bearer token for the HTTP/WS API (env ATELIER_API_TOKEN). "
+            "When set, every REST request must send 'Authorization: Bearer "
+            "<token>' and WS connections must pass '?token=<token>'. "
+            "Empty = no auth (local trust)."
+        ),
+    )

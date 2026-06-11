@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,15 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
     """
     base_atelier: Atelier = get_atelier(websocket)  # type: ignore[arg-type]
     await websocket.accept()
+
+    # Browser WebSockets cannot set headers, so the bearer token (when
+    # configured) is checked from the ?token= query parameter instead.
+    expected_token = getattr(websocket.app.state, "api_token", "")
+    if expected_token and not secrets.compare_digest(
+        websocket.query_params.get("token", ""), expected_token
+    ):
+        await websocket.close(code=1008, reason="invalid or missing API token")
+        return
 
     async def _send(payload: dict[str, Any]) -> None:
         """Send a JSON payload if the socket is still connected.

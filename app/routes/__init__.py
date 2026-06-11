@@ -7,7 +7,7 @@ mount point.
 """
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
 
 def register_routes(app: FastAPI) -> None:
@@ -16,9 +16,13 @@ def register_routes(app: FastAPI) -> None:
     :param app: FastAPI application that receives the routers.
     """
     from app.routes import conduits, flows, schedules, tasks, ws
+    from app.services.api.base import require_token
 
-    app.include_router(conduits.router)
-    app.include_router(schedules.router)
-    app.include_router(tasks.router)
-    app.include_router(flows.router)
+    # REST routers enforce the optional bearer token; the WS route checks
+    # its ?token= query param itself (browser WS cannot set headers).
+    deps = [Depends(require_token)]
+    app.include_router(conduits.router, dependencies=deps)
+    app.include_router(schedules.router, dependencies=deps)
+    app.include_router(tasks.router, dependencies=deps)
+    app.include_router(flows.router, dependencies=deps)
     app.include_router(ws.router)
