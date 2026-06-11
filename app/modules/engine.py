@@ -15,6 +15,7 @@ CLIs beyond the ``StoreBase`` / ``ExecutorBase`` interfaces it is given.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 import traceback
 from collections.abc import Callable
@@ -50,6 +51,11 @@ from app.services.store.base import StoreBase
 
 class ConduitValidationError(ValueError):
     pass
+
+
+# Margin added to conduit.timeout for the engine's backstop wait_for, so
+# executors that self-enforce ctx.timeout always finish gracefully first.
+BACKSTOP_GRACE_SECONDS = 5
 
 
 def _now() -> str:
@@ -500,7 +506,12 @@ class Engine:
                     loop_predicate = parse_output_predicate(t.while_)
                     loop_mode = "while"
 
-                async with semaphore:
+                # HITL waits on a human: it must not hold a concurrency
+                # slot (starving parallel-ready tasks) nor be killed by
+                # the backstop timeout while the user is away.
+                is_hitl = t.tool.value == ToolType.hitl.value
+
+                async with (contextlib.nullcontext() if is_hitl else semaphore):
                     last_output = ""
                     predicate_matched = False
                     # Identical-output streak over this run only; seeded
@@ -528,11 +539,16 @@ class Engine:
                             # Grace margin: executors that self-enforce
                             # ctx.timeout (bash, harness) return a graceful
                             # result preserving output; this outer wrapper is
-                            # the backstop for those that don't (e.g. hitl)
-                            # and must not win the race against them.
+                            # the backstop for those that don't, and must not
+                            # win the race against them. HITL is exempt: a
+                            # human stepping away is not a timeout.
                             result = await asyncio.wait_for(
                                 executor.execute(t, resolved, ctx),
-                                timeout=conduit.timeout + 5,
+                                timeout=(
+                                    None
+                                    if is_hitl
+                                    else conduit.timeout + BACKSTOP_GRACE_SECONDS
+                                ),
                             )
                         except TimeoutError:
                             result = ExecutionResult(
