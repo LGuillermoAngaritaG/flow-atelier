@@ -1,8 +1,7 @@
 """Tests for flow_atelier.cli.updater — all network calls are mocked."""
 from __future__ import annotations
 
-import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -13,7 +12,6 @@ from flow_atelier.cli.updater import (
     is_frozen_binary,
     start_background_update_check,
 )
-
 
 # ---------------------------------------------------------------------------
 # 1. is_frozen_binary
@@ -101,7 +99,6 @@ def test_pip_install_shows_upgrade_hint(monkeypatch, capsys):
 def test_verify_hash_rejects_mismatch():
     """_download_and_verify returns None when the SHA-256 doesn't match."""
     fake_binary = b"this is a fake binary"
-    correct_hash = __import__("hashlib").sha256(fake_binary).hexdigest()
     wrong_hash = "0" * 64
 
     sums_content = f"{wrong_hash}  atelier-linux-x86_64\n"
