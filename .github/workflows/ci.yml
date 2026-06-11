@@ -3,6 +3,8 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 jobs:
   lint:
@@ -30,5 +32,5 @@ jobs:
           enable-cache: true
       - run: uv python install 3.13
       - run: uv sync --dev
-      - name: Tests (excluding live harness)
-        run: uv run pytest --ignore=tests/test_live_harness.py
+      - name: Tests (live harness excluded via marker)
+        run: uv run pytest

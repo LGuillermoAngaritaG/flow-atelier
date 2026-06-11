@@ -1,14 +1,14 @@
 """Test that WebSocket emits step messages correctly for harness vs non-harness tasks."""
 from __future__ import annotations
 
-from app.schemas.log import IntermediateStep, StepKind, TaskEvent
-from app.schemas.progress import TaskStatus
+from flow_atelier.schemas.log import IntermediateStep, StepKind, TaskEvent
+from flow_atelier.schemas.progress import TaskStatus
 
 
 async def test_step_messages_emitted_for_non_harness_task() -> None:
     """Non-harness tasks (bash, hitl, conduit) should emit individual StepMessage
     envelopes from on_task_event."""
-    from app.routes.ws import _step_status_for
+    from flow_atelier.routes.ws import _step_status_for
 
     steps = [
         IntermediateStep(kind=StepKind.thinking, text="analyzing"),

@@ -4,10 +4,10 @@ import re
 import pytest
 import yaml
 
-from app.schemas.conduit import Conduit, ToolType
-from app.schemas.flow import FLOW_ID_RE, new_flow_id, parse_flow_id
-from app.schemas.log import LogEntry
-from app.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
+from flow_atelier.schemas.conduit import Conduit, ToolType
+from flow_atelier.schemas.flow import FLOW_ID_RE, new_flow_id, parse_flow_id
+from flow_atelier.schemas.log import LogEntry
+from flow_atelier.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
 
 SAMPLE_YAML = """
 name: deploy_pipeline
@@ -109,6 +109,40 @@ def test_inputs_accept_string_and_object_forms():
     assert c.inputs["plain"].default is None
     assert c.inputs["rich"].description == "with default"
     assert c.inputs["rich"].default == "dv"
+
+
+def test_conduit_rejects_nonpositive_timeout():
+    """Verify timeout values below 1 fail validation."""
+    for bad in (0, -5):
+        with pytest.raises(Exception, match="timeout"):
+            Conduit.model_validate(
+                {
+                    "name": "x",
+                    "description": "d",
+                    "timeout": bad,
+                    "tasks": [
+                        {"a": {"description": "d", "task": "x", "tool": "tool:bash",
+                               "depends_on": []}}
+                    ],
+                }
+            )
+
+
+def test_conduit_rejects_nonpositive_max_concurrency():
+    """Verify max_concurrency values below 1 fail validation."""
+    for bad in (0, -1):
+        with pytest.raises(Exception, match="max_concurrency"):
+            Conduit.model_validate(
+                {
+                    "name": "x",
+                    "description": "d",
+                    "max_concurrency": bad,
+                    "tasks": [
+                        {"a": {"description": "d", "task": "x", "tool": "tool:bash",
+                               "depends_on": []}}
+                    ],
+                }
+            )
 
 
 def test_duplicate_task_names_rejected():

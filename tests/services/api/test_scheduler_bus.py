@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.api.scheduler_bus import SchedulerEventBus
+from flow_atelier.services.api.scheduler_bus import SchedulerEventBus
 
 
 async def test_broadcast_reaches_every_subscriber():

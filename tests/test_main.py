@@ -8,9 +8,9 @@ import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
-from app.cli import app
-from app.cli.rendering.render import _render_task_event, _truncate_tail
-from app.schemas.log import TaskEvent
+from flow_atelier.cli import app
+from flow_atelier.cli.rendering.render import _render_task_event, _truncate_tail
+from flow_atelier.schemas.log import TaskEvent
 
 CONDUIT_YAML = """
 name: hello
@@ -122,6 +122,27 @@ def test_run_and_status(workdir):
     assert result2.exit_code == 0
     assert "greet" in result2.output
     assert "completed" in result2.output
+
+
+def test_version_flag():
+    """Verify --version prints the package version and exits 0."""
+    runner = CliRunner()
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert "flow-atelier" in result.output
+
+
+def test_run_unknown_conduit_exits_cleanly(workdir):
+    """Verify `run <typo>` prints a friendly error instead of a traceback.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    result = runner.invoke(app, ["run", "no-such-conduit"])
+    assert result.exit_code == 1
+    assert "unknown conduit" in result.output
+    assert "no-such-conduit" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_list_flows(workdir):
@@ -859,7 +880,7 @@ def test_render_live_streamed_task_is_compact():
 
 def test_render_skipped_task_shows_reason():
     """Verify a skipped task renders compactly with its skip reason."""
-    from app.schemas.progress import TaskStatus
+    from flow_atelier.schemas.progress import TaskStatus
     event = TaskEvent(
         task="deploy",
         tool="tool:bash",
@@ -878,7 +899,7 @@ def test_render_skipped_task_shows_reason():
 
 def test_render_cancelled_task_shows_reason():
     """Verify a cancelled task renders compactly with its cancel reason."""
-    from app.schemas.progress import TaskStatus
+    from flow_atelier.schemas.progress import TaskStatus
     event = TaskEvent(
         task="after",
         tool="tool:bash",
@@ -956,7 +977,7 @@ def _patch_tty(monkeypatch, *, isatty: bool = True):
     :param monkeypatch: pytest monkeypatch fixture.
     :param isatty: value that ``sys.stdin.isatty()`` should report.
     """
-    import app.cli.commands.run as _run_mod
+    import flow_atelier.cli.commands.run as _run_mod
 
     _real_sys = _run_mod.sys
 

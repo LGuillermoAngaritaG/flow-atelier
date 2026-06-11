@@ -5,8 +5,8 @@ import httpx
 import pytest
 import yaml
 
-from app.core.atelier import Atelier
-from app.services.api.app import FastApiServer
+from flow_atelier.core.atelier import Atelier
+from flow_atelier.services.api.app import FastApiServer
 
 
 @pytest.fixture
@@ -142,7 +142,7 @@ async def test_create_logs_when_daemon_sync_fails(fixture, caplog):
             raise RuntimeError("boom")
 
     atelier.scheduler_daemon = _BoomDaemon()
-    with caplog.at_level(logging.WARNING, logger="app.routes.schedules"):
+    with caplog.at_level(logging.WARNING, logger="flow_atelier.routes.schedules"):
         resp = await client.post("/schedules", json=_payload())
     assert resp.status_code == 201
     assert any("scheduler sync after create failed" in r.message for r in caplog.records)

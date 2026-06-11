@@ -5,12 +5,12 @@ from typing import Any
 import pytest
 import yaml
 
-from app.modules.engine import ConduitValidationError, Engine
-from app.schemas.conduit import Conduit
-from app.schemas.log import ExecutionResult
-from app.schemas.progress import FlowStatus, TaskStatus
-from app.services.executor.base import ExecutorBase
-from app.services.store.filesystem import FilesystemStore
+from flow_atelier.modules.engine import ConduitValidationError, Engine
+from flow_atelier.schemas.conduit import Conduit
+from flow_atelier.schemas.log import ExecutionResult
+from flow_atelier.schemas.progress import FlowStatus, TaskStatus
+from flow_atelier.services.executor.base import ExecutorBase
+from flow_atelier.services.store.filesystem import FilesystemStore
 
 
 class FakeExecutor(ExecutorBase):
@@ -410,6 +410,60 @@ async def test_unknown_template_ref_rejected(store):
     engine = Engine({"tool:bash": FakeExecutor()}, store)
     with pytest.raises(ConduitValidationError, match="references unknown task 'ghost'"):
         await engine.run(conduit, {})
+
+
+async def test_validate_rejects_ref_not_in_deps(store):
+    """A {{ref.output}} to a task outside the depends_on chain must fail
+    validation: whether it resolves at runtime is a scheduling race.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+            {"name": "b", "description": "d", "task": "use {{a.output}}",
+             "tool": "tool:bash", "depends_on": []},
+        ]
+    )
+    engine = Engine({"tool:bash": FakeExecutor()}, store)
+    with pytest.raises(ConduitValidationError, match="not in its depends_on chain"):
+        await engine.run(conduit, {})
+
+
+async def test_validate_accepts_transitive_ref(store):
+    """A ref to a transitive dependency (a <- b <- c, c uses a) is valid.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+            {"name": "b", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": ["a"]},
+            {"name": "c", "description": "d", "task": "use {{a.output}}",
+             "tool": "tool:bash", "depends_on": ["b"]},
+        ]
+    )
+    engine = Engine({"tool:bash": FakeExecutor()}, store)
+    flow_id = await engine.run(conduit, {})
+    assert store.read_progress(flow_id).status == FlowStatus.completed
+
+
+async def test_validate_accepts_ref_via_conditional_dep(store):
+    """A ref through a conditional dependency target counts as declared.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []},
+            {"name": "b", "description": "d", "task": "use {{a.output}}",
+             "tool": "tool:bash", "depends_on": ["a.output.match(out-a)"]},
+        ]
+    )
+    engine = Engine({"tool:bash": FakeExecutor()}, store)
+    flow_id = await engine.run(conduit, {})
+    assert store.read_progress(flow_id).status == FlowStatus.completed
 
 
 async def test_mid_loop_template_error_marks_task_failed(store):
@@ -1264,3 +1318,120 @@ async def test_loop_history_respects_engine_limit(store):
         "--- iteration 1 ---\no1",
         "--- 1 earlier iterations omitted ---\n\n--- iteration 2 ---\no2",
     ]
+
+
+# ---------------------------------------------------------------- hitl exemptions
+
+
+class BlockingExecutor(ExecutorBase):
+    """Executor that blocks until released, simulating a human at the keyboard."""
+
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def execute(self, task, resolved_command, context):
+        """Block until the test releases the executor.
+
+        :param task: task definition being executed.
+        :param resolved_command: command string after template resolution.
+        :param context: flow context provided by the engine.
+        """
+        self.started.set()
+        await self.release.wait()
+        return ExecutionResult(exit_code=0, output="human-ok", stdout="human-ok")
+
+
+async def test_hitl_task_does_not_occupy_concurrency_slot(store):
+    """A blocked hitl task must not starve parallel-ready tasks.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "ask", "description": "d", "task": "x", "tool": "tool:hitl",
+             "depends_on": []},
+            {"name": "work", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": []},
+        ],
+        max_concurrency=1,
+    )
+    hitl = BlockingExecutor()
+    bash = FakeExecutor()
+    engine = Engine({"tool:hitl": hitl, "tool:bash": bash}, store)
+    run = asyncio.create_task(engine.run(conduit, {}))
+    await asyncio.wait_for(hitl.started.wait(), 5)
+    # With max_concurrency=1, the bash task only runs while hitl is still
+    # blocked if hitl does not hold the semaphore slot.
+    for _ in range(200):
+        if bash.calls:
+            break
+        await asyncio.sleep(0.01)
+    assert bash.calls == ["work"]
+    hitl.release.set()
+    flow_id = await asyncio.wait_for(run, 5)
+    p = store.read_progress(flow_id)
+    assert p.status == FlowStatus.completed
+
+
+async def test_hitl_task_survives_past_conduit_timeout(store, monkeypatch):
+    """The backstop timeout must not kill a hitl task waiting on a human.
+
+    :param store: FilesystemStore fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    import flow_atelier.modules.engine as engine_mod
+
+    monkeypatch.setattr(engine_mod, "BACKSTOP_GRACE_SECONDS", 0)
+
+    class SlowHitl(ExecutorBase):
+        async def execute(self, task, resolved_command, context):
+            await asyncio.sleep(1.3)
+            return ExecutionResult(exit_code=0, output="ok", stdout="ok")
+
+    conduit = _conduit(
+        [
+            {"name": "ask", "description": "d", "task": "x", "tool": "tool:hitl",
+             "depends_on": []},
+        ],
+        timeout=1,
+    )
+    engine = Engine({"tool:hitl": SlowHitl()}, store)
+    flow_id = await engine.run(conduit, {})
+    p = store.read_progress(flow_id)
+    assert p.status == FlowStatus.completed
+    assert p.tasks["ask"].status == TaskStatus.completed
+
+
+async def test_backstop_timeout_still_kills_non_hitl(store, monkeypatch):
+    """Non-hitl executors that ignore ctx.timeout are killed by the backstop.
+
+    :param store: FilesystemStore fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    import flow_atelier.modules.engine as engine_mod
+
+    monkeypatch.setattr(engine_mod, "BACKSTOP_GRACE_SECONDS", 0)
+
+    class IgnoresTimeout(ExecutorBase):
+        async def execute(self, task, resolved_command, context):
+            await asyncio.sleep(1.3)
+            return ExecutionResult(exit_code=0, output="ok", stdout="ok")
+
+    conduit = _conduit(
+        [
+            {"name": "slow", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": []},
+        ],
+        timeout=1,
+    )
+    engine = Engine({"tool:bash": IgnoresTimeout()}, store)
+    captured: dict[str, str] = {}
+    with pytest.raises(RuntimeError, match="exit=124"):
+        await engine.run(
+            conduit, {}, on_flow_started=lambda fid: captured.update(id=fid)
+        )
+    p = store.read_progress(captured["id"])
+    assert p.status == FlowStatus.failed
+    logs = store.read_logs(captured["id"])
+    assert logs[-1].exit_code == 124

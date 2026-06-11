@@ -8,8 +8,8 @@ repos:
   - repo: local
     hooks:
       - id: pytest
-        name: pytest (excluding live harness)
-        entry: uv run pytest --ignore=tests/test_live_harness.py
+        name: pytest (live harness excluded via marker)
+        entry: uv run pytest
         language: system
         pass_filenames: false
         stages: [pre-push]

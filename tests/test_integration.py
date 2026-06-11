@@ -5,7 +5,7 @@ import sys
 import pytest
 import yaml
 
-from app.core.atelier import Atelier
+from flow_atelier.core.atelier import Atelier
 
 
 def _write_conduit(base, name, body):

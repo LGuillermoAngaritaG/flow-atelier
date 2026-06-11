@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import pytest
 
-from app.modules.engine import _current_task_ctx
-from app.schemas.log import IntermediateStep, StepKind
-from app.services.api.ws_sink import WsPromptSink
-from app.services.executor.prompt_sink import PermissionOption
+from flow_atelier.modules.engine import _current_task_ctx
+from flow_atelier.schemas.log import IntermediateStep, StepKind
+from flow_atelier.services.api.ws_sink import WsPromptSink
+from flow_atelier.services.executor.prompt_sink import PermissionOption
 
 
 async def test_display_step_sends_step_envelope() -> None:

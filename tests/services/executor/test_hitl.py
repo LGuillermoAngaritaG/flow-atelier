@@ -4,10 +4,10 @@ import builtins
 import pytest
 import yaml
 
-from app.schemas.conduit import TaskDefinition, ToolType
-from app.services.executor.base import FlowContext
-from app.services.executor.hitl import HitlExecutor
-from app.services.store.filesystem import FilesystemStore
+from flow_atelier.schemas.conduit import TaskDefinition, ToolType
+from flow_atelier.services.executor.base import FlowContext
+from flow_atelier.services.executor.hitl import HitlExecutor
+from flow_atelier.services.store.filesystem import FilesystemStore
 
 
 @pytest.fixture

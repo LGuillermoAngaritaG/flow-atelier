@@ -7,9 +7,9 @@ from unittest.mock import patch
 
 import pytest
 
-from app.core.atelier import Atelier
-from app.core.settings import AtelierSettings
-from app.schemas.api import CreateConduitInput, UpdateConduitInput
+from flow_atelier.core.atelier import Atelier
+from flow_atelier.core.settings import AtelierSettings
+from flow_atelier.schemas.api import CreateConduitInput, UpdateConduitInput
 
 
 def _payload(name: str = "release_notes", description: str = "Release notes"):

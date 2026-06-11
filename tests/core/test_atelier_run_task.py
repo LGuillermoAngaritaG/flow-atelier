@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.atelier import Atelier
-from app.schemas.api import RunTaskInput, RunTaskOutput
+from flow_atelier.core.atelier import Atelier
+from flow_atelier.schemas.api import RunTaskInput, RunTaskOutput
 
 
 @pytest.fixture

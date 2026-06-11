@@ -1,14 +1,14 @@
 """Unit tests for the conditions module."""
 import pytest
 
-from app.modules.conditions import (
+from flow_atelier.modules.conditions import (
     ConditionalDependency,
     DependencyParseError,
     PlainDependency,
     evaluate,
     parse_dependency,
 )
-from app.schemas.progress import TaskStatus
+from flow_atelier.schemas.progress import TaskStatus
 
 
 def test_parse_plain():
@@ -145,7 +145,7 @@ def test_evaluate_unknown_task_skips():
 
 def test_parse_output_predicate_match():
     """Verify parse_output_predicate() parses output.match(...) expressions."""
-    from app.modules.conditions import parse_output_predicate
+    from flow_atelier.modules.conditions import parse_output_predicate
 
     pattern, negate = parse_output_predicate("output.match(DONE)")
     assert pattern.search("foo DONE bar")
@@ -155,7 +155,7 @@ def test_parse_output_predicate_match():
 
 def test_parse_output_predicate_not_match():
     """Verify parse_output_predicate() parses output.not_match(...) expressions."""
-    from app.modules.conditions import parse_output_predicate
+    from flow_atelier.modules.conditions import parse_output_predicate
 
     pattern, negate = parse_output_predicate("output.not_match(RETRY)")
     assert pattern.search("RETRY now")
@@ -164,7 +164,7 @@ def test_parse_output_predicate_not_match():
 
 def test_parse_output_predicate_inner_parens():
     """Verify parse_output_predicate() preserves inner parens."""
-    from app.modules.conditions import parse_output_predicate
+    from flow_atelier.modules.conditions import parse_output_predicate
 
     pattern, negate = parse_output_predicate("output.match(foo(bar))")
     assert pattern.pattern == "foo(bar)"
@@ -173,7 +173,7 @@ def test_parse_output_predicate_inner_parens():
 
 def test_parse_output_predicate_bare_regex_rejected():
     """Verify parse_output_predicate() rejects bare regex expressions."""
-    from app.modules.conditions import parse_output_predicate
+    from flow_atelier.modules.conditions import parse_output_predicate
 
     with pytest.raises(DependencyParseError):
         parse_output_predicate("DONE")
@@ -181,7 +181,7 @@ def test_parse_output_predicate_bare_regex_rejected():
 
 def test_parse_output_predicate_invalid_regex_rejected():
     """Verify parse_output_predicate() rejects an invalid regex."""
-    from app.modules.conditions import parse_output_predicate
+    from flow_atelier.modules.conditions import parse_output_predicate
 
     with pytest.raises(DependencyParseError):
         parse_output_predicate("output.match([unclosed)")
@@ -189,7 +189,7 @@ def test_parse_output_predicate_invalid_regex_rejected():
 
 def test_parse_output_predicate_missing_close_paren():
     """Verify parse_output_predicate() rejects missing close paren."""
-    from app.modules.conditions import parse_output_predicate
+    from flow_atelier.modules.conditions import parse_output_predicate
 
     with pytest.raises(DependencyParseError):
         parse_output_predicate("output.match(foo")
@@ -197,7 +197,7 @@ def test_parse_output_predicate_missing_close_paren():
 
 def test_parse_output_predicate_empty_rejected():
     """Verify parse_output_predicate() rejects the empty string."""
-    from app.modules.conditions import parse_output_predicate
+    from flow_atelier.modules.conditions import parse_output_predicate
 
     with pytest.raises(DependencyParseError):
         parse_output_predicate("")
@@ -211,7 +211,7 @@ def _pred(expr: str):
 
     :param expr: predicate expression to parse.
     """
-    from app.modules.conditions import parse_output_predicate
+    from flow_atelier.modules.conditions import parse_output_predicate
 
     return parse_output_predicate(expr)
 
@@ -239,7 +239,7 @@ def test_evaluate_loop_predicate_until(expr, outputs, expected):
     :param outputs: list of task outputs to evaluate against.
     :param expected: expected boolean result.
     """
-    from app.modules.conditions import evaluate_loop_predicate
+    from flow_atelier.modules.conditions import evaluate_loop_predicate
 
     assert evaluate_loop_predicate(_pred(expr), outputs, "until") is expected
 
@@ -267,14 +267,14 @@ def test_evaluate_loop_predicate_while(expr, outputs, expected):
     :param outputs: list of task outputs to evaluate against.
     :param expected: expected boolean result.
     """
-    from app.modules.conditions import evaluate_loop_predicate
+    from flow_atelier.modules.conditions import evaluate_loop_predicate
 
     assert evaluate_loop_predicate(_pred(expr), outputs, "while") is expected
 
 
 def test_evaluate_loop_predicate_empty_outputs_does_not_break():
     """Verify evaluate_loop_predicate() returns False on empty outputs."""
-    from app.modules.conditions import evaluate_loop_predicate
+    from flow_atelier.modules.conditions import evaluate_loop_predicate
 
     assert evaluate_loop_predicate(_pred("output.match(x)"), [], "until") is False
     assert evaluate_loop_predicate(_pred("output.match(x)"), [], "while") is False
@@ -284,7 +284,30 @@ def test_evaluate_loop_predicate_empty_outputs_does_not_break():
 
 def test_evaluate_loop_predicate_invalid_mode_raises():
     """Verify evaluate_loop_predicate() raises on an unknown mode."""
-    from app.modules.conditions import evaluate_loop_predicate
+    from flow_atelier.modules.conditions import evaluate_loop_predicate
 
     with pytest.raises(ValueError):
         evaluate_loop_predicate(_pred("output.match(x)"), ["x"], "forever")  # type: ignore[arg-type]
+
+
+def test_sink_task_names_returns_undepended_tasks_in_order():
+    """Verify sink_task_names returns tasks nothing depends on, in definition
+    order, counting conditional dependency targets as depended-upon."""
+    from flow_atelier.modules.conditions import sink_task_names
+    from flow_atelier.schemas.conduit import Conduit
+
+    conduit = Conduit.model_validate(
+        {
+            "name": "c",
+            "description": "d",
+            "tasks": [
+                {"a": {"description": "d", "task": "x", "tool": "tool:bash",
+                       "depends_on": []}},
+                {"b": {"description": "d", "task": "x", "tool": "tool:bash",
+                       "depends_on": ["a.output.match(ok)"]}},
+                {"c": {"description": "d", "task": "x", "tool": "tool:bash",
+                       "depends_on": ["a"]}},
+            ],
+        }
+    )
+    assert sink_task_names(conduit) == ["b", "c"]

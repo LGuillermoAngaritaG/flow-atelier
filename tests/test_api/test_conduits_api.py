@@ -6,9 +6,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.core.atelier import Atelier
-from app.core.settings import AtelierSettings
-from app.services.api.app import FastApiServer
+from flow_atelier.core.atelier import Atelier
+from flow_atelier.core.settings import AtelierSettings
+from flow_atelier.services.api.app import FastApiServer
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ async def test_get_unknown_conduit_returns_404(client):
     """
     resp = await client.get("/conduits/ghost")
     assert resp.status_code == 404
-    assert "error" in resp.json()
+    assert "detail" in resp.json()
 
 
 # ---------------------------------------------------------------- create

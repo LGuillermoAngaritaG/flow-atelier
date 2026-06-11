@@ -7,13 +7,13 @@ import re
 from rich.console import Console
 from rich.text import Text
 
-from app.cli.rendering.render import (
+from flow_atelier.cli.rendering.render import (
     _render_log_entry,
     _render_orchestration_msg,
     _render_step,
     _render_task_event,
 )
-from app.schemas.log import IntermediateStep, LogEntry, StepKind, TaskEvent
+from flow_atelier.schemas.log import IntermediateStep, LogEntry, StepKind, TaskEvent
 
 
 def _console() -> tuple[Console, io.StringIO]:

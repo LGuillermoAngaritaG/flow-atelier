@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from app.schemas.ws import (
+from flow_atelier.schemas.ws import (
     CancelMessage,
     ClientMessage,
     ErrorMessage,
@@ -174,7 +174,7 @@ def test_server_step_message_validates():
 
 def test_step_message_dump():
     """Verify StepMessage.model_dump emits the expected type and step kind."""
-    from app.schemas.log import IntermediateStep, StepKind
+    from flow_atelier.schemas.log import IntermediateStep, StepKind
 
     step = IntermediateStep(kind=StepKind.tool_call, tool_name="Read")
     msg = StepMessage(flow_id="f1", task="t1", step=step)

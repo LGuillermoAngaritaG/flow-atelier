@@ -19,8 +19,20 @@ jobs:
           pyver=$(grep -E '^version = ' pyproject.toml | head -1 | cut -d'"' -f2)
           test "$tag" = "$pyver" || { echo "tag $tag != pyproject $pyver"; exit 1; }
 
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.13
+      - run: uv sync --dev
+      - run: uv run ruff check .
+      - run: uv run pytest
+
   build-wheel:
-    needs: verify-version
+    needs: [verify-version, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +47,7 @@ jobs:
           path: dist/*
 
   build-binary:
-    needs: verify-version
+    needs: [verify-version, test]
     strategy:
       fail-fast: false
       matrix:
@@ -62,13 +74,16 @@ jobs:
         run: |
           uv run pyinstaller scripts/atelier_entry.py \
             --onefile --name atelier --clean --noconfirm \
+            --copy-metadata flow-atelier \
             --collect-all uvicorn \
             --collect-all apscheduler \
             --collect-all tzdata \
             --collect-all agent_client_protocol
       - name: Smoke test the binary
         shell: bash
-        run: ./dist/${{ matrix.bin }} --help
+        run: |
+          ./dist/${{ matrix.bin }} --help
+          ./dist/${{ matrix.bin }} --version
       - name: Rename for upload
         shell: bash
         run: mv dist/${{ matrix.bin }} dist/${{ matrix.asset }}

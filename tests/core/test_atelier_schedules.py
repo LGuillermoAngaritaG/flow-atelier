@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.atelier import Atelier
-from app.schemas.api import CreateScheduleInput, ScheduledJob
+from flow_atelier.core.atelier import Atelier
+from flow_atelier.schemas.api import CreateScheduleInput, ScheduledJob
 
 
 @pytest.fixture
