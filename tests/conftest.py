@@ -36,4 +36,5 @@ def _isolate_global_atelier_dir(tmp_path_factory, monkeypatch):
     """
     global_dir = tmp_path_factory.mktemp("global_atelier")
     monkeypatch.setenv("ATELIER_GLOBAL_ATELIER_DIR", str(global_dir))
+    monkeypatch.setenv("ATELIER_NO_UPDATE_CHECK", "1")
     yield Path(global_dir)
