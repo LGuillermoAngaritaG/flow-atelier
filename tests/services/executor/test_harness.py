@@ -305,6 +305,44 @@ class TestInteractive:
         assert "doing work" in result.output
         assert sink.input_prompts == []
 
+    async def test_done_marker_from_previous_turn_does_not_terminate(self) -> None:
+        """A marker already in the buffer from an earlier turn (echoed or
+        late-dispatched chunk) must not end the session: only the current
+        turn's chunks count for termination."""
+        from app.services.executor.harness import _BufferingClient
+
+        sink = RecordingSink(replies=["continue"])
+        executor = AcpHarnessExecutor(launch_cmd=["unused"], sink=sink)
+        client = _BufferingClient(sink)
+        client.buffer.append(f"stale text {DEFAULT_DONE_MARKER}")
+
+        turns = [
+            {"chunks": ["no marker this turn"], "stop": "end_turn"},
+            {"chunks": [f"done now {DEFAULT_DONE_MARKER}"], "stop": "end_turn"},
+        ]
+
+        class FakeResp:
+            def __init__(self, stop: str) -> None:
+                self.stop_reason = stop
+
+        class FakeConn:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def prompt(self, prompt, session_id):
+                turn = turns[self.calls]
+                self.calls += 1
+                for chunk in turn["chunks"]:
+                    client.buffer.append(chunk)
+                return FakeResp(turn["stop"])
+
+        result = await executor._run_interactive(FakeConn(), "s", "go", client)
+        assert result.exit_code == 0
+        # The stale marker must not have ended turn 1: the loop asked for
+        # a reply and only terminated on turn 2's fresh marker.
+        assert len(sink.input_prompts) == 1
+        assert "done now" in result.last_turn_output
+
     async def test_multi_turn_with_user_reply(self) -> None:
         """Verify a multi-turn interaction stitches replies into the output."""
         sink = RecordingSink(replies=["luis"])

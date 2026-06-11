@@ -633,7 +633,10 @@ class AcpHarnessExecutor(ExecutorBase):
             await client.flush_pending()
             last_stop = resp.stop_reason
             buffer_text = "".join(client.buffer)
-            if self.done_marker in buffer_text:
+            # Only this turn's chunks count: a marker echoed or quoted in an
+            # earlier turn must not terminate the session with stale output.
+            turn_text = "".join(client.buffer[prev_buffer_len:])
+            if self.done_marker in turn_text:
                 # Strip the protocol sentinel from anything we hand back to
                 # the user — it's an internal coordination marker, not content.
                 cleaned = buffer_text.replace(self.done_marker, "").rstrip()
