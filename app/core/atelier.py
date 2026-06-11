@@ -21,7 +21,7 @@ from app.schemas.api import (
 from app.schemas.conduit import Conduit
 from app.schemas.flow import parse_flow_id
 from app.schemas.log import LogEntry
-from app.schemas.progress import Progress
+from app.schemas.progress import FlowStatus, Progress
 from app.services.executor.bash import BashExecutor
 from app.services.executor.conduit import ConduitExecutor
 from app.services.executor.harness import (
@@ -163,6 +163,50 @@ class Atelier:
             on_task_starting=on_task_starting,
             show_steps=show_steps,
             working_dir=wd,
+        )
+
+    async def resume_flow(
+        self,
+        flow_id: str,
+        on_task_event: TaskEventCallback | None = None,
+        on_flow_started: FlowStartedCallback | None = None,
+        on_task_starting: TaskStartingCallback | None = None,
+        show_steps: bool = True,
+        working_dir: Path | str | None = None,
+    ) -> str:
+        """Resume a failed flow, skipping already-completed tasks.
+
+        :param flow_id: flow id of the prior failed run to resume
+        :param on_task_event: optional task-event callback forwarded to the engine
+        :param on_flow_started: optional flow-started callback
+        :param on_task_starting: optional task-starting callback
+        :param show_steps: stream intermediate harness steps
+        :param working_dir: working directory for task execution
+        :returns: the flow id (same as input)
+        :raises ValueError: if the flow is not in failed status
+        """
+        prior = self.store.read_progress(flow_id)
+        if prior.status != FlowStatus.failed:
+            raise ValueError(
+                f"can only resume failed flows, got {prior.status.value}"
+            )
+        conduit_name, _, _ = parse_flow_id(flow_id)
+        conduit = self.store.read_conduit(conduit_name)
+        inputs = self.store.read_input(flow_id)
+        if working_dir is None:
+            stored_run_path = inputs.get("run_path")
+            if stored_run_path:
+                working_dir = stored_run_path
+        wd = Path(working_dir) if working_dir is not None else None
+        return await self.engine.run(
+            conduit,
+            inputs,
+            on_task_event=on_task_event,
+            on_flow_started=on_flow_started,
+            on_task_starting=on_task_starting,
+            show_steps=show_steps,
+            working_dir=wd,
+            resume_from=flow_id,
         )
 
     def get_status(self, flow_id: str) -> Progress:
@@ -330,7 +374,10 @@ class Atelier:
         return out
 
     def get_flow_logs(self, flow_id: str) -> list[LogEntry]:
-        """Return the log entries for ``flow_id``.
+        """Return the log entries for ``flow_id`` including child flow logs.
+
+        Child flow entries are tagged with ``extra["flow_id"]`` so callers
+        can distinguish their origin.
 
         :param flow_id: flow identifier
         :returns: list of :class:`LogEntry` (empty if the file is empty)
@@ -338,7 +385,17 @@ class Atelier:
         """
         # ``_flow_dir`` raises FileNotFoundError when the id is unknown.
         self.store._flow_dir(flow_id)
-        return self.store.read_logs(flow_id)
+        logs = self.store.read_logs(flow_id)
+        for child_id in self.store.list_child_flows(flow_id):
+            child_logs = self.store.read_logs(child_id)
+            tagged = [
+                entry.model_copy(
+                    update={"extra": {**(entry.extra or {}), "flow_id": child_id}}
+                )
+                for entry in child_logs
+            ]
+            logs.extend(tagged)
+        return logs
 
     def open_conduit_path(self, run_path: str) -> bool:
         """Reveal ``run_path`` in the host's file explorer.

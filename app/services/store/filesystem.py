@@ -249,15 +249,20 @@ class FilesystemStore(StoreBase):
         conduit_name: str,
         inputs: dict[str, Any],
         parent_flow_id: str | None = None,
+        *,
+        flow_id: str | None = None,
     ) -> str:
         """Create a new flow directory and seed its tracking files.
 
         :param conduit_name: conduit being run
         :param inputs: initial input map persisted to ``input.yaml``
         :param parent_flow_id: optional parent flow for nested runs
-        :returns: the freshly generated flow id
+        :param flow_id: optional pre-generated flow id; when ``None`` the
+            store generates one via :func:`new_flow_id`
+        :returns: the flow id (generated or provided)
         """
-        flow_id = new_flow_id(conduit_name)
+        if flow_id is None:
+            flow_id = new_flow_id(conduit_name)
         if parent_flow_id is None:
             flow_dir = self.base_dir / "flows" / flow_id
         else:
@@ -309,6 +314,19 @@ class FilesystemStore(StoreBase):
             if flow_conduit == conduit_name:
                 ids.append(p.name)
         return sorted(ids)
+
+    def list_child_flows(self, parent_flow_id: str) -> list[str]:
+        """List flow ids under ``parent_flow_id/flows/``.
+
+        :param parent_flow_id: parent flow identifier
+        :returns: sorted list of child flow ids
+        """
+        children_dir = self._flow_dir(parent_flow_id) / "flows"
+        if not children_dir.exists():
+            return []
+        return sorted(
+            p.name for p in children_dir.iterdir() if p.is_dir()
+        )
 
     # ------------------------------------------------------------------ logs
 
@@ -392,6 +410,17 @@ class FilesystemStore(StoreBase):
         return Progress.model_validate_json(path.read_text())
 
     # ------------------------------------------------------------------ outputs.yaml
+
+    def read_outputs(self, flow_id: str) -> dict[str, Any]:
+        """Return the parsed ``outputs.yaml`` map (empty if missing).
+
+        :param flow_id: flow identifier
+        :returns: mapping of task name to output string
+        """
+        path = self._flow_dir(flow_id) / "outputs.yaml"
+        if not path.exists():
+            return {}
+        return yaml.safe_load(path.read_text()) or {}
 
     def write_outputs(self, flow_id: str, outputs: dict[str, Any]) -> None:
         """Atomically write ``outputs.yaml`` for ``flow_id``.

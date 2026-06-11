@@ -86,7 +86,6 @@ def test_ws_happy_path_emits_started_log_and_complete(env, tmp_path):
                 json.dumps(
                     {
                         "type": "run",
-                        "flow_id": "T-1",
                         "conduit_name": "hello",
                         "inputs": {},
                         "run_path": str(tmp_path),
@@ -121,7 +120,6 @@ def test_ws_hitl_round_trip_completes_after_answer(env, tmp_path):
                 json.dumps(
                     {
                         "type": "run",
-                        "flow_id": "T-2",
                         "conduit_name": "human",
                         "inputs": {},
                         "run_path": str(tmp_path),
@@ -132,12 +130,13 @@ def test_ws_hitl_round_trip_completes_after_answer(env, tmp_path):
             envelopes = _drain_until(
                 ws, lambda e: e["type"] == "hitl_request"
             )
-            assert envelopes[-1]["flow_id"] == "T-2"
+            flow_id = envelopes[-1]["flow_id"]
+            assert flow_id  # server-assigned flow id
             ws.send_text(
                 json.dumps(
                     {
                         "type": "hitl_answer",
-                        "flow_id": "T-2",
+                        "flow_id": flow_id,
                         "answers": {"choice": "blue"},
                     }
                 )
@@ -175,7 +174,6 @@ def test_ws_run_unknown_conduit_emits_flow_failed(env, tmp_path):
                 json.dumps(
                     {
                         "type": "run",
-                        "flow_id": "T-4",
                         "conduit_name": "ghost",
                         "inputs": {},
                         "run_path": str(tmp_path),
