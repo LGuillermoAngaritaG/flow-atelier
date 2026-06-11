@@ -48,6 +48,20 @@ class OpenPathInput(BaseModel):
     run_path: str
 
 
+class OpenPathOutput(BaseModel):
+    """Response shape for ``POST /conduits/open-path``."""
+
+    opened: bool
+
+
+class FlowLogsOutput(BaseModel):
+    """Response shape for ``GET /flows/:flow_id/logs``."""
+
+    run_path: str | None = None
+    logs: list[LogEntry] = Field(default_factory=list)
+    children: list[str] = Field(default_factory=list)
+
+
 class RunTaskInput(BaseModel):
     """Body for ``POST /tasks/run``: an ad-hoc one-task conduit."""
 

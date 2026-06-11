@@ -72,7 +72,7 @@ async def test_get_unknown_conduit_returns_404(client):
     """
     resp = await client.get("/conduits/ghost")
     assert resp.status_code == 404
-    assert "error" in resp.json()
+    assert "detail" in resp.json()
 
 
 # ---------------------------------------------------------------- create
