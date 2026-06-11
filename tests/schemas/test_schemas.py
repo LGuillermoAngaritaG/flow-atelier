@@ -111,6 +111,40 @@ def test_inputs_accept_string_and_object_forms():
     assert c.inputs["rich"].default == "dv"
 
 
+def test_conduit_rejects_nonpositive_timeout():
+    """Verify timeout values below 1 fail validation."""
+    for bad in (0, -5):
+        with pytest.raises(Exception, match="timeout"):
+            Conduit.model_validate(
+                {
+                    "name": "x",
+                    "description": "d",
+                    "timeout": bad,
+                    "tasks": [
+                        {"a": {"description": "d", "task": "x", "tool": "tool:bash",
+                               "depends_on": []}}
+                    ],
+                }
+            )
+
+
+def test_conduit_rejects_nonpositive_max_concurrency():
+    """Verify max_concurrency values below 1 fail validation."""
+    for bad in (0, -1):
+        with pytest.raises(Exception, match="max_concurrency"):
+            Conduit.model_validate(
+                {
+                    "name": "x",
+                    "description": "d",
+                    "max_concurrency": bad,
+                    "tasks": [
+                        {"a": {"description": "d", "task": "x", "tool": "tool:bash",
+                               "depends_on": []}}
+                    ],
+                }
+            )
+
+
 def test_duplicate_task_names_rejected():
     """Verify duplicate task names cause Conduit validation to fail."""
     with pytest.raises(Exception):

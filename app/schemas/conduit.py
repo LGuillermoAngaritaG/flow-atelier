@@ -128,8 +128,8 @@ class Conduit(BaseModel):
 
     name: str
     description: str
-    timeout: int = 3600
-    max_concurrency: int = 3
+    timeout: int = Field(default=3600, ge=1)
+    max_concurrency: int = Field(default=3, ge=1)
     inputs: dict[str, InputSpec] = Field(default_factory=dict)
     tasks: list[TaskDefinition]
 
