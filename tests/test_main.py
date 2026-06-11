@@ -124,6 +124,19 @@ def test_run_and_status(workdir):
     assert "completed" in result2.output
 
 
+def test_run_unknown_conduit_exits_cleanly(workdir):
+    """Verify `run <typo>` prints a friendly error instead of a traceback.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    result = runner.invoke(app, ["run", "no-such-conduit"])
+    assert result.exit_code == 1
+    assert "unknown conduit" in result.output
+    assert "no-such-conduit" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_list_flows(workdir):
     """Verify `list flows` shows the flow id and status columns.
 

@@ -98,8 +98,16 @@ def run_cmd(
 
     inputs = _parse_inputs(inputs_raw)
 
+    try:
+        conduit = atelier.store.read_conduit(conduit_name)
+    except FileNotFoundError:
+        console.print(
+            f"[red]unknown conduit:[/red] {conduit_name} "
+            f"— try 'atelier list conduits'"
+        )
+        raise typer.Exit(code=1)
+
     # Prompt for missing inputs when running interactively.
-    conduit = atelier.store.read_conduit(conduit_name)
     missing = [
         k
         for k, spec in conduit.inputs.items()
