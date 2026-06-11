@@ -124,6 +124,14 @@ def test_run_and_status(workdir):
     assert "completed" in result2.output
 
 
+def test_version_flag():
+    """Verify --version prints the package version and exits 0."""
+    runner = CliRunner()
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert "flow-atelier" in result.output
+
+
 def test_run_unknown_conduit_exits_cleanly(workdir):
     """Verify `run <typo>` prints a friendly error instead of a traceback.
 

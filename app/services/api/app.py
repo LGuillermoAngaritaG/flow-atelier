@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app import __version__
 from app.core.atelier import Atelier
 from app.services.api.base import ApiServerBase
 
@@ -39,7 +40,7 @@ class FastApiServer(ApiServerBase):
         :param api_token: bearer token required on every request when set;
             ``None`` disables auth (local trust)
         """
-        app = FastAPI(title="flow-atelier", version="0.1.0")
+        app = FastAPI(title="flow-atelier", version=__version__)
         app.state.atelier = atelier
         app.state.api_token = api_token or ""
 

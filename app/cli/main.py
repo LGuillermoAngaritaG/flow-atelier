@@ -10,6 +10,36 @@ app = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
+
+
+def _version_callback(value: bool) -> None:
+    """Print the installed version and exit when ``--version`` is passed.
+
+    :param value: ``True`` when the flag is present.
+    """
+    if value:
+        from app import __version__
+
+        typer.echo(f"flow-atelier {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the flow-atelier version and exit.",
+    ),
+) -> None:
+    """Root callback hosting global options.
+
+    :param version: eager flag handled by :func:`_version_callback`.
+    """
+
+
 list_app = typer.Typer(
     help="List conduits or flows.",
     no_args_is_help=True,
