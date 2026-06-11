@@ -115,7 +115,12 @@ class Atelier:
                 done_marker=self.settings.done_marker,
             ),
         }
-        self.engine = Engine(self.executors, self.store)
+        self.engine = Engine(
+            self.executors,
+            self.store,
+            loop_history_limit=self.settings.loop_history_limit,
+            loop_history_entry_chars=self.settings.loop_history_entry_chars,
+        )
         self.schedule_store = ScheduleStore(self.settings.atelier_dir)
 
     async def run_conduit(

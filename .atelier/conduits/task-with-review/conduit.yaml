@@ -33,6 +33,14 @@ tasks:
         Independently verify the claim. Inspect files, run commands, or
         check state as needed to confirm the task was truly completed.
 
+        Judge two things, not one:
+        1. Completion — was the work actually done, not just claimed?
+        2. Alignment — does the work serve the task's stated goal and respect
+           every constraint the task names? Well-executed work that drifts from
+           the goal, violates a stated constraint, or builds further on a
+           decision the task says is unresolved is NOT done.
+        Return NOT_DONE if either check fails, and say which in the reason.
+
         Respond with exactly two lines, nothing else:
         VERDICT: DONE
         REASON: <one short sentence>
@@ -40,5 +48,5 @@ tasks:
         or:
         VERDICT: NOT_DONE
         REASON: <one short sentence>
-      tool: harness:claude-code
+      tool: harness:codex
       depends_on: [do_task]

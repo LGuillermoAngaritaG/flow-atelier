@@ -1,7 +1,12 @@
 """Templating unit tests."""
 import pytest
 
-from app.modules.templating import SkipSignal, TemplateError, resolve
+from app.modules.templating import (
+    SkipSignal,
+    TemplateError,
+    extract_task_refs,
+    resolve,
+)
 
 
 def test_resolve_inputs():
@@ -85,3 +90,85 @@ def test_resolve_loop_history_numbers_iterations():
     """Verify {{loop.history}} renders numbered, separated iteration blocks."""
     out = resolve("{{loop.history}}", {}, {}, loop_history=["a", "b"])
     assert out == "--- iteration 1 ---\na\n\n--- iteration 2 ---\nb"
+
+
+def test_resolve_loop_history_capped_with_omitted_header():
+    """Verify {{loop.history}} keeps the newest entries and notes omissions."""
+    out = resolve(
+        "{{loop.history}}", {}, {},
+        loop_history=["a", "b", "c"], loop_history_limit=2,
+    )
+    assert out == (
+        "--- 1 earlier iterations omitted ---\n\n"
+        "--- iteration 2 ---\nb\n\n"
+        "--- iteration 3 ---\nc"
+    )
+
+
+def test_resolve_loop_history_limit_zero_means_unlimited():
+    """Verify loop_history_limit=0 renders the full history."""
+    out = resolve(
+        "{{loop.history}}", {}, {},
+        loop_history=["a", "b"], loop_history_limit=0,
+    )
+    assert out == "--- iteration 1 ---\na\n\n--- iteration 2 ---\nb"
+
+
+def test_resolve_loop_history_under_limit_unchanged():
+    """Verify no omission header appears when history fits the limit."""
+    out = resolve(
+        "{{loop.history}}", {}, {},
+        loop_history=["a"], loop_history_limit=10,
+    )
+    assert out == "--- iteration 1 ---\na"
+
+
+def test_resolve_loop_history_entry_truncated_head_and_tail():
+    """Verify oversized history entries keep head and tail around a marker."""
+    out = resolve(
+        "{{loop.history}}", {}, {},
+        loop_history=["A" * 6 + "MIDDLE" + "B" * 6],
+        loop_history_entry_chars=12,
+    )
+    assert out == (
+        "--- iteration 1 ---\n"
+        "AAAAAA\n[... 6 chars truncated ...]\nBBBBBB"
+    )
+
+
+def test_resolve_loop_history_entry_under_budget_unchanged():
+    """Verify entries within the char budget render untouched."""
+    out = resolve(
+        "{{loop.history}}", {}, {},
+        loop_history=["short"], loop_history_entry_chars=100,
+    )
+    assert out == "--- iteration 1 ---\nshort"
+
+
+def test_resolve_loop_history_entry_chars_zero_unlimited():
+    """Verify entry_chars <= 0 disables per-entry truncation."""
+    big = "x" * 500
+    out = resolve(
+        "{{loop.history}}", {}, {},
+        loop_history=[big], loop_history_entry_chars=0,
+    )
+    assert big in out
+
+
+def test_extract_task_refs_finds_output_refs():
+    """Verify extract_task_refs returns task names from .output expressions."""
+    refs = extract_task_refs("a={{build.output}} b={{ test.output }}")
+    assert refs == {"build", "test"}
+
+
+def test_extract_task_refs_ignores_inputs_and_loop():
+    """Verify extract_task_refs skips inputs.* and loop.* expressions."""
+    refs = extract_task_refs(
+        "{{inputs.x}} {{loop.previous}} {{loop.history}} {{real.output}}"
+    )
+    assert refs == {"real"}
+
+
+def test_extract_task_refs_empty_for_plain_text():
+    """Verify extract_task_refs returns an empty set without templates."""
+    assert extract_task_refs("echo plain") == set()

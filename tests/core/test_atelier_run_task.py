@@ -39,7 +39,7 @@ async def test_run_single_task_runs_bash_echo_and_returns_logs(atelier, tmp_path
 
 
 async def test_run_single_task_persists_flow_dir(atelier, tmp_path):
-    """Verify run_single_task writes the flow's logs.json to disk.
+    """Verify run_single_task writes the flow's logs.jsonl to disk.
 
     :param atelier: Atelier facade fixture.
     """
@@ -52,7 +52,7 @@ async def test_run_single_task_persists_flow_dir(atelier, tmp_path):
     )
     out = await atelier.run_single_task(payload)
     flow_dir = atelier.store._flow_dir(out.flow_id)
-    assert (flow_dir / "logs.json").exists()
+    assert (flow_dir / "logs.jsonl").exists()
 
 
 async def test_run_single_task_failure_returns_non_zero_exit(atelier, tmp_path):

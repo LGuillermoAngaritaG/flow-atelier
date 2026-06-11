@@ -1,10 +1,9 @@
 id: d6af488f-03d0-465b-8716-8d24915ee00f
 conduit_name: autonomous-projects
 inputs:
-  projects_dir: /Users/ganga/Library/Mobile Documents/iCloud~md~obsidian/Documents/Cerebro/AUTONOMOUS_PROJECTS
   max_usage_pct: '50'
-  idle_hours: '0.3'
-  max_pending_review: '5'
+  idle_hours: '0.1'
+  max_pending_review: '20'
   token_limit: '19000000'
 run_path: /Users/ganga/Documents/personal_repos/flow-atelier
 schedule:
@@ -42,4 +41,4 @@ schedule:
   - '19:00'
   - '19:30'
 created_at: 1779778874
-runs_completed: 52
+runs_completed: 89

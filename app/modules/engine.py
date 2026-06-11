@@ -30,7 +30,12 @@ from app.modules.conditions import (
     parse_dependencies,
     parse_output_predicate,
 )
-from app.modules.templating import SkipSignal, TemplateError, resolve
+from app.modules.templating import (
+    SkipSignal,
+    TemplateError,
+    extract_task_refs,
+    resolve,
+)
 from app.schemas.conduit import Conduit, TaskDefinition, ToolType
 from app.schemas.flow import parse_flow_id
 from app.schemas.log import ExecutionResult, LogEntry, TaskEvent
@@ -79,6 +84,11 @@ def _validate_dag(conduit: Conduit) -> dict[str, list]:
                 raise ConduitValidationError(
                     f"task {t.name!r} depends on unknown task {d.task!r}"
                 )
+        for ref in sorted(extract_task_refs(t.task)):
+            if ref not in task_names:
+                raise ConduitValidationError(
+                    f"task {t.name!r} references unknown task {ref!r}"
+                )
         parsed[t.name] = parsed_deps
 
     # Cycle detection via DFS
@@ -120,14 +130,22 @@ class Engine:
         self,
         executors: dict[str, ExecutorBase],
         store: StoreBase,
+        loop_history_limit: int = 10,
+        loop_history_entry_chars: int = 40000,
     ) -> None:
         """Wire the engine with its executor registry and persistence store.
 
         :param executors: mapping of tool string to :class:`ExecutorBase`.
         :param store: :class:`StoreBase` used to read conduits and persist flow state.
+        :param loop_history_limit: max iterations ``{{loop.history}}`` renders,
+            newest kept; <= 0 means unlimited.
+        :param loop_history_entry_chars: max characters per rendered
+            ``{{loop.history}}`` entry; <= 0 means unlimited.
         """
         self.executors = executors
         self.store = store
+        self.loop_history_limit = loop_history_limit
+        self.loop_history_entry_chars = loop_history_entry_chars
 
     # ------------------------------------------------------------------ public
 
@@ -169,7 +187,15 @@ class Engine:
         :raises ValueError: required inputs are missing
         :raises Exception: first task failure propagates after fail-fast cancel
         """
-        # Validate required inputs
+        # Apply declared defaults, then require inputs that have none.
+        inputs = {
+            **{
+                k: spec.default
+                for k, spec in conduit.inputs.items()
+                if spec.default is not None
+            },
+            **inputs,
+        }
         missing = [k for k in conduit.inputs if k not in inputs]
         if missing:
             raise ValueError(f"missing required inputs: {missing}")
@@ -216,6 +242,7 @@ class Engine:
         task_map = {t.name: t for t in conduit.tasks}
 
         # Seed state from prior run when resuming
+        prior_iterations: dict[str, list[str]] = {}
         if resume_from is not None:
             for tname, tp in prior.tasks.items():
                 if tp.status == TaskStatus.completed:
@@ -223,6 +250,19 @@ class Engine:
                     outputs[tname] = prior_outputs.get(tname, "")
                     progress.tasks[tname] = tp
             self.store.write_progress(flow_id, progress)
+            # Rebuild loop history for tasks that will re-run, so they
+            # continue at the next iteration with {{loop.*}} context intact.
+            # Append order is chronological even across repeated resumes.
+            for entry in self.store.read_logs(flow_id):
+                if entry.exit_code != 0:
+                    continue
+                if statuses.get(entry.task) == TaskStatus.completed:
+                    continue
+                prior_iterations.setdefault(entry.task, []).append(
+                    entry.last_turn_output
+                    if entry.last_turn_output is not None
+                    else entry.output
+                )
 
         runtime_inputs = dict(inputs)  # mutable copy (HITL may append)
 
@@ -230,8 +270,6 @@ class Engine:
         running: dict[str, asyncio.Task[None]] = {}
         failed = False
         failure_error: Exception | None = None
-        state_changed = asyncio.Event()
-        state_changed.set()
 
         def _safe_emit(event: TaskEvent) -> None:
             """Forward ``event`` to ``on_task_event``, swallowing callback errors.
@@ -321,11 +359,15 @@ class Engine:
             self.store.write_progress(flow_id, progress)
             emit_disposition(name, TaskStatus.skipped, reason)
 
-        def mark_running(name: str, iteration: int) -> None:
+        def mark_running(
+            name: str, iteration: int, start_iteration: int = 1
+        ) -> None:
             """Transition a task to running state and persist progress.
 
             :param name: task name entering the running state.
             :param iteration: 1-based iteration number about to execute.
+            :param start_iteration: first iteration this run executes (> 1
+                when resuming); the starting callback fires on it.
             """
             statuses[name] = TaskStatus.running
             progress.tasks[name] = TaskProgress(
@@ -337,23 +379,28 @@ class Engine:
                 n for n, s in statuses.items() if s == TaskStatus.running
             ]
             self.store.write_progress(flow_id, progress)
-            if iteration == 1 and on_task_starting is not None:
+            if iteration == start_iteration and on_task_starting is not None:
                 try:
                     on_task_starting(name, task_map[name].tool.value)
                 except Exception:  # noqa: BLE001
                     pass
 
-        def mark_completed(name: str, iteration: int) -> None:
+        def mark_completed(
+            name: str, iteration: int, reason: str = ""
+        ) -> None:
             """Mark a task as completed at ``iteration`` and persist progress.
 
             :param name: task name that has finished successfully.
             :param iteration: 1-based iteration number that completed the task.
+            :param reason: optional note recorded on the task progress
+                (e.g. loop exhaustion without a predicate match).
             """
             statuses[name] = TaskStatus.completed
             progress.tasks[name] = TaskProgress(
                 status=TaskStatus.completed,
                 iteration=iteration,
                 of=task_map[name].repeat,
+                reason=reason or None,
             )
             progress.current_tasks = [
                 n for n, s in statuses.items() if s == TaskStatus.running
@@ -386,31 +433,37 @@ class Engine:
                     n for n, s in statuses.items()
                     if s in (TaskStatus.skipped, TaskStatus.failed, TaskStatus.cancelled)
                 }
-                loop_history: list[str] = []
-                try:
-                    resolved = resolve(
+                loop_history: list[str] = list(prior_iterations.get(t.name, []))
+                start_iteration = min(len(loop_history) + 1, t.repeat)
+
+                def _resolve_task() -> str:
+                    return resolve(
                         t.task, runtime_inputs, outputs,
                         unavailable_tasks=unavailable, loop_history=loop_history,
+                        loop_history_limit=self.loop_history_limit,
+                        loop_history_entry_chars=self.loop_history_entry_chars,
                     )
+
+                try:
+                    resolved = _resolve_task()
                 except SkipSignal as e:
                     mark_skipped(t.name, str(e))
-                    state_changed.set()
                     return
                 except TemplateError as e:
                     mark_failed(t.name)
-                    failed = True
-                    failure_error = ValueError(f"task {t.name!r}: {e}")
-                    state_changed.set()
+                    if not failed:
+                        failed = True
+                        failure_error = ValueError(f"task {t.name!r}: {e}")
                     return
 
                 executor = self.executors.get(t.tool.value)
                 if executor is None:
                     mark_failed(t.name)
-                    failed = True
-                    failure_error = ValueError(
-                        f"no executor registered for tool {t.tool.value!r}"
-                    )
-                    state_changed.set()
+                    if not failed:
+                        failed = True
+                        failure_error = ValueError(
+                            f"no executor registered for tool {t.tool.value!r}"
+                        )
                     return
 
                 ctx = FlowContext(
@@ -429,6 +482,8 @@ class Engine:
                         working_dir=working_dir,
                     ),
                     loop_history=loop_history,
+                    loop_history_limit=self.loop_history_limit,
+                    loop_history_entry_chars=self.loop_history_entry_chars,
                 )
 
                 # Pre-parse the loop predicate once per task. Schema enforces
@@ -447,20 +502,37 @@ class Engine:
 
                 async with semaphore:
                     last_output = ""
-                    for iteration in range(1, t.repeat + 1):
-                        if iteration > 1:
-                            resolved = resolve(
-                                t.task, runtime_inputs, outputs,
-                                unavailable_tasks=unavailable,
-                                loop_history=loop_history,
-                            )
-                        mark_running(t.name, iteration)
+                    predicate_matched = False
+                    # Identical-output streak over this run only; seeded
+                    # resume history must not insta-trip the guard.
+                    stagnant_streak = 0
+                    for iteration in range(start_iteration, t.repeat + 1):
+                        if iteration > start_iteration:
+                            try:
+                                resolved = _resolve_task()
+                            except (SkipSignal, TemplateError) as e:
+                                # Mid-loop the task has already produced
+                                # output, so a silent skip would lie: fail.
+                                mark_failed(t.name)
+                                if not failed:
+                                    failed = True
+                                    failure_error = ValueError(
+                                        f"task {t.name!r} iteration "
+                                        f"{iteration}: {e}"
+                                    )
+                                return
+                        mark_running(t.name, iteration, start_iteration)
                         started = _now()
                         start_ts = datetime.now(UTC)
                         try:
+                            # Grace margin: executors that self-enforce
+                            # ctx.timeout (bash, harness) return a graceful
+                            # result preserving output; this outer wrapper is
+                            # the backstop for those that don't (e.g. hitl)
+                            # and must not win the race against them.
                             result = await asyncio.wait_for(
                                 executor.execute(t, resolved, ctx),
-                                timeout=conduit.timeout,
+                                timeout=conduit.timeout + 5,
                             )
                         except TimeoutError:
                             result = ExecutionResult(
@@ -487,6 +559,7 @@ class Engine:
                                 stderr=result.stderr,
                                 exit_code=result.exit_code,
                                 output=result.output,
+                                last_turn_output=result.last_turn_output,
                                 started_at=started,
                                 finished_at=finished,
                                 duration_seconds=round(duration, 3),
@@ -496,19 +569,38 @@ class Engine:
                         emit_event(t, iteration, result, duration)
                         if not result.success:
                             mark_failed(t.name)
-                            failed = True
-                            failure_error = RuntimeError(
-                                f"task {t.name!r} failed: exit={result.exit_code} "
-                                f"stderr={result.stderr.strip()[:200]}"
-                            )
-                            state_changed.set()
+                            if not failed:
+                                failed = True
+                                failure_error = RuntimeError(
+                                    f"task {t.name!r} failed: exit={result.exit_code} "
+                                    f"stderr={result.stderr.strip()[:200]}"
+                                )
                             return
+                        previous_output = last_output
                         last_output = (
                             result.last_turn_output
                             if result.last_turn_output is not None
                             else result.output
                         )
                         loop_history.append(last_output)
+                        if t.stagnation_limit is not None:
+                            if (
+                                iteration > start_iteration
+                                and last_output == previous_output
+                            ):
+                                stagnant_streak += 1
+                            else:
+                                stagnant_streak = 1
+                            if stagnant_streak >= t.stagnation_limit:
+                                mark_failed(t.name)
+                                if not failed:
+                                    failed = True
+                                    failure_error = RuntimeError(
+                                        f"task {t.name!r} stagnated: "
+                                        f"{stagnant_streak} identical "
+                                        "consecutive outputs"
+                                    )
+                                return
                         if loop_predicate is not None:
                             # Conduit tasks evaluate the predicate against the
                             # outputs of every nested sub-task (any-match),
@@ -516,13 +608,33 @@ class Engine:
                             if t.tool == ToolType.conduit:
                                 scope_outputs = result.sub_outputs
                             else:
-                                scope_outputs = [result.output]
+                                # Match against the last turn only (same value
+                                # history stores): full output can echo prior
+                                # iterations via {{loop.history}} and
+                                # false-positive the predicate.
+                                scope_outputs = [last_output]
                             if evaluate_loop_predicate(
                                 loop_predicate, scope_outputs, loop_mode
                             ):
+                                predicate_matched = True
                                 break
+                    completion_reason = ""
+                    if loop_predicate is not None and not predicate_matched:
+                        if t.on_exhaust == "fail":
+                            mark_failed(t.name)
+                            if not failed:
+                                failed = True
+                                failure_error = RuntimeError(
+                                    f"task {t.name!r} exhausted {t.repeat} "
+                                    "iterations without matching its loop "
+                                    "predicate"
+                                )
+                            return
+                        completion_reason = (
+                            "loop exhausted without predicate match"
+                        )
                     outputs[t.name] = last_output
-                    mark_completed(t.name, iteration)
+                    mark_completed(t.name, iteration, reason=completion_reason)
                     self.store.write_outputs(flow_id, outputs)
             except asyncio.CancelledError:
                 if statuses[t.name] not in (
@@ -537,8 +649,6 @@ class Engine:
                         t.name, TaskStatus.cancelled, "fail-fast: upstream failed"
                     )
                 raise
-            finally:
-                state_changed.set()
 
         # ------------------------------------------------------------------ loop
         try:
@@ -577,7 +687,6 @@ class Engine:
                     break
 
                 # Wait for at least one task transition
-                state_changed.clear()
                 if running:
                     done, _pending = await asyncio.wait(
                         list(running.values()),
@@ -588,13 +697,20 @@ class Engine:
                         running.pop(name_done)
                         # propagate exceptions only for engine bugs; task bodies trap them
                         exc = d.exception()
-                        if exc and not isinstance(exc, asyncio.CancelledError):
+                        if (
+                            exc
+                            and not isinstance(exc, asyncio.CancelledError)
+                            and not failed
+                        ):
                             failed = True
                             failure_error = exc
                 else:
-                    # No running tasks but still pending (waiting on something that
-                    # can't change) — shouldn't happen after evaluation; safeguard:
-                    await state_changed.wait()
+                    # No running tasks but still pending — every pending task
+                    # waits on something that can no longer change. Engine bug;
+                    # fail loud instead of hanging forever.
+                    raise RuntimeError(
+                        "engine stalled: pending tasks but nothing running"
+                    )
 
                 if failed and running:
                     for rt in running.values():

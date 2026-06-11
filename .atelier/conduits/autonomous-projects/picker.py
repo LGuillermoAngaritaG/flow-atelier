@@ -6,9 +6,9 @@ Stdout contract (single line, always exit 0):
 
 Filters, in order:
     1. Claude Code 5h-window usage gate
-    2. PAUSED gate (skip if project name exists in PAUSED/)
+    2. PAUSED gate (skip if project name exists in projects/paused/)
     3. In-progress gate (resume project with a task in in-progress/)
-    4. Pending-Review gate (count files in TASKS/<name>/pending-review/)
+    4. Pending-Review gate (count files in tasks/<name>/pending-review/)
     5. Idle time = max(latest git commit, latest mtime under `location`)
     6. Sort survivors by frontmatter priority asc; ties broken by oldest
        project file mtime.
@@ -112,8 +112,10 @@ def git_last_commit_ts(path: Path) -> float:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--projects-dir", required=True,
-                        help="Path to AUTONOMOUS_PROJECTS root directory.")
+    parser.add_argument("--projects-dir",
+                        default=str(Path(__file__).resolve().parent),
+                        help="Conduit root holding projects/ and tasks/. "
+                             "Defaults to this script's directory.")
     parser.add_argument("--max-usage-pct", type=float, required=True,
                         help="Skip if Claude usage >= this percent.")
     parser.add_argument("--idle-hours", type=float, required=True,
@@ -138,12 +140,12 @@ def main() -> int:
         print(f"SKIP: projects_dir does not exist: {root}")
         return 0
 
-    projects_dir = root / "PROJECTS"
-    paused_dir = root / "PAUSED"
-    tasks_dir = root / "TASKS"
+    projects_dir = root / "projects" / "working"
+    paused_dir = root / "projects" / "paused"
+    tasks_dir = root / "tasks"
 
     if not projects_dir.is_dir():
-        print(f"SKIP: PROJECTS/ not found under {root}")
+        print(f"SKIP: projects/working/ not found under {root}")
         return 0
 
     files = sorted(projects_dir.glob("*.md"))

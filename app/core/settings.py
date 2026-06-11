@@ -27,6 +27,21 @@ class AtelierSettings(BaseSettings):
     )
     default_timeout: int = 3600
     default_max_concurrency: int = 3
+    loop_history_limit: int = Field(
+        default=10,
+        description=(
+            "Max prior iterations rendered by {{loop.history}}. "
+            "Values <= 0 mean unlimited."
+        ),
+    )
+    loop_history_entry_chars: int = Field(
+        default=40000,
+        description=(
+            "Max characters per {{loop.history}} entry; longer entries keep "
+            "head and tail around a truncation marker. Values <= 0 mean "
+            "unlimited."
+        ),
+    )
     claude_launch_cmd: list[str] = Field(
         default_factory=list,
         description=(

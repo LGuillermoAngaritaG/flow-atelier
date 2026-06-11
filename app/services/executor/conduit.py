@@ -41,6 +41,8 @@ class ConduitExecutor(ExecutorBase):
                 child_inputs[key] = resolve(
                     raw, context.inputs, context.task_outputs,
                     loop_history=context.loop_history,
+                    loop_history_limit=context.loop_history_limit,
+                    loop_history_entry_chars=context.loop_history_entry_chars,
                 )
             else:
                 child_inputs[key] = raw

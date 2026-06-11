@@ -81,7 +81,7 @@ def test_create_flow_layout(store):
     flow_id = store.create_flow("hello", inputs={"a": 1})
     flow_dir = store._flow_dir(flow_id)
     assert (flow_dir / "input.yaml").exists()
-    assert (flow_dir / "logs.json").exists()
+    assert (flow_dir / "logs.jsonl").exists()
     assert (flow_dir / "progress.json").exists()
     assert (flow_dir / "flows").is_dir()
     data = yaml.safe_load((flow_dir / "input.yaml").read_text())
@@ -129,10 +129,37 @@ async def test_append_log_and_read(store):
     )
     await store.append_log(fid, e1)
     await store.append_log(fid, e1)
-    logs_path = store._flow_dir(fid) / "logs.json"
-    logs = json.loads(logs_path.read_text())
+    logs_path = store._flow_dir(fid) / "logs.jsonl"
+    logs = [json.loads(line) for line in logs_path.read_text().splitlines()]
     assert len(logs) == 2
     assert logs[0]["task"] == "greet"
+    assert [e.task for e in store.read_logs(fid)] == ["greet", "greet"]
+
+
+async def test_read_logs_legacy_json_fallback(store):
+    """Verify read_logs falls back to a legacy logs.json array.
+
+    :param store: FilesystemStore fixture.
+    """
+    fid = store.create_flow("hello", {})
+    flow_dir = store._flow_dir(fid)
+    (flow_dir / "logs.jsonl").unlink()
+    legacy = [
+        LogEntry(
+            task="greet",
+            tool="tool:bash",
+            command="echo hi",
+            stdout="hi\n",
+            output="hi\n",
+            exit_code=0,
+            started_at="2026-04-12T10:00:00Z",
+            finished_at="2026-04-12T10:00:00Z",
+        ).model_dump()
+    ]
+    (flow_dir / "logs.json").write_text(json.dumps(legacy))
+    logs = store.read_logs(fid)
+    assert len(logs) == 1
+    assert logs[0].task == "greet"
 
 
 def test_progress_roundtrip(store):

@@ -162,6 +162,20 @@ class TestNonInteractive:
         assert result.exit_code != 0
         assert "refusal" in result.stderr
 
+    async def test_max_tokens_marks_failure(self) -> None:
+        """Verify a max_tokens stop maps to exit 1 with truncation stderr."""
+        sink = RecordingSink()
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {"turns": [{"chunks": ["partial answer"], "stop": "max_tokens"}]}
+            ),
+            sink=sink,
+        )
+        result = await executor.execute(_task("x"), "x", _ctx())
+        assert result.exit_code == 1
+        assert "max_tokens" in result.stderr
+        assert "partial answer" in result.output
+
     async def test_timeout(self) -> None:
         """Verify the harness times out a slow agent with exit code 124."""
         sink = RecordingSink()
