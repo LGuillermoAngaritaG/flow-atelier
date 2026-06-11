@@ -516,13 +516,15 @@ invoked.
 Run the test suite:
 
 ```bash
-uv run pytest                                  # fast unit suite only
-uv run pytest tests/test_live_harness.py -v    # live ACP smoke tests
+uv run pytest                                  # fast unit suite (live tests excluded)
+uv run pytest -m live tests/test_live_harness.py -v   # live ACP smoke tests
 ```
 
-The live harness tests spawn the real Zed ACP adapters for Claude Code
-and Codex via `npx`, so they cost tokens and need network + valid auth.
-They're wrapped in a try/xfail so transient flakes don't break the suite.
+The live harness tests are gated behind the `live` pytest marker so a
+bare `pytest` never spends tokens by accident. They spawn the real Zed
+ACP adapters for Claude Code and Codex via `npx`, so they cost tokens
+and need network + valid auth. They're wrapped in a try/xfail so
+transient flakes don't break the suite.
 
 ## Architecture
 

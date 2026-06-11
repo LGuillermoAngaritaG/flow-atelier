@@ -38,6 +38,10 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 timeout = 300
+addopts = "-m 'not live'"
+markers = [
+    "live: exercises real AI harness CLIs (slow, costs tokens); run with -m live",
+]
 
 [tool.ruff]
 line-length = 100

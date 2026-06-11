@@ -1,8 +1,10 @@
 """Live harness integration tests.
 
 These tests exercise the real ``claude`` and ``codex`` CLIs. They're slow
-and cost tokens. If a harness flakes, the test is marked xfail (per the
-user's instruction) rather than aborting the suite.
+and cost tokens, so they only run when explicitly selected:
+``uv run pytest -m live tests/test_live_harness.py``. If a harness
+flakes, the test is marked xfail (per the user's instruction) rather
+than aborting the suite.
 """
 import shutil
 
@@ -10,7 +12,7 @@ import pytest
 
 from app.core.atelier import Atelier
 
-pytestmark = pytest.mark.timeout(300)
+pytestmark = [pytest.mark.timeout(300), pytest.mark.live]
 
 
 def _write_conduit(base, name, body):
