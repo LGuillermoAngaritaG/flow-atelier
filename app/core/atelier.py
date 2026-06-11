@@ -175,21 +175,26 @@ class Atelier:
         show_steps: bool = True,
         working_dir: Path | str | None = None,
     ) -> str:
-        """Resume a failed flow, skipping already-completed tasks.
+        """Resume a failed or crashed flow, skipping already-completed tasks.
 
-        :param flow_id: flow id of the prior failed run to resume
+        A flow whose process died (crash, kill, power loss) is left with
+        status ``running``, so that status is resumable too — matching how
+        nested flows are recovered. There is no liveness check: resuming a
+        flow that is genuinely still running elsewhere double-runs it.
+
+        :param flow_id: flow id of the prior failed/crashed run to resume
         :param on_task_event: optional task-event callback forwarded to the engine
         :param on_flow_started: optional flow-started callback
         :param on_task_starting: optional task-starting callback
         :param show_steps: stream intermediate harness steps
         :param working_dir: working directory for task execution
         :returns: the flow id (same as input)
-        :raises ValueError: if the flow is not in failed status
+        :raises ValueError: if the flow is not in failed or running status
         """
         prior = self.store.read_progress(flow_id)
-        if prior.status != FlowStatus.failed:
+        if prior.status not in (FlowStatus.failed, FlowStatus.running):
             raise ValueError(
-                f"can only resume failed flows, got {prior.status.value}"
+                f"can only resume failed or crashed flows, got {prior.status.value}"
             )
         conduit_name, _, _ = parse_flow_id(flow_id)
         conduit = self.store.read_conduit(conduit_name)

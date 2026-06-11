@@ -22,7 +22,7 @@ from app.schemas.log import TaskEvent
     help=(
         "Start a new flow for the named conduit. "
         "Use --input key=value to pass inputs. "
-        "Use --resume <flow_id> to pick up a failed run."
+        "Use --resume <flow_id> to pick up a failed or crashed run."
     ),
 )
 def run_cmd(
@@ -43,7 +43,7 @@ def run_cmd(
     resume_from: str | None = typer.Option(
         None,
         "--resume",
-        help="Resume a failed flow by its id (supports prefix matching).",
+        help="Resume a failed or crashed flow by its id (supports prefix matching).",
     ),
 ) -> None:
     """Start a new flow or resume a failed one.

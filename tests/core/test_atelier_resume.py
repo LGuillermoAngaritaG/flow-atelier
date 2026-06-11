@@ -8,6 +8,7 @@ import pytest
 from app.core.atelier import Atelier
 from app.core.settings import AtelierSettings
 from app.schemas.api import RunTaskInput
+from app.schemas.progress import FlowStatus
 
 
 @pytest.fixture
@@ -30,8 +31,8 @@ def atelier(tmp_path, _isolate_global_atelier_dir):
 # ---------------------------------------------------------------- resume_flow
 
 
-async def test_resume_flow_raises_for_non_failed(atelier, tmp_path):
-    """Verify resume_flow raises ValueError when the flow is not failed.
+async def test_resume_flow_raises_for_completed(atelier, tmp_path):
+    """Verify resume_flow raises ValueError when the flow already completed.
 
     :param atelier: Atelier facade fixture.
     :param tmp_path: pytest temp directory fixture.
@@ -46,8 +47,38 @@ async def test_resume_flow_raises_for_non_failed(atelier, tmp_path):
             run_path=str(tmp_path),
         )
     )
-    with pytest.raises(ValueError, match="can only resume failed flows"):
+    with pytest.raises(ValueError, match="can only resume failed or crashed"):
         await atelier.resume_flow(result.flow_id)
+
+
+async def test_resume_flow_accepts_running_status(atelier, tmp_path):
+    """A crashed process leaves progress at `running`; that must be resumable.
+
+    :param atelier: Atelier facade fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    conduit_dir = atelier.store.base_dir / "conduits" / "hello"
+    conduit_dir.mkdir(parents=True)
+    (conduit_dir / "conduit.yaml").write_text(
+        "name: hello\n"
+        "description: say hi\n"
+        "tasks:\n"
+        "  - greet:\n"
+        "      description: greet\n"
+        '      task: "echo hi"\n'
+        "      tool: tool:bash\n"
+        "      depends_on: []\n"
+    )
+    flow_id = await atelier.run_conduit("hello", {}, working_dir=tmp_path)
+
+    # Simulate a crash: progress left at `running`.
+    progress = atelier.store.read_progress(flow_id)
+    progress.status = FlowStatus.running
+    atelier.store.write_progress(flow_id, progress)
+
+    resumed = await atelier.resume_flow(flow_id, working_dir=tmp_path)
+    assert resumed == flow_id
+    assert atelier.store.read_progress(flow_id).status == FlowStatus.completed
 
 
 async def test_resume_flow_raises_for_unknown_flow(atelier):
