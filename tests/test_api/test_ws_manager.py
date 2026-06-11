@@ -5,7 +5,7 @@ import asyncio
 
 import pytest
 
-from app.services.api.ws_manager import WebSocketBroker
+from flow_atelier.services.api.ws_manager import WebSocketBroker
 
 
 class _Sink:

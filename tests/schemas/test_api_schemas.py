@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.schemas.api import (
+from flow_atelier.schemas.api import (
     ConduitDTO,
     CreateConduitInput,
     CreateScheduleInput,

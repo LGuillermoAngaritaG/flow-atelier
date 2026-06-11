@@ -6,11 +6,11 @@ import asyncio
 import pytest
 import yaml
 
-from app.schemas.conduit import TaskDefinition, ToolType
-from app.services.api.ws_hitl import WsHitlExecutor
-from app.services.api.ws_manager import WebSocketBroker
-from app.services.executor.base import FlowContext
-from app.services.store.filesystem import FilesystemStore
+from flow_atelier.schemas.conduit import TaskDefinition, ToolType
+from flow_atelier.services.api.ws_hitl import WsHitlExecutor
+from flow_atelier.services.api.ws_manager import WebSocketBroker
+from flow_atelier.services.executor.base import FlowContext
+from flow_atelier.services.store.filesystem import FilesystemStore
 
 
 class _Sink:

@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from app.core.atelier import Atelier
-from app.core.settings import AtelierSettings
-from app.schemas.api import RunTaskInput
-from app.schemas.progress import FlowStatus
+from flow_atelier.core.atelier import Atelier
+from flow_atelier.core.settings import AtelierSettings
+from flow_atelier.schemas.api import RunTaskInput
+from flow_atelier.schemas.progress import FlowStatus
 
 
 @pytest.fixture

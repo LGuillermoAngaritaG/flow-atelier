@@ -3,9 +3,9 @@ import sys
 
 import pytest
 
-from app.schemas.conduit import TaskDefinition, ToolType
-from app.services.executor.base import FlowContext
-from app.services.executor.bash import BashExecutor
+from flow_atelier.schemas.conduit import TaskDefinition, ToolType
+from flow_atelier.services.executor.base import FlowContext
+from flow_atelier.services.executor.bash import BashExecutor
 
 
 def _task(cmd: str) -> TaskDefinition:

@@ -4,8 +4,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from app.core.atelier import Atelier
-from app.services.api.app import FastApiServer
+from flow_atelier.core.atelier import Atelier
+from flow_atelier.services.api.app import FastApiServer
 
 
 @pytest.fixture

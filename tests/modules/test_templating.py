@@ -1,7 +1,7 @@
 """Templating unit tests."""
 import pytest
 
-from app.modules.templating import (
+from flow_atelier.modules.templating import (
     SkipSignal,
     TemplateError,
     extract_task_refs,

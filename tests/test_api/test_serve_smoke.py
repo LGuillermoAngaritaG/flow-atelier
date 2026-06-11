@@ -8,10 +8,10 @@ import httpx
 import pytest
 import uvicorn
 
-from app.core.atelier import Atelier
-from app.core.settings import AtelierSettings
-from app.services.api.app import FastApiServer
-from app.services.scheduler import SchedulerDaemon, default_local_zone
+from flow_atelier.core.atelier import Atelier
+from flow_atelier.core.settings import AtelierSettings
+from flow_atelier.services.api.app import FastApiServer
+from flow_atelier.services.scheduler import SchedulerDaemon, default_local_zone
 
 
 @pytest.mark.timeout(15)

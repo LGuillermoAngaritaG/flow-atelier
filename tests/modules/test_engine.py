@@ -5,12 +5,12 @@ from typing import Any
 import pytest
 import yaml
 
-from app.modules.engine import ConduitValidationError, Engine
-from app.schemas.conduit import Conduit
-from app.schemas.log import ExecutionResult
-from app.schemas.progress import FlowStatus, TaskStatus
-from app.services.executor.base import ExecutorBase
-from app.services.store.filesystem import FilesystemStore
+from flow_atelier.modules.engine import ConduitValidationError, Engine
+from flow_atelier.schemas.conduit import Conduit
+from flow_atelier.schemas.log import ExecutionResult
+from flow_atelier.schemas.progress import FlowStatus, TaskStatus
+from flow_atelier.services.executor.base import ExecutorBase
+from flow_atelier.services.store.filesystem import FilesystemStore
 
 
 class FakeExecutor(ExecutorBase):
@@ -1380,7 +1380,7 @@ async def test_hitl_task_survives_past_conduit_timeout(store, monkeypatch):
     :param store: FilesystemStore fixture.
     :param monkeypatch: pytest monkeypatch fixture.
     """
-    import app.modules.engine as engine_mod
+    import flow_atelier.modules.engine as engine_mod
 
     monkeypatch.setattr(engine_mod, "BACKSTOP_GRACE_SECONDS", 0)
 
@@ -1409,7 +1409,7 @@ async def test_backstop_timeout_still_kills_non_hitl(store, monkeypatch):
     :param store: FilesystemStore fixture.
     :param monkeypatch: pytest monkeypatch fixture.
     """
-    import app.modules.engine as engine_mod
+    import flow_atelier.modules.engine as engine_mod
 
     monkeypatch.setattr(engine_mod, "BACKSTOP_GRACE_SECONDS", 0)
 

@@ -5,8 +5,8 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from app.cli import app
-from app.schemas.conduit import Conduit
+from flow_atelier.cli import app
+from flow_atelier.schemas.conduit import Conduit
 
 
 @pytest.fixture

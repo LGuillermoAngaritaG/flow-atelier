@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-atelier = "app.main:app"
+atelier = "flow_atelier.main:app"
 
 [dependency-groups]
 dev = [
@@ -62,7 +62,7 @@ ignore = [
 "tests/*" = ["B", "SIM", "E501"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["app"]
+packages = ["flow_atelier"]
 
 [build-system]
 requires = ["hatchling"]

@@ -6,7 +6,7 @@ import io
 
 import pytest
 
-from app.services.executor.prompt_sink import (
+from flow_atelier.services.executor.prompt_sink import (
     PermissionOption,
     PromptSink,
     TerminalPromptSink,
@@ -119,7 +119,7 @@ class TestTerminalPromptSink:
         """
         import sys as _sys
 
-        import app.cli.rendering.multiline_input as _ml
+        import flow_atelier.cli.rendering.multiline_input as _ml
 
         stream = io.StringIO()
         sink = TerminalPromptSink(out=stream)

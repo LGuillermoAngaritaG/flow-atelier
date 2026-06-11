@@ -13,7 +13,7 @@ class TestMultilineInputNonTTY:
 
         :param monkeypatch: pytest monkeypatch fixture.
         """
-        from app.cli.rendering.multiline_input import multiline_input
+        from flow_atelier.cli.rendering.multiline_input import multiline_input
 
         monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
         monkeypatch.setattr(builtins, "input", lambda prompt="": "piped answer")
@@ -25,7 +25,7 @@ class TestMultilineInputNonTTY:
 
         :param monkeypatch: pytest monkeypatch fixture.
         """
-        from app.cli.rendering.multiline_input import multiline_input_sync
+        from flow_atelier.cli.rendering.multiline_input import multiline_input_sync
 
         monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
         monkeypatch.setattr(builtins, "input", lambda prompt="": "sync piped")
@@ -41,7 +41,7 @@ class TestMultilineInputTTY:
 
         :param monkeypatch: pytest monkeypatch fixture.
         """
-        from app.cli.rendering.multiline_input import multiline_input
+        from flow_atelier.cli.rendering.multiline_input import multiline_input
 
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
 
@@ -62,7 +62,7 @@ class TestMultilineInputTTY:
                 return "multiline text\nsecond line"
 
         monkeypatch.setattr(
-            "app.cli.rendering.multiline_input.PromptSession", FakeSession
+            "flow_atelier.cli.rendering.multiline_input.PromptSession", FakeSession
         )
         result = await multiline_input("› ", hint="Alt+Enter to submit")
         assert result == "multiline text\nsecond line"
@@ -73,7 +73,7 @@ class TestMultilineInputTTY:
         :param monkeypatch: pytest monkeypatch fixture.
         :param capsys: pytest capsys fixture for stdout capture.
         """
-        from app.cli.rendering.multiline_input import multiline_input
+        from flow_atelier.cli.rendering.multiline_input import multiline_input
 
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
 
@@ -94,7 +94,7 @@ class TestMultilineInputTTY:
                 return "answer"
 
         monkeypatch.setattr(
-            "app.cli.rendering.multiline_input.PromptSession", FakeSession
+            "flow_atelier.cli.rendering.multiline_input.PromptSession", FakeSession
         )
         await multiline_input("› ", hint="Alt+Enter to submit")
         captured = capsys.readouterr()

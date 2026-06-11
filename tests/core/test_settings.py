@@ -1,7 +1,7 @@
 """Settings unit tests."""
 from pathlib import Path
 
-from app.core.settings import AtelierSettings
+from flow_atelier.core.settings import AtelierSettings
 
 
 def test_defaults(tmp_path, monkeypatch):

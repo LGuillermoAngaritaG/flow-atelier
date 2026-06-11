@@ -6,9 +6,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from app.schemas.conduit import TaskDefinition, ToolType
-from app.services.executor.base import FlowContext
-from app.services.executor.harness import (
+from flow_atelier.schemas.conduit import TaskDefinition, ToolType
+from flow_atelier.services.executor.base import FlowContext
+from flow_atelier.services.executor.harness import (
     DEFAULT_DONE_MARKER,
     AcpHarnessExecutor,
     ClaudeHarness,
@@ -18,7 +18,7 @@ from app.services.executor.harness import (
     OpencodeHarness,
     build_interactive_suffix,
 )
-from app.services.executor.prompt_sink import PermissionOption
+from flow_atelier.services.executor.prompt_sink import PermissionOption
 
 FAKE_AGENT = Path(__file__).resolve().parents[2] / "fixtures" / "fake_acp_agent.py"
 
@@ -309,7 +309,7 @@ class TestInteractive:
         """A marker already in the buffer from an earlier turn (echoed or
         late-dispatched chunk) must not end the session: only the current
         turn's chunks count for termination."""
-        from app.services.executor.harness import _BufferingClient
+        from flow_atelier.services.executor.harness import _BufferingClient
 
         sink = RecordingSink(replies=["continue"])
         executor = AcpHarnessExecutor(launch_cmd=["unused"], sink=sink)
@@ -626,7 +626,7 @@ class TestAtelierHarnessWiring:
         :param tmp_path: pytest temp directory fixture.
         """
         monkeypatch.chdir(tmp_path)
-        from app.core.atelier import Atelier
+        from flow_atelier.core.atelier import Atelier
 
         a = Atelier()
         assert sorted(a.executors) == [
@@ -651,7 +651,7 @@ class TestAtelierHarnessWiring:
         """
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("ATELIER_OPENCODE_LAUNCH_CMD", '["x","y"]')
-        from app.core.atelier import Atelier
+        from flow_atelier.core.atelier import Atelier
 
         a = Atelier()
         assert a.executors["harness:opencode"].launch_cmd == ["x", "y"]
@@ -664,7 +664,7 @@ class TestAtelierHarnessWiring:
         """
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("ATELIER_COPILOT_LAUNCH_CMD", '["x","y"]')
-        from app.core.atelier import Atelier
+        from flow_atelier.core.atelier import Atelier
 
         a = Atelier()
         assert a.executors["harness:copilot"].launch_cmd == ["x", "y"]
@@ -677,7 +677,7 @@ class TestAtelierHarnessWiring:
         """
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("ATELIER_CURSOR_LAUNCH_CMD", '["x","y"]')
-        from app.core.atelier import Atelier
+        from flow_atelier.core.atelier import Atelier
 
         a = Atelier()
         assert a.executors["harness:cursor"].launch_cmd == ["x", "y"]

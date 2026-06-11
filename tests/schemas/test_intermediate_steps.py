@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from app.schemas.log import (
+from flow_atelier.schemas.log import (
     ExecutionResult,
     IntermediateStep,
     LogEntry,

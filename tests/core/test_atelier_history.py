@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.atelier import Atelier
-from app.schemas.api import PriorFlow, RunTaskInput
-from app.schemas.log import LogEntry
+from flow_atelier.core.atelier import Atelier
+from flow_atelier.schemas.api import PriorFlow, RunTaskInput
+from flow_atelier.schemas.log import LogEntry
 
 
 @pytest.fixture

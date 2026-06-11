@@ -10,7 +10,7 @@ import shutil
 
 import pytest
 
-from app.core.atelier import Atelier
+from flow_atelier.core.atelier import Atelier
 
 pytestmark = [pytest.mark.timeout(300), pytest.mark.live]
 

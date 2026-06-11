@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.schemas.conduit import Conduit, TaskDefinition, ToolType
-from app.schemas.log import ExecutionResult, LogEntry
-from app.schemas.progress import FlowStatus, Progress
-from app.services.executor.base import FlowContext
-from app.services.executor.conduit import ConduitExecutor
+from flow_atelier.schemas.conduit import Conduit, TaskDefinition, ToolType
+from flow_atelier.schemas.log import ExecutionResult, LogEntry
+from flow_atelier.schemas.progress import FlowStatus, Progress
+from flow_atelier.services.executor.base import FlowContext
+from flow_atelier.services.executor.conduit import ConduitExecutor
 
 
 class _FakeStore:

@@ -5,8 +5,8 @@ import io
 
 from rich.console import Console
 
-from app.schemas.log import IntermediateStep, StepKind
-from app.services.executor.prompt_sink import TerminalPromptSink
+from flow_atelier.schemas.log import IntermediateStep, StepKind
+from flow_atelier.services.executor.prompt_sink import TerminalPromptSink
 
 
 def _make_sink() -> tuple[TerminalPromptSink, io.StringIO]:

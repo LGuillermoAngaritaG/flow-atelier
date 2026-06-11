@@ -4,9 +4,9 @@ import json
 import pytest
 import yaml
 
-from app.schemas.log import LogEntry
-from app.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
-from app.services.store.filesystem import FilesystemStore
+from flow_atelier.schemas.log import LogEntry
+from flow_atelier.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
+from flow_atelier.services.store.filesystem import FilesystemStore
 
 CONDUIT_YAML = """
 name: hello
@@ -335,7 +335,7 @@ def test_read_missing_from_both_raises(tmp_path):
 # --------------------------------------------------------------- write/delete
 
 
-from app.schemas.conduit import Conduit
+from flow_atelier.schemas.conduit import Conduit
 
 
 def _build_conduit(name: str, description: str = "d") -> Conduit:

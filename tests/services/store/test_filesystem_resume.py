@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.schemas.flow import new_flow_id
-from app.services.store.filesystem import FilesystemStore
+from flow_atelier.schemas.flow import new_flow_id
+from flow_atelier.services.store.filesystem import FilesystemStore
 
 
 @pytest.fixture

@@ -10,9 +10,9 @@ from acp.schema import (
     ToolCallStart,
 )
 
-from app.schemas.log import IntermediateStep, StepKind
-from app.services.executor.harness import _BufferingClient
-from app.services.executor.prompt_sink import PermissionOption
+from flow_atelier.schemas.log import IntermediateStep, StepKind
+from flow_atelier.services.executor.harness import _BufferingClient
+from flow_atelier.services.executor.prompt_sink import PermissionOption
 
 
 class RecordingSink:

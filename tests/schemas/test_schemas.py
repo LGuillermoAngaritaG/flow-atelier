@@ -4,10 +4,10 @@ import re
 import pytest
 import yaml
 
-from app.schemas.conduit import Conduit, ToolType
-from app.schemas.flow import FLOW_ID_RE, new_flow_id, parse_flow_id
-from app.schemas.log import LogEntry
-from app.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
+from flow_atelier.schemas.conduit import Conduit, ToolType
+from flow_atelier.schemas.flow import FLOW_ID_RE, new_flow_id, parse_flow_id
+from flow_atelier.schemas.log import LogEntry
+from flow_atelier.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
 
 SAMPLE_YAML = """
 name: deploy_pipeline

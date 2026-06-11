@@ -9,8 +9,8 @@ from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
-from app.schemas.api import ScheduledJob
-from app.services.scheduler.triggers import default_local_zone, to_trigger
+from flow_atelier.schemas.api import ScheduledJob
+from flow_atelier.services.scheduler.triggers import default_local_zone, to_trigger
 
 UTC = ZoneInfo("UTC")
 NYC = ZoneInfo("America/New_York")

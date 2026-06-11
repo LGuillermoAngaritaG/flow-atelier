@@ -7,9 +7,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.schemas.api import CreateScheduleInput, ScheduledJob
-from app.services.scheduler.runner import _RELOAD_JOB_ID, SchedulerDaemon
-from app.services.scheduler.store import ScheduleStore
+from flow_atelier.schemas.api import CreateScheduleInput, ScheduledJob
+from flow_atelier.services.scheduler.runner import _RELOAD_JOB_ID, SchedulerDaemon
+from flow_atelier.services.scheduler.store import ScheduleStore
 
 UTC = ZoneInfo("UTC")
 

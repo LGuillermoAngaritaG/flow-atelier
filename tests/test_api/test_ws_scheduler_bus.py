@@ -7,9 +7,9 @@ import json
 import pytest
 from starlette.testclient import TestClient
 
-from app.core.atelier import Atelier
-from app.services.api.app import FastApiServer
-from app.services.api.scheduler_bus import SchedulerEventBus
+from flow_atelier.core.atelier import Atelier
+from flow_atelier.services.api.app import FastApiServer
+from flow_atelier.services.api.scheduler_bus import SchedulerEventBus
 
 
 @pytest.fixture

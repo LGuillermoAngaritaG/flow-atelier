@@ -5,12 +5,12 @@ from typing import Any
 
 import pytest
 
-from app.modules.engine import Engine
-from app.schemas.conduit import Conduit
-from app.schemas.log import ExecutionResult
-from app.schemas.progress import FlowStatus, TaskStatus
-from app.services.executor.base import ExecutorBase
-from app.services.store.filesystem import FilesystemStore
+from flow_atelier.modules.engine import Engine
+from flow_atelier.schemas.conduit import Conduit
+from flow_atelier.schemas.log import ExecutionResult
+from flow_atelier.schemas.progress import FlowStatus, TaskStatus
+from flow_atelier.services.executor.base import ExecutorBase
+from flow_atelier.services.store.filesystem import FilesystemStore
 
 
 class FakeExecutor(ExecutorBase):
