@@ -99,6 +99,20 @@ def parse_dependencies(deps: list[str]) -> list[Dependency]:
     return [parse_dependency(d) for d in deps]
 
 
+def sink_task_names(conduit) -> list[str]:
+    """Return the conduit's sink tasks (no other task depends on them).
+
+    :param conduit: parsed :class:`app.schemas.conduit.Conduit`.
+    :returns: sink task names in conduit definition order.
+    """
+    targeted = {
+        d.task
+        for t in conduit.tasks
+        for d in parse_dependencies(t.depends_on)
+    }
+    return [t.name for t in conduit.tasks if t.name not in targeted]
+
+
 def parse_output_predicate(expr: str) -> tuple[re.Pattern[str], bool]:
     """Parse a ``until``-style predicate against the current task's output.
 

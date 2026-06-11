@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.modules.conditions import sink_task_names
 from app.modules.templating import resolve
 from app.schemas.conduit import TaskDefinition
 from app.schemas.log import ExecutionResult
@@ -28,8 +29,8 @@ class ConduitExecutor(ExecutorBase):
         :param resolved_command: name of the child conduit
         :param context: runtime :class:`FlowContext`; ``run_nested_conduit``
             is required
-        :returns: :class:`ExecutionResult` whose ``output`` is the last
-            successful log entry of the child flow
+        :returns: :class:`ExecutionResult` whose ``output`` joins the child's
+            sink-task outputs (falling back to the last successful log entry)
         """
         if context.run_nested_conduit is None:
             raise RuntimeError("ConduitExecutor requires context.run_nested_conduit")
@@ -53,11 +54,28 @@ class ConduitExecutor(ExecutorBase):
 
         child_progress = context.store.read_progress(child_flow_id)
         logs = context.store.read_logs(child_flow_id)
+
+        # The child's output is its sink tasks' final outputs (tasks no
+        # other task depends on), in definition order — the last exit-0
+        # log entry is whichever task happened to log last under
+        # concurrency, not a terminal result.
         last_output = ""
-        for entry in reversed(logs):
-            if entry.exit_code == 0 and entry.output:
-                last_output = entry.output
-                break
+        child_outputs = context.store.read_outputs(child_flow_id)
+        if child_outputs:
+            child_conduit = context.store.read_conduit(child_conduit_name)
+            parts = [
+                child_outputs[name]
+                for name in sink_task_names(child_conduit)
+                if child_outputs.get(name)
+            ]
+            last_output = "\n\n".join(parts)
+        if not last_output:
+            # Fallback for old flows or children that failed before
+            # outputs.yaml was written.
+            for entry in reversed(logs):
+                if entry.exit_code == 0 and entry.output:
+                    last_output = entry.output
+                    break
 
         # Sub-task outputs feed the engine's loop-predicate evaluation
         # for `tool:conduit` tasks (every entry, in append order — same

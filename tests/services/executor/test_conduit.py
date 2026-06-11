@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.schemas.conduit import TaskDefinition, ToolType
+from app.schemas.conduit import Conduit, TaskDefinition, ToolType
 from app.schemas.log import ExecutionResult, LogEntry
 from app.schemas.progress import FlowStatus, Progress
 from app.services.executor.base import FlowContext
@@ -14,15 +14,23 @@ class _FakeStore:
     """Minimal store stand-in: only the methods ConduitExecutor calls."""
 
     def __init__(
-        self, child_logs: list[LogEntry], child_status: FlowStatus
+        self,
+        child_logs: list[LogEntry],
+        child_status: FlowStatus,
+        child_outputs: dict[str, str] | None = None,
+        child_conduit: Conduit | None = None,
     ) -> None:
         """Initialize the fake store with canned child outputs.
 
         :param child_logs: log entries to return from read_logs.
         :param child_status: flow status to return from read_progress.
+        :param child_outputs: per-task output map to return from read_outputs.
+        :param child_conduit: conduit definition to return from read_conduit.
         """
         self._child_logs = child_logs
         self._child_status = child_status
+        self._child_outputs = child_outputs or {}
+        self._child_conduit = child_conduit
 
     def read_logs(self, flow_id: str) -> list[LogEntry]:  # noqa: ARG002
         """Return the canned child log entries.
@@ -37,6 +45,21 @@ class _FakeStore:
         :param flow_id: ignored — present only for interface compatibility.
         """
         return Progress(status=self._child_status, tasks={}, started_at="x")
+
+    def read_outputs(self, flow_id: str) -> dict[str, str]:  # noqa: ARG002
+        """Return the canned per-task output map.
+
+        :param flow_id: ignored — present only for interface compatibility.
+        """
+        return dict(self._child_outputs)
+
+    def read_conduit(self, name: str) -> Conduit:  # noqa: ARG002
+        """Return the canned child conduit definition.
+
+        :param name: ignored — present only for interface compatibility.
+        """
+        assert self._child_conduit is not None
+        return self._child_conduit
 
 
 def _task(child_name: str = "child") -> TaskDefinition:
@@ -121,6 +144,80 @@ async def test_sub_outputs_includes_failed_iterations():
     ]
     result = await _run(logs, status=FlowStatus.failed)
     assert result.sub_outputs == ["ok", "boom"]
+
+
+def _child_conduit(tasks: list[tuple[str, list[str]]]) -> Conduit:
+    """Build a child Conduit from (name, depends_on) pairs.
+
+    :param tasks: list of (task name, depends_on list) tuples.
+    """
+    return Conduit.model_validate(
+        {
+            "name": "child",
+            "description": "d",
+            "tasks": [
+                {name: {"description": "d", "task": "x", "tool": "tool:bash",
+                        "depends_on": deps}}
+                for name, deps in tasks
+            ],
+        }
+    )
+
+
+async def _run_with_outputs(
+    child_outputs: dict[str, str],
+    child_conduit: Conduit,
+    child_logs: list[LogEntry] | None = None,
+) -> ExecutionResult:
+    """Drive the ConduitExecutor with a fake store carrying outputs.yaml data.
+
+    :param child_outputs: per-task output map for the fake read_outputs.
+    :param child_conduit: child conduit definition for the fake read_conduit.
+    :param child_logs: optional log entries for the fallback path.
+    """
+    store = _FakeStore(
+        child_logs or [], FlowStatus.completed,
+        child_outputs=child_outputs, child_conduit=child_conduit,
+    )
+
+    async def run_nested(name: str, inputs: dict[str, Any], parent: str) -> str:
+        return "child-flow-id"
+
+    ctx = FlowContext(
+        flow_id="parent-flow-id",
+        store=store,  # type: ignore[arg-type]
+        inputs={},
+        run_nested_conduit=run_nested,
+    )
+    return await ConduitExecutor().execute(_task(), "child", ctx)
+
+
+async def test_output_uses_sink_task_outputs():
+    """The child's output must come from its sink task, not whichever
+    sub-task happened to log last."""
+    conduit = _child_conduit([("a", []), ("b", ["a"])])
+    # Log order says "alpha" logged last; the sink (b) says "beta".
+    logs = [_log("b", "beta"), _log("a", "alpha")]
+    result = await _run_with_outputs(
+        {"a": "alpha", "b": "beta"}, conduit, child_logs=logs
+    )
+    assert result.output == "beta"
+
+
+async def test_multiple_sinks_joined_in_definition_order():
+    """Multiple sink outputs are joined in conduit definition order."""
+    conduit = _child_conduit([("a", []), ("b", ["a"]), ("c", ["a"])])
+    result = await _run_with_outputs(
+        {"a": "alpha", "c": "out-c", "b": "out-b"}, conduit
+    )
+    assert result.output == "out-b\n\nout-c"
+
+
+async def test_falls_back_to_logs_when_outputs_missing():
+    """Old flows without outputs.yaml keep the last-successful-log behavior."""
+    logs = [_log("a", "alpha"), _log("b", "beta")]
+    result = await _run(logs)
+    assert result.output == "beta"
 
 
 async def test_inputs_resolve_loop_previous_from_context_history():

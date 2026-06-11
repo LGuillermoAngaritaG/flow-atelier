@@ -288,3 +288,26 @@ def test_evaluate_loop_predicate_invalid_mode_raises():
 
     with pytest.raises(ValueError):
         evaluate_loop_predicate(_pred("output.match(x)"), ["x"], "forever")  # type: ignore[arg-type]
+
+
+def test_sink_task_names_returns_undepended_tasks_in_order():
+    """Verify sink_task_names returns tasks nothing depends on, in definition
+    order, counting conditional dependency targets as depended-upon."""
+    from app.modules.conditions import sink_task_names
+    from app.schemas.conduit import Conduit
+
+    conduit = Conduit.model_validate(
+        {
+            "name": "c",
+            "description": "d",
+            "tasks": [
+                {"a": {"description": "d", "task": "x", "tool": "tool:bash",
+                       "depends_on": []}},
+                {"b": {"description": "d", "task": "x", "tool": "tool:bash",
+                       "depends_on": ["a.output.match(ok)"]}},
+                {"c": {"description": "d", "task": "x", "tool": "tool:bash",
+                       "depends_on": ["a"]}},
+            ],
+        }
+    )
+    assert sink_task_names(conduit) == ["b", "c"]
