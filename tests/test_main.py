@@ -36,7 +36,10 @@ def workdir(tmp_path, monkeypatch):
     (atelier_dir / "conduits" / "hello" / "conduit.yaml").write_text(CONDUIT_YAML)
     monkeypatch.chdir(tmp_path)
     for k in list(os.environ):
-        if k.startswith("ATELIER_") and k != "ATELIER_GLOBAL_ATELIER_DIR":
+        if k.startswith("ATELIER_") and k not in (
+            "ATELIER_GLOBAL_ATELIER_DIR",
+            "ATELIER_NO_UPDATE_CHECK",
+        ):
             monkeypatch.delenv(k, raising=False)
     return tmp_path
 
@@ -680,7 +683,10 @@ def test_run_failure_prints_flow_id_and_status_hint(tmp_path, monkeypatch):
     )
     monkeypatch.chdir(tmp_path)
     for k in list(os.environ):
-        if k.startswith("ATELIER_") and k != "ATELIER_GLOBAL_ATELIER_DIR":
+        if k.startswith("ATELIER_") and k not in (
+            "ATELIER_GLOBAL_ATELIER_DIR",
+            "ATELIER_NO_UPDATE_CHECK",
+        ):
             monkeypatch.delenv(k, raising=False)
 
     runner = CliRunner()
@@ -963,7 +969,10 @@ def prompted_workdir(tmp_path, monkeypatch):
     )
     monkeypatch.chdir(tmp_path)
     for k in list(os.environ):
-        if k.startswith("ATELIER_") and k != "ATELIER_GLOBAL_ATELIER_DIR":
+        if k.startswith("ATELIER_") and k not in (
+            "ATELIER_GLOBAL_ATELIER_DIR",
+            "ATELIER_NO_UPDATE_CHECK",
+        ):
             monkeypatch.delenv(k, raising=False)
     return tmp_path
 
