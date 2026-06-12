@@ -75,7 +75,7 @@ mkdir -p "$INSTALL_DIR"
 cp "${TMPDIR}/${ASSET}" "${INSTALL_DIR}/atelier"
 chmod +x "${INSTALL_DIR}/atelier"
 
-# --- Add to PATH (idempotent) ---
+# --- Add to PATH (idempotent, persistent) ---
 SHELL_RC=""
 if [ -n "${ZSH_VERSION:-}" ]; then
     SHELL_RC="$HOME/.zshrc"
@@ -92,6 +92,20 @@ if [ -n "$SHELL_RC" ]; then
     fi
 fi
 
+# --- Also update the current session so 'atelier' works immediately ---
+case ":${PATH}:" in
+    *":${INSTALL_DIR}:"*) ;;
+    *) export PATH="${PATH}:${INSTALL_DIR}" ;;
+esac
+
+# --- Warn if another 'atelier' is earlier on PATH ---
+FOUND="$(command -v atelier 2>/dev/null || true)"
+if [ -n "$FOUND" ] && [ "$FOUND" != "${INSTALL_DIR}/atelier" ]; then
+    echo ""
+    echo "WARNING: Another 'atelier' was found earlier on PATH:"
+    echo "  ${FOUND}"
+    echo "It will take priority over the installed binary."
+fi
+
 echo ""
 echo "Installed atelier ${TAG} to ${INSTALL_DIR}/atelier"
-echo "Restart your shell or run: export PATH=\"\$PATH:${INSTALL_DIR}\""

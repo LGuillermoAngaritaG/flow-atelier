@@ -101,9 +101,22 @@ try {
         Write-Host "$InstallDir already in PATH."
     }
 
+    # --- Also update the current session so 'atelier' works immediately ---
+    if ($env:Path -notlike "*$InstallDir*") {
+        $env:Path = "$env:Path;$InstallDir"
+    }
+
+    # --- Warn if another 'atelier' is earlier on PATH ---
+    $found = Get-Command atelier -ErrorAction SilentlyContinue
+    if ($found -and $found.Source -ne $DestPath) {
+        Write-Host ""
+        Write-Host "WARNING: Another 'atelier' was found earlier on PATH:" -ForegroundColor Yellow
+        Write-Host "  $found.Source" -ForegroundColor Yellow
+        Write-Host "It will take priority over the installed binary." -ForegroundColor Yellow
+    }
+
     Write-Host ""
     Write-Host "Installed atelier $Tag to $DestPath"
-    Write-Host "Restart your shell or open a new terminal to use 'atelier'."
 }
 finally {
     Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
