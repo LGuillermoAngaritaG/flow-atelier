@@ -427,7 +427,7 @@ class FilesystemStore(StoreBase):
         :param progress: progress snapshot to persist
         """
         path = self._flow_dir(flow_id) / "progress.json"
-        tmp = path.with_suffix(".json.tmp")
+        tmp = path.with_suffix(f".json.tmp.{uuid.uuid4().hex}")
         tmp.write_text(progress.model_dump_json(indent=2))
         _atomic_replace(tmp, path)
 
