@@ -1507,3 +1507,152 @@ tasks:
     assert "invalid conduit" in r2.output
     assert "fix conduits" in r2.output
     assert "Traceback" not in r2.output
+
+
+# --- liveness / crashed-flow detection -------------------------------------
+
+def _run_hello(runner, name="a"):
+    """Run the hello conduit and return its flow id.
+
+    :param runner: CliRunner instance.
+    :param name: value for the greet input.
+    :returns: the created flow id.
+    """
+    result = runner.invoke(app, ["run", "hello", "--input", f"name={name}"])
+    assert result.exit_code == 0, result.output
+    line = [l for l in result.output.splitlines() if "flow_id" in l][0]
+    return line.split()[-1]
+
+
+def _dead_local_pid():
+    """Return a pid that has provably exited on this host."""
+    import subprocess
+    import sys as _sys
+
+    proc = subprocess.Popen([_sys.executable, "-c", ""])
+    proc.wait()
+    return proc.pid
+
+
+def _force_running(flow_id, pid):
+    """Rewrite a flow's progress.json to status=running with the given pid.
+
+    :param flow_id: flow to mutate.
+    :param pid: runner_pid to record (dead pid simulates a crash).
+    """
+    import socket
+
+    from flow_atelier.core.atelier import Atelier
+    from flow_atelier.schemas.progress import FlowStatus
+
+    atelier = Atelier()
+    progress = atelier.store.read_progress(flow_id)
+    progress.status = FlowStatus.running
+    progress.runner_pid = pid
+    progress.runner_host = socket.gethostname()
+    atelier.store.write_progress(flow_id, progress)
+
+
+def test_run_records_runner_identity(workdir):
+    """A started flow persists this process's pid and a non-empty host.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    flow_id = _run_hello(runner)
+    from flow_atelier.core.atelier import Atelier
+
+    progress = Atelier().store.read_progress(flow_id)
+    # CliRunner runs in-process, so the runner pid is this test process.
+    assert progress.runner_pid == os.getpid()
+    assert progress.runner_host
+
+
+def test_status_reports_crashed_with_resume_hint(workdir):
+    """status on a dead-runner flow shows crashed + a resume hint.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    flow_id = _run_hello(runner)
+    _force_running(flow_id, _dead_local_pid())
+
+    result = runner.invoke(app, ["status", flow_id])
+    assert result.exit_code == 0, result.output
+    assert "crashed" in result.output
+    assert f"--resume {flow_id}" in result.output
+
+    jr = runner.invoke(app, ["status", flow_id, "--json"])
+    assert jr.exit_code == 0
+    import json as _json
+
+    payload = _json.loads(jr.output)
+    assert payload["crashed"] is True
+    # Persisted status field is untouched.
+    assert payload["status"] == "running"
+
+
+def test_status_live_running_not_crashed(workdir):
+    """status on a live-runner running flow shows running, no hint.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    flow_id = _run_hello(runner)
+    _force_running(flow_id, os.getpid())
+
+    result = runner.invoke(app, ["status", flow_id])
+    assert result.exit_code == 0
+    assert "crashed" not in result.output
+    assert "--resume" not in result.output
+
+    jr = runner.invoke(app, ["status", flow_id, "--json"])
+    payload = __import__("json").loads(jr.output)
+    assert payload["crashed"] is False
+
+
+def test_list_flows_marks_crashed(workdir):
+    """list flows renders a dead-runner flow as crashed, a live one running.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    dead_flow = _run_hello(runner, "dead")
+    live_flow = _run_hello(runner, "live")
+    _force_running(dead_flow, _dead_local_pid())
+    _force_running(live_flow, os.getpid())
+
+    result = runner.invoke(app, ["list", "flows"])
+    assert result.exit_code == 0, result.output
+    assert "crashed" in result.output
+    assert "running" in result.output
+
+    jr = runner.invoke(app, ["list", "flows", "--json"])
+    import json as _json
+
+    rows = {r["flow_id"]: r for r in _json.loads(jr.output)}
+    assert rows[dead_flow]["crashed"] is True
+    assert rows[live_flow]["crashed"] is False
+
+
+def test_follow_logs_exits_on_crash(workdir):
+    """logs --follow on a dead-runner flow terminates instead of hanging.
+
+    :param workdir: isolated working directory fixture.
+    """
+    import threading
+
+    runner = CliRunner()
+    flow_id = _run_hello(runner)
+    _force_running(flow_id, _dead_local_pid())
+
+    box = {}
+
+    def _go():
+        box["result"] = runner.invoke(app, ["logs", flow_id, "--follow"])
+
+    t = threading.Thread(target=_go)
+    t.start()
+    t.join(timeout=10)
+    assert not t.is_alive(), "logs --follow hung on a crashed flow"
+    assert "crashed" in box["result"].output

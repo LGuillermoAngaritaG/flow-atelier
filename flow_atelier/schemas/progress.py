@@ -34,3 +34,5 @@ class Progress(BaseModel):
     tasks: dict[str, TaskProgress] = Field(default_factory=dict)
     started_at: str | None = None
     finished_at: str | None = None
+    runner_pid: int | None = None
+    runner_host: str | None = None

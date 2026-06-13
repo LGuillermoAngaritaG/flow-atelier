@@ -249,6 +249,7 @@ _FLOW_STATUS_STYLE: dict[str, str] = {
     FlowStatus.completed.value: "green",
     FlowStatus.failed.value: "red",
     FlowStatus.running.value: "yellow",
+    "crashed": "magenta",
 }
 
 _TASK_STATUS_GLYPHS: list[tuple[TaskStatus, str, str]] = [

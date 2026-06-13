@@ -21,6 +21,7 @@ from flow_atelier.cli.rendering.render import (
     format_conduit_error,
 )
 from flow_atelier.core.atelier import Atelier
+from flow_atelier.modules.liveness import display_status, is_crashed
 from flow_atelier.schemas.flow import parse_flow_id
 from flow_atelier.schemas.progress import Progress
 
@@ -147,6 +148,7 @@ def list_flows_cmd(
                 "flow_id": fid,
                 "conduit": conduit_name,
                 "status": progress.status.value,
+                "crashed": is_crashed(progress),
                 "started_at": progress.started_at,
                 "finished_at": progress.finished_at,
                 "duration_seconds": _flow_duration_seconds(progress),
@@ -172,11 +174,12 @@ def list_flows_cmd(
         if progress is None:
             table.add_row(str(r["flow_id"]), str(r["conduit"]), "[red]?[/red]", "—", "—", "—")
             continue
-        status_style = _FLOW_STATUS_STYLE.get(progress.status.value, "white")
+        effective = display_status(progress)
+        status_style = _FLOW_STATUS_STYLE.get(effective, "white")
         table.add_row(
             str(r["flow_id"]),
             str(r["conduit"]),
-            f"[{status_style}]{progress.status.value}[/{status_style}]",
+            f"[{status_style}]{effective}[/{status_style}]",
             _format_clock(progress.started_at),
             _format_duration_seconds(_flow_duration_seconds(progress)),
             _task_status_summary(progress),

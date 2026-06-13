@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import socket
 import sys
 import traceback
 from collections.abc import Callable
@@ -324,6 +326,8 @@ class Engine:
                 for t in conduit.tasks
             },
             started_at=_now(),
+            runner_pid=os.getpid(),
+            runner_host=socket.gethostname(),
         )
         self.store.write_progress(flow_id, progress)
 
