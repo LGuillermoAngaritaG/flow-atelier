@@ -293,6 +293,51 @@ def test_increment_runs_skips_when_file_gone(store):
     assert list(store.schedules_dir.glob("*.yaml")) == []
 
 
+def test_union_reads_project_and_global(tmp_path):
+    """A schedule living in the global dir is visible alongside project ones.
+
+    Mirrors the CLI(project)↔serve(global) split-brain fix: reads union both
+    dirs while writes stay project-local.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
+    project = tmp_path / "project" / ".atelier"
+    global_dir = tmp_path / "global" / ".atelier"
+    # A schedule installed against the *global* dir (e.g. by a previous serve).
+    ScheduleStore(global_dir).create(
+        _recurring_payload(schedule={
+            "mode": "recurring", "name": "global job",
+            "days": [1], "times": ["06:00"],
+        })
+    )
+    store = ScheduleStore(project, global_dir=global_dir)
+    proj_job = store.create(_recurring_payload(schedule={
+        "mode": "recurring", "name": "project job",
+        "days": [2], "times": ["07:00"],
+    }))
+    names = {j.schedule.name for j in store.list()}
+    assert names == {"global job", "project job"}
+    # Writes land in the project dir, never the global dir.
+    assert list((project / "schedules").glob("project-job-*.yaml"))
+    assert not list((global_dir / "schedules").glob("project-job-*.yaml"))
+    # Project-side store can still find/delete the project job.
+    assert store.get(proj_job.id).id == proj_job.id
+
+
+def test_find_and_delete_reach_global_schedule(tmp_path):
+    """get/delete locate a schedule that physically lives in the global dir.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
+    project = tmp_path / "project" / ".atelier"
+    global_dir = tmp_path / "global" / ".atelier"
+    global_job = ScheduleStore(global_dir).create(_recurring_payload())
+    store = ScheduleStore(project, global_dir=global_dir)
+    assert store.get(global_job.id) is not None
+    store.delete(global_job.id)
+    assert store.get(global_job.id) is None
+
+
 def test_recreate_after_load_round_trips(store, tmp_path):
     """Verify a fresh ScheduleStore reloads previously persisted data.
 

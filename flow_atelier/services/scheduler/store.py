@@ -64,18 +64,44 @@ class ScheduleStore:
     :param atelier_dir: project ``.atelier/`` directory; created if missing
     """
 
-    def __init__(self, atelier_dir: Path | str) -> None:
+    def __init__(
+        self, atelier_dir: Path | str, global_dir: Path | str | None = None
+    ) -> None:
         """Initialise the store rooted at ``atelier_dir``.
 
+        Mirrors :class:`FilesystemStore`: reads union the project and (optional)
+        global schedules dirs so a schedule installed via the CLI (project) is
+        visible to ``atelier serve`` (which roots at the global dir) and vice
+        versa. Writes and fired-state always go to the project dir.
+
         :param atelier_dir: project ``.atelier/`` directory; created if missing
+        :param global_dir: optional user-level ``.atelier/`` directory; its
+            ``schedules/`` is included in reads only
         """
         self.atelier_dir = Path(atelier_dir)
         self.atelier_dir.mkdir(parents=True, exist_ok=True)
         self.schedules_dir = self.atelier_dir / "schedules"
         self.schedules_dir.mkdir(parents=True, exist_ok=True)
         self.state_path = self.atelier_dir / "scheduler_state.json"
+        self.global_schedules_dir: Path | None = None
+        if global_dir is not None:
+            global_schedules = Path(global_dir) / "schedules"
+            if global_schedules.resolve() != self.schedules_dir.resolve():
+                try:
+                    global_schedules.mkdir(parents=True, exist_ok=True)
+                    self.global_schedules_dir = global_schedules
+                except OSError:
+                    # Read-only HOME / sandbox — degrade to project-only.
+                    self.global_schedules_dir = None
 
     # --------------------------------------------------------------- internals
+
+    def _read_dirs(self) -> list[Path]:
+        """Return the schedule dirs to read from, project first (precedence)."""
+        dirs = [self.schedules_dir]
+        if self.global_schedules_dir is not None:
+            dirs.append(self.global_schedules_dir)
+        return dirs
 
     def _path_for_name(self, name: str) -> Path:
         """Return the YAML path for ``name``.
@@ -89,15 +115,16 @@ class ScheduleStore:
 
         Resolves by reading each file's ``id`` rather than recomputing the
         filename, so pre-existing files written under an older slug scheme are
-        still found.
+        still found. Searches the project dir first, then the global dir.
 
         :param schedule_id: schedule identifier
         :returns: ``(path, job)`` or ``None`` if no file matches
         """
-        for path in self.schedules_dir.glob("*.yaml"):
-            job = self._load_file(path)
-            if job is not None and job.id == schedule_id:
-                return path, job
+        for directory in self._read_dirs():
+            for path in directory.glob("*.yaml"):
+                job = self._load_file(path)
+                if job is not None and job.id == schedule_id:
+                    return path, job
         return None
 
     def _load_file(self, path: Path) -> ScheduledJob | None:
@@ -134,14 +161,21 @@ class ScheduleStore:
         os.replace(tmp, path)
 
     def _iter_jobs(self) -> list[ScheduledJob]:
-        """Return every persisted schedule, sorted by ``created_at`` ascending."""
-        if not self.schedules_dir.exists():
-            return []
+        """Return every persisted schedule, sorted by ``created_at`` ascending.
+
+        Unions the project and global schedule dirs; on an id collision the
+        project copy wins (project shadows global, like conduits).
+        """
         jobs: list[ScheduledJob] = []
-        for path in self.schedules_dir.glob("*.yaml"):
-            job = self._load_file(path)
-            if job is not None:
-                jobs.append(job)
+        seen: set[str] = set()
+        for directory in self._read_dirs():
+            if not directory.exists():
+                continue
+            for path in directory.glob("*.yaml"):
+                job = self._load_file(path)
+                if job is not None and job.id not in seen:
+                    seen.add(job.id)
+                    jobs.append(job)
         jobs.sort(key=lambda j: j.created_at)
         return jobs
 
