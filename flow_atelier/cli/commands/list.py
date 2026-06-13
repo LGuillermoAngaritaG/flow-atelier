@@ -5,6 +5,7 @@ import json
 from collections import Counter
 
 import typer
+from rich.markup import escape
 from rich.table import Table
 
 from flow_atelier.cli._shared import (
@@ -14,7 +15,11 @@ from flow_atelier.cli._shared import (
     console,
 )
 from flow_atelier.cli.main import list_app
-from flow_atelier.cli.rendering.render import _FLOW_STATUS_STYLE, _task_status_summary
+from flow_atelier.cli.rendering.render import (
+    _FLOW_STATUS_STYLE,
+    _task_status_summary,
+    format_conduit_error,
+)
 from flow_atelier.core.atelier import Atelier
 from flow_atelier.schemas.flow import parse_flow_id
 from flow_atelier.schemas.progress import Progress
@@ -43,11 +48,13 @@ def list_conduits_cmd(
             num_tasks = len(conduit.tasks)
             num_inputs = len(conduit.inputs)
             readable = True
-        except Exception:  # noqa: BLE001 — broken yaml shouldn't break list
+            error = None
+        except Exception as exc:  # noqa: BLE001 — broken yaml shouldn't break list
             description = ""
             num_tasks = -1
             num_inputs = -1
             readable = False
+            error = format_conduit_error(exc)
         rows.append(
             {
                 "name": name,
@@ -56,6 +63,7 @@ def list_conduits_cmd(
                 "tasks": num_tasks,
                 "inputs": num_inputs,
                 "readable": readable,
+                "error": error,
             }
         )
 
@@ -73,7 +81,7 @@ def list_conduits_cmd(
     for r in rows:
         source_style = "cyan" if r["source"] == "project" else "magenta"
         if not r["readable"]:
-            description_cell = "[red](unreadable)[/red]"
+            description_cell = f"[red](invalid: {escape(str(r['error']))})[/red]"
             tasks_cell = "?"
             inputs_cell = "?"
         else:

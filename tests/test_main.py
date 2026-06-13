@@ -1411,3 +1411,99 @@ tasks:
     assert result.exit_code == 1
     assert "hello" in result.output and "OK" in result.output
     assert "cyc" in result.output and "FAIL" in result.output
+
+
+def test_list_conduits_invalid_shows_reason(workdir):
+    """A malformed conduit shows ``(invalid: …)`` instead of ``(unreadable)``.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "broke",
+        """
+name: broke
+description: bad tool
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:nope
+      depends_on: []
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["list", "conduits"])
+    assert result.exit_code == 0, result.output
+    # The good conduit still renders normally; the bad one shows a reason.
+    assert "hello" in result.output
+    assert "invalid" in result.output
+    assert "(unreadable)" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_list_conduits_json_includes_error(workdir):
+    """JSON output carries an ``error`` reason for unreadable conduits.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(workdir, "broke", "name: broke\ntasks: [unclosed\n")
+    runner = CliRunner()
+    result = runner.invoke(app, ["list", "conduits", "--json"])
+    assert result.exit_code == 0, result.output
+    by_name = {e["name"]: e for e in _json.loads(result.output)}
+    assert by_name["hello"]["error"] is None
+    assert by_name["broke"]["error"]
+    assert "invalid YAML" in by_name["broke"]["error"]
+
+
+def test_run_invalid_conduit(workdir):
+    """`run <malformed>` exits 1 with a readable message and a fix pointer.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(workdir, "broke", "name: broke\ntasks: [unclosed\n")
+    runner = CliRunner()
+    result = runner.invoke(app, ["run", "broke"])
+    assert result.exit_code == 1
+    assert "invalid conduit" in result.output
+    assert "fix conduits" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_run_resume_invalid_conduit(workdir):
+    """`run --resume` on a now-malformed conduit shows the friendly message.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "willfail",
+        """
+name: willfail
+description: fails
+tasks:
+  - boom:
+      description: boom
+      task: "exit 1"
+      tool: tool:bash
+      depends_on: []
+""",
+    )
+    runner = CliRunner()
+    r1 = runner.invoke(app, ["run", "willfail"])
+    assert r1.exit_code == 1
+    from flow_atelier.core.atelier import Atelier
+
+    flows = Atelier().list_flows("willfail")
+    assert flows
+    fid = flows[0]
+    # Corrupt the conduit, then resume the failed flow.
+    (workdir / ".atelier" / "conduits" / "willfail" / "conduit.yaml").write_text(
+        "name: willfail\ntasks: [unclosed\n"
+    )
+    r2 = runner.invoke(app, ["run", "--resume", fid])
+    assert r2.exit_code == 1
+    assert "invalid conduit" in r2.output
+    assert "fix conduits" in r2.output
+    assert "Traceback" not in r2.output
