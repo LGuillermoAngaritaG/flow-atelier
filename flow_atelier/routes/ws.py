@@ -155,6 +155,20 @@ def _wire_atelier(
         broker=broker, flow_id=flow_id
     )
 
+    # Hold strong references to fire-and-forget broadcast tasks: the event
+    # loop keeps only a weak reference to a bare create_task, so without this
+    # a send can be garbage-collected mid-flight and silently dropped.
+    pending: set[asyncio.Task] = set()
+
+    def _spawn(coro: Awaitable[None]) -> None:
+        """Schedule a broadcast coroutine while retaining a strong reference.
+
+        :param coro: the broadcast coroutine to run detached.
+        """
+        task = asyncio.create_task(coro)
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
     async def _on_task_event(event: TaskEvent) -> None:
         """Emit per-step and step-status envelopes for a task event.
 
@@ -188,7 +202,7 @@ def _wire_atelier(
 
         :param event: task event produced by the engine.
         """
-        asyncio.create_task(_on_task_event(event))
+        _spawn(_on_task_event(event))
 
     def on_task_starting(name: str, tool: str) -> None:
         """Emit a step_status=running envelope when a task starts.
@@ -200,7 +214,7 @@ def _wire_atelier(
         :param tool: tool kind string for the task.
         """
         fid = _current_flow_ctx.get(flow_id)
-        asyncio.create_task(
+        _spawn(
             broker.send(
                 {
                     "type": "step_status",
@@ -227,7 +241,7 @@ def _wire_atelier(
         except ValueError:
             pass
         parent_task = _current_task_ctx.get("") or None
-        asyncio.create_task(
+        _spawn(
             broker.send(
                 {
                     "type": "started",
