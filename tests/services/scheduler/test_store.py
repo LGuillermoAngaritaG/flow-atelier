@@ -87,7 +87,7 @@ def test_create_persists_to_yaml_file(store):
     :param store: ScheduleStore fixture.
     """
     job = store.create(_recurring_payload())
-    yaml_path = store.schedules_dir / "weekday-mornings.yaml"
+    (yaml_path,) = list(store.schedules_dir.glob("weekday-mornings-*.yaml"))
     assert yaml_path.exists()
     raw = yaml.safe_load(yaml_path.read_text())
     assert raw["id"] == job.id
@@ -97,7 +97,8 @@ def test_create_persists_to_yaml_file(store):
 
 
 def test_filename_is_slugified(store):
-    """Verify the filename is a lowercase slug of ``schedule.name``.
+    """Verify the filename keeps a lowercase slug of ``schedule.name`` as a
+    readable prefix (a disambiguating hash is appended).
 
     :param store: ScheduleStore fixture.
     """
@@ -106,7 +107,33 @@ def test_filename_is_slugified(store):
         "name": "Weekday Mornings!",
         "days": [1], "times": ["06:00"],
     }))
-    assert (store.schedules_dir / "weekday-mornings.yaml").exists()
+    files = list(store.schedules_dir.glob("weekday-mornings-*.yaml"))
+    assert len(files) == 1
+
+
+def test_distinct_names_same_slug_dont_collide(store):
+    """Two names that slug identically map to two distinct files, each
+    retrievable by its own name and id; an exact-duplicate name still raises.
+
+    :param store: ScheduleStore fixture.
+    """
+    a = store.create(_recurring_payload(schedule={
+        "mode": "recurring", "name": "My Job", "days": [1], "times": ["06:00"],
+    }))
+    b = store.create(_recurring_payload(schedule={
+        "mode": "recurring", "name": "my-job", "days": [1], "times": ["06:00"],
+    }))
+    assert len(list(store.schedules_dir.glob("*.yaml"))) == 2
+    assert a.id != b.id
+    assert store.get_by_name("My Job").id == a.id
+    assert store.get_by_name("my-job").id == b.id
+    assert store.get(a.id).id == a.id
+    assert store.get(b.id).id == b.id
+    # Exact-duplicate name still collides on one file.
+    with pytest.raises(FileExistsError):
+        store.create(_recurring_payload(schedule={
+            "mode": "recurring", "name": "My Job", "days": [1], "times": ["06:00"],
+        }))
 
 
 def test_create_rejects_empty_name(store):
@@ -174,7 +201,7 @@ def test_delete_removes_file(store):
     :param store: ScheduleStore fixture.
     """
     job = store.create(_recurring_payload())
-    path = store.schedules_dir / "weekday-mornings.yaml"
+    (path,) = list(store.schedules_dir.glob("weekday-mornings-*.yaml"))
     assert path.exists()
     deleted = store.delete(job.id)
     assert deleted.id == job.id
@@ -252,21 +279,18 @@ def test_atomic_write_does_not_leave_tmp(store):
     assert leftovers == []
 
 
-def test_increment_runs_skips_when_file_gone(store, monkeypatch):
-    """Simulate the delete-then-increment race: ``_iter_jobs`` returns a
-    stale view of a job whose YAML file has since been unlinked.
-    ``increment_runs`` must NOT resurrect the file.
+def test_increment_runs_skips_when_file_gone(store):
+    """The delete-then-increment race: once a job's YAML file is unlinked,
+    ``increment_runs`` must NOT resurrect it.
 
     :param store: ScheduleStore fixture.
-    :param monkeypatch: pytest monkeypatch fixture.
     """
     job = store.create(_recurring_payload())
-    path = store.schedules_dir / "weekday-mornings.yaml"
-    stale_view = [job]  # captured before the "concurrent" delete
+    (path,) = list(store.schedules_dir.glob("*.yaml"))
     path.unlink()
-    monkeypatch.setattr(store, "_iter_jobs", lambda: list(stale_view))
     store.increment_runs(job.id)
     assert not path.exists()
+    assert list(store.schedules_dir.glob("*.yaml")) == []
 
 
 def test_recreate_after_load_round_trips(store, tmp_path):

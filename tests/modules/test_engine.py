@@ -14,6 +14,7 @@ from flow_atelier.schemas.conduit import Conduit
 from flow_atelier.schemas.log import ExecutionResult
 from flow_atelier.schemas.progress import FlowStatus, TaskStatus
 from flow_atelier.services.executor.base import ExecutorBase
+from flow_atelier.services.executor.conduit import ConduitExecutor
 from flow_atelier.services.store.filesystem import FilesystemStore
 
 
@@ -1551,3 +1552,126 @@ async def test_backstop_timeout_still_kills_non_hitl(store, monkeypatch):
     assert p.status == FlowStatus.failed
     logs = store.read_logs(captured["id"])
     assert logs[-1].exit_code == 124
+
+
+# --------------------------------------------------------------- nested cycle guard
+
+
+def _named_conduit(name, tasks):
+    """Build a Conduit with an explicit name (the _conduit helper hardcodes one).
+
+    :param name: conduit name.
+    :param tasks: list of task dicts each containing a ``name`` and task fields.
+    """
+    return Conduit.model_validate(
+        {
+            "name": name,
+            "description": "d",
+            "tasks": [
+                {t["name"]: {k: v for k, v in t.items() if k != "name"}}
+                for t in tasks
+            ],
+        }
+    )
+
+
+def _count_progress_files(store):
+    """Return how many flow ``progress.json`` files exist under the store.
+
+    :param store: FilesystemStore fixture.
+    """
+    return len(list((store.base_dir / "flows").rglob("progress.json")))
+
+
+async def test_nested_conduit_self_cycle_fails_fast(store):
+    """A conduit whose tool:conduit task targets itself fails with a cycle
+    error and creates no nested flow (only the top-level flow exists).
+
+    :param store: FilesystemStore fixture.
+    """
+    a = _named_conduit(
+        "selfcyc",
+        [{"name": "again", "description": "d", "task": "selfcyc",
+          "tool": "tool:conduit"}],
+    )
+    store.write_conduit(a)
+    engine = Engine({"tool:conduit": ConduitExecutor()}, store)
+    with pytest.raises(Exception) as ei:  # noqa: PT011
+        await engine.run(a, {})
+    assert "cycle" in str(ei.value).lower()
+    # Only the top-level flow's progress was written; the cycle is caught
+    # before any nested flow dir is created.
+    assert _count_progress_files(store) == 1
+
+
+async def test_nested_conduit_mutual_cycle_fails_fast(store):
+    """A -> B -> A mutual recursion is caught and bounded.
+
+    :param store: FilesystemStore fixture.
+    """
+    a = _named_conduit(
+        "muta",
+        [{"name": "callb", "description": "d", "task": "mutb",
+          "tool": "tool:conduit"}],
+    )
+    b = _named_conduit(
+        "mutb",
+        [{"name": "calla", "description": "d", "task": "muta",
+          "tool": "tool:conduit"}],
+    )
+    store.write_conduit(a)
+    store.write_conduit(b)
+    engine = Engine({"tool:conduit": ConduitExecutor()}, store)
+    with pytest.raises(Exception) as ei:  # noqa: PT011
+        await engine.run(a, {})
+    assert "cycle" in str(ei.value).lower()
+    # A and B each created one flow; the re-entry into A is rejected before
+    # a third flow dir is created.
+    assert _count_progress_files(store) == 2
+
+
+async def test_nested_conduit_legitimate_chain_completes(store):
+    """A legitimate A -> B (B has a non-conduit leaf task) still completes.
+
+    :param store: FilesystemStore fixture.
+    """
+    a = _named_conduit(
+        "parent",
+        [{"name": "callchild", "description": "d", "task": "child",
+          "tool": "tool:conduit"}],
+    )
+    b = _named_conduit(
+        "child",
+        [{"name": "leaf", "description": "d", "task": "echo hi",
+          "tool": "tool:bash"}],
+    )
+    store.write_conduit(a)
+    store.write_conduit(b)
+    engine = Engine(
+        {"tool:conduit": ConduitExecutor(), "tool:bash": FakeExecutor()}, store
+    )
+    flow_id = await engine.run(a, {})
+    p = store.read_progress(flow_id)
+    assert p.status == FlowStatus.completed
+
+
+def test_validate_rejects_literal_conduit_traversal_target():
+    """A literal tool:conduit target with path separators fails validation."""
+    c = _conduit(
+        [{"name": "n", "description": "d", "task": "../evil",
+          "tool": "tool:conduit"}]
+    )
+    with pytest.raises(ConduitValidationError):
+        validate_conduit(c)
+
+
+def test_validate_allows_templated_conduit_target():
+    """A templated tool:conduit target is deferred to runtime, not rejected."""
+    c = _conduit(
+        [
+            {"name": "pick", "description": "d", "task": "echo", "tool": "tool:bash"},
+            {"name": "n", "description": "d", "task": "{{pick.output}}",
+             "tool": "tool:conduit", "depends_on": ["pick"]},
+        ]
+    )
+    validate_conduit(c)  # must not raise

@@ -450,7 +450,8 @@ class FilesystemStore(StoreBase):
         path = self._flow_dir(flow_id) / "outputs.yaml"
         if not path.exists():
             return {}
-        return yaml.safe_load(path.read_text()) or {}
+        loaded = yaml.safe_load(path.read_text())
+        return loaded if isinstance(loaded, dict) else {}
 
     def write_outputs(self, flow_id: str, outputs: dict[str, Any]) -> None:
         """Atomically write ``outputs.yaml`` for ``flow_id``.

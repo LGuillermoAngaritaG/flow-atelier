@@ -536,7 +536,7 @@ def test_schedule_add_and_list(workdir, tmp_path):
     result = runner.invoke(app, ["schedule", "add", str(src)])
     assert result.exit_code == 0, result.output
     assert "installed" in result.output
-    assert (workdir / ".atelier" / "schedules" / "nightly.yaml").exists()
+    assert list((workdir / ".atelier" / "schedules").glob("nightly-*.yaml"))
 
     listing = runner.invoke(app, ["schedule", "list"])
     assert listing.exit_code == 0, listing.output

@@ -221,7 +221,7 @@ async def test_sync_replaces_when_config_changes(daemon, store):
     initial_hash = daemon._known[job.id]
     # Mutate the on-disk YAML through a round-trip so the new value stays
     # a string (PyYAML auto-quotes ambiguous scalars on safe_dump).
-    yaml_path = store.schedules_dir / "report.yaml"
+    (yaml_path,) = list(store.schedules_dir.glob("report-*.yaml"))
     payload = yaml.safe_load(yaml_path.read_text())
     payload["schedule"]["times"] = ["10:30"]
     yaml_path.write_text(yaml.safe_dump(payload, sort_keys=False))

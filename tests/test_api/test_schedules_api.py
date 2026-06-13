@@ -76,7 +76,9 @@ async def test_create_schedule_persists_to_yaml_file(fixture):
     client, _, tmp_path = fixture
     resp = await client.post("/schedules", json=_payload())
     sch_id = resp.json()["id"]
-    yaml_path = tmp_path / ".atelier" / "schedules" / "weekday-mornings.yaml"
+    (yaml_path,) = list(
+        (tmp_path / ".atelier" / "schedules").glob("weekday-mornings-*.yaml")
+    )
     raw = yaml.safe_load(yaml_path.read_text())
     assert raw["id"] == sch_id
     assert raw["schedule"]["mode"] == "recurring"

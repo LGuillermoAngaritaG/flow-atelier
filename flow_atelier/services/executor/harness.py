@@ -400,7 +400,7 @@ class AcpHarnessExecutor(ExecutorBase):
     """Executor that drives an ACP agent subprocess.
 
     :param launch_cmd: argv to spawn the ACP agent (e.g.
-        ``["npx", "-y", "@zed-industries/claude-code-acp"]``)
+        ``["npx", "-y", "@agentclientprotocol/claude-agent-acp"]``)
     :param sink: :class:`PromptSink` for user I/O and permission requests
     :param done_marker: substring that terminates an interactive loop
     """
@@ -712,7 +712,7 @@ class AcpHarnessExecutor(ExecutorBase):
 
 
 class ClaudeHarness(AcpHarnessExecutor):
-    """`harness:claude-code` — drives ``@zed-industries/claude-code-acp``."""
+    """`harness:claude-code` — drives ``@agentclientprotocol/claude-agent-acp``."""
 
     def __init__(
         self,

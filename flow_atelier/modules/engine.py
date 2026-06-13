@@ -37,7 +37,12 @@ from flow_atelier.modules.templating import (
     extract_template_refs,
     resolve,
 )
-from flow_atelier.schemas.conduit import Conduit, TaskDefinition, ToolType
+from flow_atelier.schemas.conduit import (
+    _CONDUIT_NAME_RE,
+    Conduit,
+    TaskDefinition,
+    ToolType,
+)
 from flow_atelier.schemas.flow import parse_flow_id
 from flow_atelier.schemas.log import ExecutionResult, LogEntry, TaskEvent
 from flow_atelier.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
@@ -53,9 +58,17 @@ class ConduitValidationError(ValueError):
     pass
 
 
+class ConduitCycleError(ConduitValidationError):
+    """Raised when nested ``tool:conduit`` runs form a cycle or exceed depth."""
+
+
 # Margin added to conduit.timeout for the engine's backstop wait_for, so
 # executors that self-enforce ctx.timeout always finish gracefully first.
 BACKSTOP_GRACE_SECONDS = 5
+
+# Hard ceiling on nested tool:conduit recursion as a backstop for chains
+# that are acyclic-by-name yet still pathologically deep.
+MAX_NESTED_CONDUIT_DEPTH = 25
 
 
 def _now() -> str:
@@ -135,6 +148,19 @@ def validate_conduit(conduit: Conduit) -> dict[str, list]:
         return closure[name]
 
     for t in conduit.tasks:
+        # A literal tool:conduit target becomes a single filesystem path
+        # component at read time; reject traversal at author time. Templated
+        # targets are skipped here (resolved/validated at run time).
+        if (
+            t.tool == ToolType.conduit
+            and "{{" not in t.task
+            and not _CONDUIT_NAME_RE.match(t.task.strip())
+        ):
+            raise ConduitValidationError(
+                f"task {t.name!r}: tool:conduit target {t.task!r} is not a valid "
+                "conduit name (letters, digits, '_' and '-' only)"
+            )
+
         allowed = reachable(t.name)
         targets = [t.task]
         if t.tool == ToolType.conduit:
@@ -212,6 +238,7 @@ class Engine:
         working_dir: Path | None = None,
         flow_id: str | None = None,
         resume_from: str | None = None,
+        ancestor_conduits: tuple[str, ...] = (),
     ) -> str:
         """Execute a conduit to completion, returning the flow id.
 
@@ -233,11 +260,27 @@ class Engine:
             store generates one. Ignored when ``resume_from`` is set.
         :param resume_from: flow id of a prior failed run to resume; skips
             already-completed tasks and reuses their persisted outputs.
+        :param ancestor_conduits: names of the conduits already on the nested
+            ``tool:conduit`` call stack above this run; used to detect cycles
+            and bound recursion depth. Empty for a top-level run.
         :returns: the new flow id on success
         :raises ConduitValidationError: DAG is invalid (cycle, unknown dep, bad regex)
+        :raises ConduitCycleError: nested conduits form a cycle or exceed depth
         :raises ValueError: required inputs are missing
         :raises Exception: first task failure propagates after fail-fast cancel
         """
+        # Guard nested tool:conduit recursion before any flow dir is created:
+        # a self- or mutually-referential conduit would otherwise recurse
+        # until the host exhausts the stack or the disk fills.
+        if conduit.name in ancestor_conduits:
+            chain = " -> ".join((*ancestor_conduits, conduit.name))
+            raise ConduitCycleError(f"nested conduit cycle detected: {chain}")
+        if len(ancestor_conduits) >= MAX_NESTED_CONDUIT_DEPTH:
+            chain = " -> ".join((*ancestor_conduits, conduit.name))
+            raise ConduitCycleError(
+                f"nested conduit depth exceeded {MAX_NESTED_CONDUIT_DEPTH}: {chain}"
+            )
+
         # Apply declared defaults, then require inputs that have none.
         inputs = {
             **{
@@ -531,6 +574,7 @@ class Engine:
                         on_task_starting=on_task_starting,
                         show_steps=show_steps,
                         working_dir=working_dir,
+                        ancestor_conduits=(*ancestor_conduits, conduit.name),
                     ),
                     loop_history=loop_history,
                     loop_history_limit=self.loop_history_limit,
@@ -857,6 +901,7 @@ class Engine:
         on_task_starting: TaskStartingCallback | None = None,
         show_steps: bool = True,
         working_dir: Path | None = None,
+        ancestor_conduits: tuple[str, ...] = (),
     ):
         """Build the nested-conduit runner passed to executors via FlowContext.
 
@@ -865,6 +910,8 @@ class Engine:
         :param on_task_starting: optional task-starting callback forwarded to the child.
         :param show_steps: whether the nested run should surface per-step progress.
         :param working_dir: working directory forwarded to nested runs.
+        :param ancestor_conduits: conduit names already on the nested-run stack,
+            forwarded to each child run so cycles/depth are caught.
         :returns: an async callable ``(conduit_name, child_inputs, parent_flow_id)``
             that loads and runs the named child conduit.
         """
@@ -891,6 +938,7 @@ class Engine:
                     on_task_starting=on_task_starting,
                     show_steps=show_steps,
                     working_dir=working_dir,
+                    ancestor_conduits=ancestor_conduits,
                 )
 
             return await self.run(
@@ -902,6 +950,7 @@ class Engine:
                 on_task_starting=on_task_starting,
                 show_steps=show_steps,
                 working_dir=working_dir,
+                ancestor_conduits=ancestor_conduits,
             )
 
         return _run_nested

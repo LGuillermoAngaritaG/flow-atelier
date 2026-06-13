@@ -22,6 +22,16 @@ _NOT_MATCH_MARKER = ".output.not_match("
 _OUTPUT_MATCH_PREFIX = "output.match("
 _OUTPUT_NOT_MATCH_PREFIX = "output.not_match("
 
+# Task names share the schema grammar (see schemas.conduit._TASK_NAME_RE).
+# ``.isalnum()`` would also accept Unicode letters/digits, so a dependency
+# string could be accepted that no schema-valid task name could ever match.
+_TASK_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+
+# Author regexes are matched against task/agent output on the shared event
+# loop. Bounding the candidate length caps the work an adversarial *output*
+# (matched by an otherwise-benign author regex) can impose before matching.
+MATCH_INPUT_CHAR_CAP = 1_000_000
+
 
 @dataclass(frozen=True)
 class PlainDependency:
@@ -68,7 +78,7 @@ def parse_dependency(dep: str) -> Dependency:
         if idx == -1:
             continue
         task = dep[:idx]
-        if not task or not task.replace("_", "").isalnum():
+        if not _TASK_NAME_RE.match(task):
             raise DependencyParseError(f"invalid task name in dependency: {dep!r}")
         rest = dep[idx + len(marker):]
         if not rest.endswith(")"):
@@ -85,7 +95,7 @@ def parse_dependency(dep: str) -> Dependency:
         return ConditionalDependency(task=task, pattern=pattern, negate=negate)
 
     # plain dependency — must be a bare task name
-    if not dep.replace("_", "").isalnum():
+    if not _TASK_NAME_RE.match(dep):
         raise DependencyParseError(f"invalid dependency syntax: {dep!r}")
     return PlainDependency(task=dep)
 
@@ -188,7 +198,9 @@ def evaluate_loop_predicate(
     if not outputs:
         return False
     pattern, negate = predicate
-    matches = [pattern.search(out) is not None for out in outputs]
+    matches = [
+        pattern.search(out[:MATCH_INPUT_CHAR_CAP]) is not None for out in outputs
+    ]
     any_match = any(matches)
     if mode == "until":
         return (not any_match) if negate else any_match
@@ -235,7 +247,7 @@ def evaluate(
 
     assert isinstance(dep, ConditionalDependency)
     output = outputs.get(dep.task, "")
-    match = dep.regex().search(output)
+    match = dep.regex().search(output[:MATCH_INPUT_CHAR_CAP])
     ok = (match is None) if dep.negate else (match is not None)
     if ok:
         return "satisfied", None

@@ -60,6 +60,22 @@ def test_parse_empty():
         parse_dependency("")
 
 
+def test_parse_plain_rejects_unicode_name():
+    """Verify a plain dependency with a Unicode name is rejected.
+
+    ``str.isalnum()`` would accept ``café``, but no schema-valid task name
+    (ASCII ``[A-Za-z0-9_]+``) could ever match it, so it must be rejected.
+    """
+    with pytest.raises(DependencyParseError):
+        parse_dependency("café")
+
+
+def test_parse_conditional_rejects_unicode_task_name():
+    """Verify a conditional dependency with a Unicode task name is rejected."""
+    with pytest.raises(DependencyParseError):
+        parse_dependency("café.output.match(ok)")
+
+
 def test_evaluate_plain_completed():
     """Verify evaluate() returns satisfied for a completed plain dep."""
     dep = parse_dependency("a")
@@ -288,6 +304,40 @@ def test_evaluate_loop_predicate_invalid_mode_raises():
 
     with pytest.raises(ValueError):
         evaluate_loop_predicate(_pred("output.match(x)"), ["x"], "forever")  # type: ignore[arg-type]
+
+
+def test_evaluate_loop_predicate_truncates_oversized_output():
+    """Verify the matcher only sees the first MATCH_INPUT_CHAR_CAP chars.
+
+    A pattern anchored past the cap must not match, so an adversarial output
+    cannot force unbounded matching work on the shared event loop.
+    """
+    from flow_atelier.modules.conditions import (
+        MATCH_INPUT_CHAR_CAP,
+        evaluate_loop_predicate,
+    )
+
+    beyond_cap = "a" * MATCH_INPUT_CHAR_CAP + "DONE"
+    assert (
+        evaluate_loop_predicate(_pred("output.match(DONE)"), [beyond_cap], "until")
+        is False
+    )
+    within_cap = "DONE" + "a" * 10
+    assert (
+        evaluate_loop_predicate(_pred("output.match(DONE)"), [within_cap], "until")
+        is True
+    )
+
+
+def test_evaluate_conditional_dep_truncates_oversized_output():
+    """Verify evaluate() bounds the candidate output before matching."""
+    from flow_atelier.modules.conditions import MATCH_INPUT_CHAR_CAP
+
+    dep = parse_dependency("a.output.match(DONE)")
+    statuses = {"a": TaskStatus.completed}
+    beyond_cap = "a" * MATCH_INPUT_CHAR_CAP + "DONE"
+    result, _ = evaluate(dep, statuses, {"a": beyond_cap})
+    assert result == "skip"
 
 
 def test_sink_task_names_returns_undepended_tasks_in_order():
