@@ -9,7 +9,14 @@ from flow_atelier.services.executor.base import ExecutorBase, FlowContext
 
 
 class BashExecutor(ExecutorBase):
-    """Executes ``tool:bash`` tasks via ``asyncio.create_subprocess_shell``."""
+    """Executes ``tool:bash`` tasks via ``asyncio.create_subprocess_shell``.
+
+    Trust model: ``{{inputs.x}}`` values are interpolated into the command
+    string unescaped, so inputs are as trusted as the conduit author. A party
+    who can only *supply* inputs (a scheduled job, a WS ``run`` message, a HITL
+    answer) can inject shell metacharacters into an author's command. Authors
+    should quote interpolations they don't control (e.g. ``"{{inputs.x}}"``).
+    """
 
     async def execute(
         self,
