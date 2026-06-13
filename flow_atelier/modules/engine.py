@@ -662,6 +662,14 @@ class Engine:
                             duration = (
                                 datetime.now(UTC) - start_ts
                             ).total_seconds()
+                            # Only stamp attempt metadata when retries are
+                            # actually in play; with no retries the log entry
+                            # stays byte-for-byte identical to pre-retry behavior.
+                            attempt_extra = (
+                                {"attempt": attempt, "of_attempts": max_attempts}
+                                if max_attempts > 1
+                                else {}
+                            )
                             await self.store.append_log(
                                 flow_id,
                                 LogEntry(
@@ -678,10 +686,7 @@ class Engine:
                                     started_at=started,
                                     finished_at=finished,
                                     duration_seconds=round(duration, 3),
-                                    extra={
-                                        "attempt": attempt,
-                                        "of_attempts": max_attempts,
-                                    },
+                                    extra=attempt_extra,
                                     steps=result.steps,
                                 ),
                             )

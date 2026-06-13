@@ -1778,6 +1778,12 @@ async def test_retries_zero_identical_to_current(store):
     with pytest.raises(RuntimeError):
         await engine.run(conduit, {})
     assert fake.calls == ["a"]  # exactly one call, no retry
+    # No retries configured: the persisted log entry must carry no attempt
+    # metadata, byte-for-byte identical to pre-retry behavior.
+    flow_id = store.list_flows()[0]
+    logs = [e for e in store.read_logs(flow_id) if e.task == "a"]
+    assert len(logs) == 1
+    assert logs[0].extra == {}
 
 
 async def test_hitl_not_retried(store):
