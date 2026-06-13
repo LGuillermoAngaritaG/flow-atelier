@@ -58,6 +58,8 @@ class TaskDefinition(BaseModel):
     while_: str | None = Field(default=None, alias="while")
     on_exhaust: Literal["complete", "fail"] = "complete"
     stagnation_limit: int | None = None
+    retries: int = 0
+    retry_backoff: float = 0.0
     interactive: bool = False
     inputs: dict[str, Any] = Field(default_factory=dict)
 
@@ -86,6 +88,30 @@ class TaskDefinition(BaseModel):
         """
         if v < 1:
             raise ValueError("repeat must be >= 1")
+        return v
+
+    @field_validator("retries")
+    @classmethod
+    def _retries_non_negative(cls, v: int) -> int:
+        """Ensure ``retries`` is zero or positive.
+
+        :param v: the proposed ``retries`` value.
+        :returns: the validated ``retries`` value unchanged.
+        """
+        if v < 0:
+            raise ValueError("retries must be >= 0")
+        return v
+
+    @field_validator("retry_backoff")
+    @classmethod
+    def _retry_backoff_non_negative(cls, v: float) -> float:
+        """Ensure ``retry_backoff`` is zero or positive.
+
+        :param v: the proposed ``retry_backoff`` value in seconds.
+        :returns: the validated ``retry_backoff`` value unchanged.
+        """
+        if v < 0:
+            raise ValueError("retry_backoff must be >= 0")
         return v
 
     @model_validator(mode="after")

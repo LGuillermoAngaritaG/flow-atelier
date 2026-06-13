@@ -1675,3 +1675,142 @@ def test_validate_allows_templated_conduit_target():
         ]
     )
     validate_conduit(c)  # must not raise
+
+
+# ---------------------------------------------------------------- retry on failure
+
+
+class FailNThenSucceed(FakeExecutor):
+    """Fail the first ``fail_times`` executions, then succeed."""
+
+    def __init__(self, fail_times: int):
+        """Initialize the executor with a budget of failing calls.
+
+        :param fail_times: number of leading executions that should fail.
+        """
+        super().__init__()
+        self.fail_times = fail_times
+
+    async def execute(self, task, resolved_command, context):
+        """Fail until ``fail_times`` is exhausted, then succeed.
+
+        :param task: task definition being executed.
+        :param resolved_command: command string after template resolution.
+        :param context: flow context provided by the engine.
+        """
+        self.calls.append(task.name)
+        if len(self.calls) <= self.fail_times:
+            return ExecutionResult(exit_code=1, stderr="boom")
+        return ExecutionResult(exit_code=0, output="ok")
+
+
+async def test_retry_succeeds_after_failures(store):
+    """A task that fails N times then succeeds completes when retries >= N.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "retries": 2},
+        ]
+    )
+    fake = FailNThenSucceed(fail_times=2)
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    p = store.read_progress(flow_id)
+    assert p.status == FlowStatus.completed
+    assert p.tasks["a"].status == TaskStatus.completed
+    assert fake.calls == ["a", "a", "a"]  # 2 failures + 1 success
+
+
+async def test_retry_exhausted_fails(store):
+    """A task that always fails trips fail-fast after 1 + retries attempts.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "retries": 2},
+        ]
+    )
+    fake = FakeExecutor(fail={"a"})
+    engine = Engine({"tool:bash": fake}, store)
+    with pytest.raises(RuntimeError):
+        await engine.run(conduit, {})
+    assert fake.calls == ["a", "a", "a"]  # exactly 3 attempts
+
+
+async def test_retry_logs_each_attempt(store):
+    """Every attempt is persisted as its own LogEntry with attempt metadata.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "retries": 2},
+        ]
+    )
+    fake = FailNThenSucceed(fail_times=2)
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    logs = [e for e in store.read_logs(flow_id) if e.task == "a"]
+    assert [e.exit_code for e in logs] == [1, 1, 0]
+    assert [e.extra["attempt"] for e in logs] == [1, 2, 3]
+    assert all(e.extra["of_attempts"] == 3 for e in logs)
+
+
+async def test_retries_zero_identical_to_current(store):
+    """retries: 0 fails after a single attempt, unchanged from today.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": []},
+        ]
+    )
+    fake = FakeExecutor(fail={"a"})
+    engine = Engine({"tool:bash": fake}, store)
+    with pytest.raises(RuntimeError):
+        await engine.run(conduit, {})
+    assert fake.calls == ["a"]  # exactly one call, no retry
+
+
+async def test_hitl_not_retried(store):
+    """A tool:hitl task never auto-retries even when retries is set.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "ask", "description": "d", "task": "x", "tool": "tool:hitl",
+             "depends_on": [], "retries": 3},
+        ]
+    )
+    fake = FakeExecutor(fail={"ask"})
+    engine = Engine({"tool:hitl": fake}, store)
+    with pytest.raises(RuntimeError):
+        await engine.run(conduit, {})
+    assert fake.calls == ["ask"]  # one attempt only, retries ignored
+
+
+def test_negative_retries_rejected():
+    """Conduit validation rejects a negative retries value."""
+    with pytest.raises(Exception, match="retries"):  # noqa: PT011
+        _conduit(
+            [{"name": "a", "description": "d", "task": "x",
+              "tool": "tool:bash", "retries": -1}]
+        )
+
+
+def test_negative_retry_backoff_rejected():
+    """Conduit validation rejects a negative retry_backoff value."""
+    with pytest.raises(Exception, match="retry_backoff"):  # noqa: PT011
+        _conduit(
+            [{"name": "a", "description": "d", "task": "x",
+              "tool": "tool:bash", "retry_backoff": -1}]
+        )

@@ -626,57 +626,71 @@ class Engine:
                                     )
                                 return
                         mark_running(t.name, iteration, start_iteration)
-                        started = _now()
-                        start_ts = datetime.now(UTC)
-                        try:
-                            # Grace margin: executors that self-enforce
-                            # ctx.timeout (bash, harness) return a graceful
-                            # result preserving output; this outer wrapper is
-                            # the backstop for those that don't, and must not
-                            # win the race against them. HITL is exempt: a
-                            # human stepping away is not a timeout.
-                            result = await asyncio.wait_for(
-                                executor.execute(t, resolved, ctx),
-                                timeout=(
-                                    None
-                                    if is_hitl
-                                    else conduit.timeout + BACKSTOP_GRACE_SECONDS
+                        # A transient non-zero exit is re-attempted in place up
+                        # to `retries` extra times before tripping fail-fast.
+                        # HITL is exempt: a human declining a prompt is not a
+                        # transient failure, so it never auto-retries.
+                        max_attempts = 1 if is_hitl else 1 + t.retries
+                        for attempt in range(1, max_attempts + 1):
+                            started = _now()
+                            start_ts = datetime.now(UTC)
+                            try:
+                                # Grace margin: executors that self-enforce
+                                # ctx.timeout (bash, harness) return a graceful
+                                # result preserving output; this outer wrapper is
+                                # the backstop for those that don't, and must not
+                                # win the race against them. HITL is exempt: a
+                                # human stepping away is not a timeout.
+                                result = await asyncio.wait_for(
+                                    executor.execute(t, resolved, ctx),
+                                    timeout=(
+                                        None
+                                        if is_hitl
+                                        else conduit.timeout + BACKSTOP_GRACE_SECONDS
+                                    ),
+                                )
+                            except TimeoutError:
+                                result = ExecutionResult(
+                                    exit_code=124,
+                                    stderr=f"engine timeout after {conduit.timeout}s",
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                result = ExecutionResult(
+                                    exit_code=1, stderr=f"{type(exc).__name__}: {exc}"
+                                )
+                            finished = _now()
+                            duration = (
+                                datetime.now(UTC) - start_ts
+                            ).total_seconds()
+                            await self.store.append_log(
+                                flow_id,
+                                LogEntry(
+                                    task=t.name,
+                                    tool=t.tool.value,
+                                    iteration=iteration,
+                                    of=t.repeat,
+                                    command=resolved,
+                                    stdout=result.stdout,
+                                    stderr=result.stderr,
+                                    exit_code=result.exit_code,
+                                    output=result.output,
+                                    last_turn_output=result.last_turn_output,
+                                    started_at=started,
+                                    finished_at=finished,
+                                    duration_seconds=round(duration, 3),
+                                    extra={
+                                        "attempt": attempt,
+                                        "of_attempts": max_attempts,
+                                    },
+                                    steps=result.steps,
                                 ),
                             )
-                        except TimeoutError:
-                            result = ExecutionResult(
-                                exit_code=124,
-                                stderr=f"engine timeout after {conduit.timeout}s",
-                            )
-                        except Exception as exc:  # noqa: BLE001
-                            result = ExecutionResult(
-                                exit_code=1, stderr=f"{type(exc).__name__}: {exc}"
-                            )
-                        finished = _now()
-                        duration = (
-                            datetime.now(UTC) - start_ts
-                        ).total_seconds()
-                        await self.store.append_log(
-                            flow_id,
-                            LogEntry(
-                                task=t.name,
-                                tool=t.tool.value,
-                                iteration=iteration,
-                                of=t.repeat,
-                                command=resolved,
-                                stdout=result.stdout,
-                                stderr=result.stderr,
-                                exit_code=result.exit_code,
-                                output=result.output,
-                                last_turn_output=result.last_turn_output,
-                                started_at=started,
-                                finished_at=finished,
-                                duration_seconds=round(duration, 3),
-                                steps=result.steps,
-                            ),
-                        )
-                        emit_event(t, iteration, result, duration)
-                        if not result.success:
+                            emit_event(t, iteration, result, duration)
+                            if result.success:
+                                break
+                            if attempt < max_attempts:
+                                await asyncio.sleep(t.retry_backoff)
+                                continue
                             mark_failed(t.name)
                             if not failed:
                                 failed = True
