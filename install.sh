@@ -18,7 +18,10 @@ ARCH="$(uname -m)"
 case "${OS}-${ARCH}" in
     linux-x86_64)   ASSET="atelier-linux-x86_64" ;;
     darwin-arm64)   ASSET="atelier-macos-arm64" ;;
-    darwin-x86_64)  ASSET="atelier-macos-arm64" ;;
+    darwin-x86_64)
+        echo "Intel macOS (x86_64) is not supported: only an arm64 build is" >&2
+        echo "published, and Rosetta 2 cannot run arm64 binaries on Intel." >&2
+        exit 1 ;;
     *) echo "Unsupported platform: ${OS}-${ARCH}" >&2; exit 1 ;;
 esac
 
