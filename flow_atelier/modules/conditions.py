@@ -10,6 +10,7 @@ and the *last* `)` in the string — no quoting required.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Literal
@@ -27,10 +28,27 @@ _OUTPUT_NOT_MATCH_PREFIX = "output.not_match("
 # string could be accepted that no schema-valid task name could ever match.
 _TASK_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
-# Author regexes are matched against task/agent output on the shared event
-# loop. Bounding the candidate length caps the work an adversarial *output*
-# (matched by an otherwise-benign author regex) can impose before matching.
+# Author regexes are matched against task/agent output. Bounding the candidate
+# length caps the work an adversarial *output* (matched by an otherwise-benign
+# author regex) can impose before matching.
 MATCH_INPUT_CHAR_CAP = 1_000_000
+
+
+async def _search_off_loop(pattern: re.Pattern[str], text: str) -> re.Match[str] | None:
+    """Run ``pattern.search`` on a worker thread, off the event loop.
+
+    Author regexes evaluate against agent/bash output while the engine runs
+    flows concurrently on one event loop. A catastrophic-backtracking pattern
+    (or a benign pattern against adversarial output) is CPU-bound and would
+    otherwise block every concurrent flow, HITL prompt, and WS send for its
+    whole duration. Running it via :func:`asyncio.to_thread` keeps the loop
+    responsive; the input is first capped at :data:`MATCH_INPUT_CHAR_CAP`.
+
+    :param pattern: compiled regex to evaluate.
+    :param text: candidate output (truncated before matching).
+    :returns: the :class:`re.Match` or ``None``.
+    """
+    return await asyncio.to_thread(pattern.search, text[:MATCH_INPUT_CHAR_CAP])
 
 
 @dataclass(frozen=True)
@@ -164,7 +182,7 @@ def parse_output_predicate(expr: str) -> tuple[re.Pattern[str], bool]:
 LoopMode = Literal["until", "while"]
 
 
-def evaluate_loop_predicate(
+async def evaluate_loop_predicate(
     predicate: tuple[re.Pattern[str], bool],
     outputs: list[str],
     mode: LoopMode,
@@ -199,7 +217,7 @@ def evaluate_loop_predicate(
         return False
     pattern, negate = predicate
     matches = [
-        pattern.search(out[:MATCH_INPUT_CHAR_CAP]) is not None for out in outputs
+        (await _search_off_loop(pattern, out)) is not None for out in outputs
     ]
     any_match = any(matches)
     if mode == "until":
@@ -211,7 +229,7 @@ def evaluate_loop_predicate(
 EvalResult = Literal["satisfied", "wait", "skip"]
 
 
-def evaluate(
+async def evaluate(
     dep: Dependency,
     statuses: dict[str, TaskStatus],
     outputs: dict[str, str],
@@ -247,7 +265,7 @@ def evaluate(
 
     assert isinstance(dep, ConditionalDependency)
     output = outputs.get(dep.task, "")
-    match = dep.regex().search(output[:MATCH_INPUT_CHAR_CAP])
+    match = await _search_off_loop(dep.regex(), output)
     ok = (match is None) if dep.negate else (match is not None)
     if ok:
         return "satisfied", None

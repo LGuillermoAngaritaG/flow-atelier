@@ -718,7 +718,7 @@ class Engine:
                                 # iterations via {{loop.history}} and
                                 # false-positive the predicate.
                                 scope_outputs = [last_output]
-                            if evaluate_loop_predicate(
+                            if await evaluate_loop_predicate(
                                 loop_predicate, scope_outputs, loop_mode
                             ):
                                 predicate_matched = True
@@ -768,7 +768,7 @@ class Engine:
                     decision = "satisfied"
                     skip_reason: str | None = None
                     for d in deps:
-                        r, reason = evaluate(d, statuses, outputs)
+                        r, reason = await evaluate(d, statuses, outputs)
                         if r == "skip":
                             decision = "skip"
                             skip_reason = reason
