@@ -44,6 +44,8 @@ class OpenPathInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # Accepted but unused server-side; the bundled frontend still transmits it,
+    # so removing it under extra="forbid" would 422 the live open-path button.
     conduit_name: str
     run_path: str
 

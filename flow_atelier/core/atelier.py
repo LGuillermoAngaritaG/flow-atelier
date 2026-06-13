@@ -408,12 +408,34 @@ class Atelier:
             logs.extend(tagged)
         return logs
 
+    def _known_run_paths(self) -> set[Path]:
+        """Return the resolved ``run_path`` of every known flow.
+
+        :returns: set of resolved run-path directories recorded in flow inputs.
+        """
+        known: set[Path] = set()
+        for flow_id in self.store.list_flows():
+            try:
+                rp = self.store.read_input(flow_id).get("run_path")
+            except (FileNotFoundError, ValueError):
+                continue
+            if rp:
+                known.add(Path(rp).resolve())
+        return known
+
     def open_conduit_path(self, run_path: str) -> bool:
         """Reveal ``run_path`` in the host's file explorer.
+
+        Only paths recorded as a flow's ``run_path`` are opened: the OS opener
+        can launch arbitrary apps/documents, so an unconstrained caller (the
+        default deployment has no token) must not be able to point it anywhere.
 
         :param run_path: absolute path to open
         :returns: True if the platform opener was launched, False otherwise
         """
+        if Path(run_path).resolve() not in self._known_run_paths():
+            logger.warning("open_conduit_path refused unknown path: %s", run_path)
+            return False
         target = str(Path(run_path))
         cmd: list[str]
         if sys.platform == "darwin":

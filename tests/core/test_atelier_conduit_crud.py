@@ -136,6 +136,7 @@ def test_open_conduit_path_invokes_platform_opener(tmp_path, atelier):
     atelier.create_conduit(_payload())
     run_path = tmp_path / "runs"
     run_path.mkdir()
+    atelier.store.create_flow("release_notes", {"run_path": str(run_path)})
     with patch("subprocess.Popen") as popen:
         popen.return_value.poll.return_value = None
         ok = atelier.open_conduit_path(str(run_path))
@@ -156,6 +157,20 @@ def test_open_conduit_path_returns_false_on_failure(tmp_path, atelier):
     :param atelier: Atelier facade fixture.
     """
     atelier.create_conduit(_payload())
+    atelier.store.create_flow("release_notes", {"run_path": str(tmp_path)})
     with patch("subprocess.Popen", side_effect=FileNotFoundError("no opener")):
         ok = atelier.open_conduit_path(str(tmp_path))
     assert ok is False
+
+
+def test_open_conduit_path_refuses_unknown_path(tmp_path, atelier):
+    """Verify open_conduit_path refuses a path not recorded for any flow.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param atelier: Atelier facade fixture.
+    """
+    atelier.create_conduit(_payload())
+    with patch("subprocess.Popen") as popen:
+        ok = atelier.open_conduit_path(str(tmp_path / "not-a-flow-run"))
+    assert ok is False
+    popen.assert_not_called()
