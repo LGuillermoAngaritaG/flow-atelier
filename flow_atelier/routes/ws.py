@@ -121,6 +121,10 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
             elif isinstance(message, CancelMessage):
                 broker.cancel(message.flow_id)
     finally:
+        # A client going away must not leave its runs executing detached: cancel
+        # every tracked run task, which also unblocks any tool:hitl task waiting
+        # on an answer that can no longer be delivered over this dead socket.
+        broker.cancel_all()
         if scheduler_bus is not None:
             scheduler_bus.unsubscribe(_send)
         try:

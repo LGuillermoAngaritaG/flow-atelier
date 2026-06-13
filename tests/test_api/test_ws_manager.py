@@ -86,6 +86,49 @@ async def test_track_run_and_cancel(broker):
     assert fired["cancelled"] is True
 
 
+async def test_cancel_all_cancels_every_tracked_run(broker):
+    """Verify cancel_all cancels all tracked run tasks (disconnect cleanup).
+
+    :param broker: broker fixture.
+    """
+    async def long_running() -> None:
+        """Sleep until cancelled."""
+        await asyncio.sleep(60)
+
+    tasks = [asyncio.create_task(long_running()) for _ in range(3)]
+    for i, task in enumerate(tasks):
+        broker.track_run(f"T-{i}", task)
+    await asyncio.sleep(0)
+    broker.cancel_all()
+    for task in tasks:
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+async def test_cancel_all_unblocks_hung_hitl_await(broker):
+    """Verify cancel_all unblocks a run task parked on await_hitl_answer.
+
+    Mirrors the disconnect case: a tool:hitl task awaits an answer with no
+    timeout; the only socket that could deliver it is gone. Cancelling the
+    tracked task must unwind that await rather than pin the run forever.
+
+    :param broker: broker fixture.
+    """
+    broker.register_flow("T-hitl")
+
+    async def parked_run() -> None:
+        """Block forever awaiting an answer that never arrives."""
+        await broker.await_hitl_answer("T-hitl")
+
+    task = asyncio.create_task(parked_run())
+    broker.track_run("T-hitl", task)
+    await asyncio.sleep(0)
+    assert not task.done()
+    broker.cancel_all()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
 async def test_cancel_unknown_flow_is_noop(broker):
     """Verify cancelling an unknown flow is a no-op.
 
