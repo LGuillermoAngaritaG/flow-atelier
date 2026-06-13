@@ -59,9 +59,8 @@ def scheduler_start_cmd(
     "status",
     help=(
         "List schedules and their next fire times. "
-        "Reads the project and global schedules dirs directly — does NOT "
-        "contact a running daemon. To confirm the daemon is alive, check "
-        "the process."
+        "Reads .atelier/schedules/ directly — does NOT contact a running "
+        "daemon. To confirm the daemon is alive, check the process."
     ),
 )
 def scheduler_status_cmd(

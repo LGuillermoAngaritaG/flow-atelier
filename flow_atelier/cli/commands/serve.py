@@ -63,12 +63,7 @@ def serve_cmd(
     bus = SchedulerEventBus()
     atelier.scheduler_bus = bus  # type: ignore[attr-defined]
 
-    # Read both the project and global schedule dirs so a schedule installed
-    # via `atelier schedule add` (project) is seen by the embedded daemon,
-    # which previously read the global dir only.
-    schedule_store = ScheduleStore(
-        settings.atelier_dir, global_dir=settings.global_atelier_dir
-    )
+    global_schedule_store = ScheduleStore(settings.global_atelier_dir)
 
     async def _broadcasting_executor(job: ScheduledJob, working_dir: Path) -> None:
         """Run the conduit and fan lifecycle envelopes out to the bus."""
@@ -133,7 +128,7 @@ def serve_cmd(
         )
 
     daemon = SchedulerDaemon(
-        schedule_store,
+        global_schedule_store,
         executor=_broadcasting_executor,
         default_zone=default_local_zone(),
         default_working_dir=Path.cwd(),

@@ -126,10 +126,7 @@ class Atelier:
             loop_history_limit=self.settings.loop_history_limit,
             loop_history_entry_chars=self.settings.loop_history_entry_chars,
         )
-        self.schedule_store = ScheduleStore(
-            self.settings.atelier_dir,
-            global_dir=self.settings.global_atelier_dir,
-        )
+        self.schedule_store = ScheduleStore(self.settings.atelier_dir)
 
     async def run_conduit(
         self,

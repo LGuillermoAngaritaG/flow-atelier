@@ -152,6 +152,4 @@ def _schedule_store() -> ScheduleStore:
     :returns: a ScheduleStore bound to the current atelier directory.
     """
     settings = AtelierSettings()
-    return ScheduleStore(
-        settings.atelier_dir, global_dir=settings.global_atelier_dir
-    )
+    return ScheduleStore(settings.atelier_dir)
