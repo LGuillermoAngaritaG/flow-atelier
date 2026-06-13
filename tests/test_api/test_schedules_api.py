@@ -18,6 +18,20 @@ async def fixture(tmp_path, monkeypatch):
     """
     monkeypatch.delenv("ATELIER_GLOBAL_ATELIER_DIR", raising=False)
     atelier = Atelier(base_dir=tmp_path / ".atelier")
+    # create_schedule validates conduit_name, so the scheduled conduit must
+    # exist on disk.
+    conduit_dir = tmp_path / ".atelier" / "conduits" / "report"
+    conduit_dir.mkdir(parents=True)
+    (conduit_dir / "conduit.yaml").write_text(
+        "name: report\n"
+        "description: test conduit\n"
+        "tasks:\n"
+        "  - greet:\n"
+        "      description: say hi\n"
+        '      task: "echo hi"\n'
+        "      tool: tool:bash\n"
+        "      depends_on: []\n"
+    )
     app = FastApiServer().create_app(atelier)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
@@ -100,6 +114,36 @@ async def test_create_schedule_invalid_returns_400(fixture):
         },
     )
     assert resp.status_code in (400, 422)
+
+
+async def test_create_schedule_unknown_conduit_returns_400(fixture):
+    """Verify POST /schedules with an unknown conduit_name returns 400.
+
+    :param fixture: client+atelier+tmp_path tuple fixture.
+    """
+    client, _, _ = fixture
+    resp = await client.post("/schedules", json=_payload(conduit_name="ghost"))
+    assert resp.status_code == 400, resp.text
+    assert "unknown conduit" in resp.text
+
+
+async def test_create_schedule_past_run_at_rejected(fixture):
+    """Verify a one-shot with a past run_at is rejected at validation.
+
+    :param fixture: client+atelier+tmp_path tuple fixture.
+    """
+    client, _, _ = fixture
+    resp = await client.post(
+        "/schedules",
+        json=_payload(
+            schedule={
+                "mode": "once",
+                "name": "backfill",
+                "run_at": "2000-01-01T00:00:00Z",
+            }
+        ),
+    )
+    assert resp.status_code == 422, resp.text
 
 
 async def test_delete_schedule_removes_from_list(fixture):

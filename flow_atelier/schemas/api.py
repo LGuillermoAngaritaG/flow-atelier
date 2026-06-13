@@ -170,6 +170,29 @@ class CreateScheduleInput(BaseModel):
     run_path: str
     schedule: ScheduleConfig
 
+    @model_validator(mode="after")
+    def _reject_past_run_at(self) -> CreateScheduleInput:
+        """Reject a one-shot whose ``run_at`` is already in the past.
+
+        A past ``run_at`` yields a ``DateTrigger`` that never fires, so the
+        schedule installs cleanly but becomes a zombie indistinguishable from
+        one that already ran. The check lives here, not on
+        :class:`ScheduleConfig`, so persisted :class:`ScheduledJob` records
+        (whose ``run_at`` is naturally in the past once fired) still load.
+
+        :returns: the validated input instance.
+        """
+        run_at = self.schedule.run_at
+        if self.schedule.mode == "once" and run_at is not None:
+            now = (
+                datetime.now(run_at.tzinfo)
+                if run_at.tzinfo is not None
+                else datetime.now()
+            )
+            if run_at <= now:
+                raise ValueError("once schedule run_at must be in the future")
+        return self
+
 
 class ScheduledJob(BaseModel):
     """Server-side representation of a persisted schedule (per SPEC §7)."""

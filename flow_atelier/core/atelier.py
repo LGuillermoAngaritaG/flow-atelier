@@ -343,9 +343,16 @@ class Atelier:
     def create_schedule(self, payload: CreateScheduleInput) -> ScheduledJob:
         """Persist a new schedule and return it.
 
+        Validates that ``conduit_name`` resolves to a known conduit (in the
+        same store the fire will use), so a typo fails loudly here instead of
+        silently at fire time via a swallowed exception.
+
         :param payload: validated :class:`CreateScheduleInput`
         :returns: the new :class:`ScheduledJob`
+        :raises ValueError: if ``conduit_name`` is not a known conduit
         """
+        if payload.conduit_name not in self.store.list_conduits():
+            raise ValueError(f"unknown conduit: {payload.conduit_name!r}")
         return self.schedule_store.create(payload)
 
     def delete_schedule(self, schedule_id: str) -> ScheduledJob:

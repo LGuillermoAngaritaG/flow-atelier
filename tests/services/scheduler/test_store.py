@@ -51,7 +51,7 @@ def _once_payload(**overrides):
         "schedule": {
             "mode": "once",
             "name": "tomorrow",
-            "run_at": "2026-05-01T09:00:00Z",
+            "run_at": "2099-05-01T09:00:00Z",
         },
     }
     base.update(overrides)
@@ -143,7 +143,7 @@ def test_create_rejects_empty_name(store):
     """
     with pytest.raises(ValueError):
         store.create(_once_payload(schedule={
-            "mode": "once", "name": "", "run_at": "2026-05-01T09:00:00Z",
+            "mode": "once", "name": "", "run_at": "2099-05-01T09:00:00Z",
         }))
 
 
