@@ -79,6 +79,11 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
         """
         if websocket.application_state == WebSocketState.CONNECTED:
             await websocket.send_json(payload)
+        else:
+            logger.debug(
+                "dropping %s envelope: socket not connected",
+                payload.get("type", "?"),
+            )
 
     broker = WebSocketBroker(send=_send)
     scheduler_bus = getattr(base_atelier, "scheduler_bus", None)
@@ -362,6 +367,12 @@ async def _spawn_run(
     message: RunMessage,
 ) -> None:
     """Wire a per-flow Atelier and start the run task.
+
+    Trust model: ``message.run_path`` becomes the execution ``working_dir``
+    verbatim, so a caller who can post a ``RunMessage`` chooses where bash and
+    harness tasks run. This is the same boundary as ``tool:bash`` and
+    ``open-path`` — anyone who can reach this endpoint can already run shell —
+    so it grants no new privilege, but the cwd is intentionally unconstrained.
 
     :param base_atelier: connection-scoped :class:`Atelier` used as template.
     :param broker: :class:`WebSocketBroker` that fans envelopes out.

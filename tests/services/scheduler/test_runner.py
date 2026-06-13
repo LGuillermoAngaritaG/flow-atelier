@@ -8,10 +8,35 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from flow_atelier.schemas.api import CreateScheduleInput, ScheduledJob
-from flow_atelier.services.scheduler.runner import _RELOAD_JOB_ID, SchedulerDaemon
+from flow_atelier.services.scheduler.runner import (
+    _RELOAD_JOB_ID,
+    SchedulerDaemon,
+    _resolve_run_path,
+    compute_planned_view,
+)
 from flow_atelier.services.scheduler.store import ScheduleStore
 
 UTC = ZoneInfo("UTC")
+
+
+@pytest.mark.parametrize(
+    "run_path",
+    ["", "relative/dir", "/abs/dir"],
+)
+def test_resolve_run_path_matches_between_daemon_and_view(run_path, tmp_path):
+    """The daemon's fire-path resolver and the planned-view preview must agree.
+
+    :param run_path: run_path variant (empty / relative / absolute).
+    :param tmp_path: pytest temp directory fixture.
+    """
+    base = tmp_path.resolve()
+    store = ScheduleStore(tmp_path / ".atelier")
+    store.create(_recurring(conduit="report", run_path=run_path))
+    daemon = SchedulerDaemon(store, default_working_dir=base)
+    job = store.list()[0]
+    view = compute_planned_view(store, default_zone=UTC, default_working_dir=base)
+    assert daemon._resolve_working_dir(job) == view[0].working_dir
+    assert daemon._resolve_working_dir(job) == _resolve_run_path(run_path, base)
 
 
 def _recurring(conduit: str = "report", run_path: str = "/tmp/run") -> CreateScheduleInput:
