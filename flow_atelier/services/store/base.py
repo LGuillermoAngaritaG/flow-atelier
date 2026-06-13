@@ -85,6 +85,15 @@ class StoreBase(ABC):
         """
         ...
 
+    @abstractmethod
+    def delete_flow(self, flow_id: str) -> bool:
+        """Delete a flow directory and its nested children. Returns False if absent.
+
+        :param flow_id: flow identifier
+        :returns: True if it existed and was deleted, False otherwise
+        """
+        ...
+
     # --- logs ---
     @abstractmethod
     async def append_log(self, flow_id: str, entry: LogEntry) -> None:

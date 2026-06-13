@@ -354,6 +354,27 @@ class FilesystemStore(StoreBase):
             p.name for p in children_dir.iterdir() if p.is_dir()
         )
 
+    def delete_flow(self, flow_id: str) -> bool:
+        """Remove a flow directory and its nested child subtree.
+
+        :param flow_id: flow identifier
+        :returns: True if deleted, False if it didn't exist
+        """
+        try:
+            flow_dir = self._flow_dir(flow_id)
+        except FileNotFoundError:
+            return False
+        shutil.rmtree(flow_dir)
+        # Evict the flow itself and any cached children that lived under it,
+        # so no stale handles survive in the path/lock caches.
+        self._flow_paths.pop(flow_id, None)
+        self._log_locks.pop(flow_id, None)
+        for cached_id, cached_path in list(self._flow_paths.items()):
+            if cached_path.is_relative_to(flow_dir):
+                self._flow_paths.pop(cached_id, None)
+                self._log_locks.pop(cached_id, None)
+        return True
+
     # ------------------------------------------------------------------ logs
 
     def _lock_for(self, flow_id: str) -> asyncio.Lock:

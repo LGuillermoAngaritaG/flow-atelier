@@ -289,6 +289,14 @@ class Atelier:
         """
         return self.store.delete_conduit(name)
 
+    def delete_flow(self, flow_id: str) -> bool:
+        """Remove a flow directory and its nested child subtree.
+
+        :param flow_id: flow identifier
+        :returns: True if it existed and was deleted, False otherwise
+        """
+        return self.store.delete_flow(flow_id)
+
     async def run_single_task(self, payload: RunTaskInput) -> RunTaskOutput:
         """Run an ad-hoc one-task conduit and return the resulting logs.
 
