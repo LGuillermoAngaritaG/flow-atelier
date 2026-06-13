@@ -121,6 +121,51 @@ def test_prune_declined_confirm_keeps_dir(workdir):
     assert f.exists()
 
 
+def test_prune_json_without_yes_is_dry_run(workdir):
+    """`prune --json` without --yes previews and deletes nothing.
+
+    JSON mode is non-interactive and must not delete without explicit --yes.
+
+    :param workdir: isolated working directory fixture.
+    """
+    f = _make_flow(workdir, "20200101_aaaaaaaa_hello")
+    runner = CliRunner()
+    result = runner.invoke(app, ["prune", "--older-than", "1", "--json"])
+    assert result.exit_code == 0, result.output
+    assert f.exists()
+    payload = json.loads(result.output)
+    assert payload["deleted"] == []
+    assert payload["would_delete"] == ["20200101_aaaaaaaa_hello"]
+
+
+def test_prune_json_with_yes_deletes(workdir):
+    """`prune --json --yes` deletes the selected flows and reports them.
+
+    :param workdir: isolated working directory fixture.
+    """
+    f = _make_flow(workdir, "20200101_aaaaaaaa_hello")
+    runner = CliRunner()
+    result = runner.invoke(app, ["prune", "--older-than", "1", "--json", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert not f.exists()
+    payload = json.loads(result.output)
+    assert payload["deleted"] == ["20200101_aaaaaaaa_hello"]
+
+
+def test_rm_json_without_yes_declined_keeps_dir(workdir):
+    """`rm --json` still honors the confirmation gate; declining keeps the dir.
+
+    :param workdir: isolated working directory fixture.
+    """
+    f = _make_flow(workdir, "20200101_aaaaaaaa_hello")
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["rm", "20200101_aaaaaaaa_hello", "--json"], input="n\n"
+    )
+    assert result.exit_code != 0
+    assert f.exists()
+
+
 def test_rm_running_refused_without_force(workdir):
     """`rm` on a running flow is refused (non-zero) and leaves the dir.
 

@@ -142,18 +142,22 @@ def prune_cmd(
             console.print("nothing to prune")
         return
 
-    if json_mode:
-        for fid in to_delete:
-            atelier.delete_flow(fid)
-        typer.echo(json.dumps({"deleted": to_delete}))
+    # JSON mode is non-interactive: it cannot prompt, so it requires --yes to
+    # delete. Without --yes it returns a dry-run preview and deletes nothing.
+    if json_mode and not yes:
+        typer.echo(json.dumps({"would_delete": to_delete, "deleted": []}))
         return
 
-    console.print("will delete:")
-    for fid in to_delete:
-        console.print(f"  - {fid}")
-    if not yes and not typer.confirm(f"delete {len(to_delete)} flow(s)?"):
-        console.print("aborted")
-        raise typer.Exit(code=1)
+    if not json_mode:
+        console.print("will delete:")
+        for fid in to_delete:
+            console.print(f"  - {fid}")
+        if not yes and not typer.confirm(f"delete {len(to_delete)} flow(s)?"):
+            console.print("aborted")
+            raise typer.Exit(code=1)
 
-    count = sum(1 for fid in to_delete if atelier.delete_flow(fid))
-    console.print(f"deleted {count} flow(s)")
+    deleted = [fid for fid in to_delete if atelier.delete_flow(fid)]
+    if json_mode:
+        typer.echo(json.dumps({"deleted": deleted}))
+    else:
+        console.print(f"deleted {len(deleted)} flow(s)")
