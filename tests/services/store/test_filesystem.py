@@ -65,6 +65,18 @@ def test_read_conduit(store):
     assert c.tasks[0].name == "greet"
 
 
+def test_read_conduit_malformed_yaml_raises_one_line(store):
+    """Verify broken YAML raises a one-line ValueError, not a raw traceback.
+
+    :param store: FilesystemStore fixture.
+    """
+    (store.base_dir / "conduits" / "hello" / "conduit.yaml").write_text(
+        "name: hello\ntasks: [unclosed\n"
+    )
+    with pytest.raises(ValueError, match="hello: invalid YAML"):
+        store.read_conduit("hello")
+
+
 def test_list_conduits(store):
     """Verify list_conduits returns the names of available conduits.
 

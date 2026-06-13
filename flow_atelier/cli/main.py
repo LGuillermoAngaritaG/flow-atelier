@@ -68,6 +68,7 @@ app.add_typer(scheduler_app, name="scheduler")
 # the appropriate Typer instance above. Order matches the original
 # decoration order in app/main.py so --help layout stays byte-identical.
 from flow_atelier.cli.commands import (  # noqa: E402, F401
+    check,
     init,
     logs,
     run,

@@ -70,7 +70,7 @@ _current_task_ctx: ContextVar[str] = ContextVar("current_task_name", default="")
 _current_flow_ctx: ContextVar[str] = ContextVar("current_flow_id", default="")
 
 
-def _validate_dag(conduit: Conduit) -> dict[str, list]:
+def validate_conduit(conduit: Conduit) -> dict[str, list]:
     """Return {task_name: [parsed deps]}. Raises on cycle/unknown/invalid regex.
 
     :param conduit: parsed conduit whose tasks/dependencies to validate.
@@ -231,7 +231,7 @@ class Engine:
         if missing:
             raise ValueError(f"missing required inputs: {missing}")
 
-        parsed_deps = _validate_dag(conduit)
+        parsed_deps = validate_conduit(conduit)
 
         if resume_from is not None:
             flow_id = resume_from

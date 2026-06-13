@@ -1156,3 +1156,258 @@ def test_no_prompt_for_conduit_without_inputs(workdir, monkeypatch):
     result = runner.invoke(app, ["run", "hello", "-i", "name=world"])
     assert result.exit_code == 0, result.output
     assert len(prompted_keys) == 0
+
+
+# ---------------------------------------------------------------- check cmd
+
+
+def _write_conduit(workdir, name, yaml_text, *, folder=None):
+    """Write a conduit.yaml under the workdir's project conduits dir.
+
+    :param workdir: tmp_path returned by the ``workdir`` fixture.
+    :param name: conduit name used for the YAML and (default) folder.
+    :param yaml_text: full conduit.yaml contents to write.
+    :param folder: override folder name to provoke name/folder mismatch.
+    """
+    folder = folder or name
+    d = workdir / ".atelier" / "conduits" / folder
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "conduit.yaml").write_text(yaml_text)
+
+
+def test_check_clean_conduit_ok(workdir):
+    """A valid conduit reports OK and exits 0.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "hello"])
+    assert result.exit_code == 0, result.output
+    assert "hello" in result.output
+    assert "OK" in result.output
+
+
+def test_check_unknown_conduit(workdir):
+    """`check <missing>` prints a clear error and exits 1.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "nope"])
+    assert result.exit_code == 1
+    assert "unknown conduit" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_check_cycle(workdir):
+    """A circular dependency is reported as FAIL with exit 1.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "cyc",
+        """
+name: cyc
+description: cycle
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: ["b"]
+  - b:
+      description: b
+      task: "echo b"
+      tool: tool:bash
+      depends_on: ["a"]
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "cyc"])
+    assert result.exit_code == 1
+    assert "FAIL" in result.output
+    assert "circular" in result.output
+
+
+def test_check_unknown_dep(workdir):
+    """A dependency on a missing task is reported as FAIL.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "udep",
+        """
+name: udep
+description: unknown dep
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: ["ghost"]
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "udep"])
+    assert result.exit_code == 1
+    assert "unknown task 'ghost'" in result.output
+
+
+def test_check_dangling_template_ref(workdir):
+    """A {{ref.output}} outside the depends_on chain is reported as FAIL.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "dang",
+        """
+name: dang
+description: dangling ref
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: []
+  - b:
+      description: b
+      task: "use {{a.output}}"
+      tool: tool:bash
+      depends_on: []
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "dang"])
+    assert result.exit_code == 1
+    assert "references 'a'" in result.output
+    assert "depends_on" in result.output
+
+
+def test_check_bad_predicate_regex(workdir):
+    """A malformed loop predicate regex is reported as FAIL.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "badre",
+        """
+name: badre
+description: bad regex
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: []
+      repeat: 3
+      until: "output.match([unclosed)"
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "badre"])
+    assert result.exit_code == 1
+    assert "FAIL" in result.output
+
+
+def test_check_duplicate_task_names(workdir):
+    """Duplicate task names are reported as FAIL.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "dup",
+        """
+name: dup
+description: dup names
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: []
+  - a:
+      description: a2
+      task: "echo a2"
+      tool: tool:bash
+      depends_on: []
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "dup"])
+    assert result.exit_code == 1
+    assert "duplicate task names" in result.output
+
+
+def test_check_name_folder_mismatch(workdir):
+    """A conduit whose name differs from its folder is reported as FAIL.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "inner",
+        """
+name: inner
+description: mismatch
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: []
+""",
+        folder="outer",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "outer"])
+    assert result.exit_code == 1
+    assert "!=" in result.output
+
+
+def test_check_malformed_yaml(workdir):
+    """Broken YAML is reported as a one-line FAIL, not a traceback.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(workdir, "broke", "name: broke\ntasks: [unclosed\n")
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "broke"])
+    assert result.exit_code == 1
+    assert "invalid YAML" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_check_all_reports_good_and_bad(workdir):
+    """`check` (no arg) lists every conduit and exits 1 if any fails.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "cyc",
+        """
+name: cyc
+description: cycle
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: ["b"]
+  - b:
+      description: b
+      task: "echo b"
+      tool: tool:bash
+      depends_on: ["a"]
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check"])
+    assert result.exit_code == 1
+    assert "hello" in result.output and "OK" in result.output
+    assert "cyc" in result.output and "FAIL" in result.output

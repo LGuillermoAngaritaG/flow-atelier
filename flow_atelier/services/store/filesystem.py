@@ -142,7 +142,10 @@ class FilesystemStore(StoreBase):
             path = global_path
         else:
             raise FileNotFoundError(f"conduit not found: {name} ({project_path})")
-        data = yaml.safe_load(path.read_text())
+        try:
+            data = yaml.safe_load(path.read_text())
+        except yaml.YAMLError as e:
+            raise ValueError(f"{name}: invalid YAML — {e}") from e
         conduit = Conduit.model_validate(data)
         if conduit.name != name:
             raise ValueError(
