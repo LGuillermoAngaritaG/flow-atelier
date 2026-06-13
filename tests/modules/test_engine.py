@@ -5,7 +5,11 @@ from typing import Any
 import pytest
 import yaml
 
-from flow_atelier.modules.engine import ConduitValidationError, Engine
+from flow_atelier.modules.engine import (
+    ConduitValidationError,
+    Engine,
+    validate_conduit,
+)
 from flow_atelier.schemas.conduit import Conduit
 from flow_atelier.schemas.log import ExecutionResult
 from flow_atelier.schemas.progress import FlowStatus, TaskStatus
@@ -464,6 +468,118 @@ async def test_validate_accepts_ref_via_conditional_dep(store):
     engine = Engine({"tool:bash": FakeExecutor()}, store)
     flow_id = await engine.run(conduit, {})
     assert store.read_progress(flow_id).status == FlowStatus.completed
+
+
+def test_validate_rejects_unrecognized_expression():
+    """A {{...}} matching none of the grammar forms is rejected at author time."""
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "use {{inputs}}",
+             "tool": "tool:bash", "depends_on": []},
+        ]
+    )
+    with pytest.raises(
+        ConduitValidationError,
+        match=r"task 'a' has an unrecognized template expression \{\{inputs\}\}",
+    ):
+        validate_conduit(conduit)
+
+
+def test_validate_rejects_misspelled_output():
+    """A misspelled `.output` ({{x.outpt}}) is unrecognized and rejected."""
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "use {{job.outpt}}",
+             "tool": "tool:bash", "depends_on": []},
+        ]
+    )
+    with pytest.raises(
+        ConduitValidationError, match=r"unrecognized template expression"
+    ):
+        validate_conduit(conduit)
+
+
+def test_validate_rejects_loop_ref_in_non_looping_task():
+    """{{loop.previous}}/{{loop.history}} in a repeat==1 task is rejected."""
+    for expr in ("loop.previous", "loop.history"):
+        conduit = _conduit(
+            [
+                {"name": "a", "description": "d", "task": f"use {{{{{expr}}}}}",
+                 "tool": "tool:bash", "depends_on": []},
+            ]
+        )
+        with pytest.raises(
+            ConduitValidationError, match=r"does not loop \(repeat is 1\)"
+        ):
+            validate_conduit(conduit)
+
+
+def test_validate_accepts_loop_ref_in_looping_task():
+    """{{loop.*}} is valid when the task actually loops (repeat > 1)."""
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "use {{loop.previous}}",
+             "tool": "tool:bash", "depends_on": [], "repeat": 3},
+        ]
+    )
+    validate_conduit(conduit)  # must not raise
+
+
+def test_validate_scans_conduit_input_unknown_task():
+    """A tool:conduit task's inputs value referencing an unknown task fails."""
+    conduit = _conduit(
+        [
+            {"name": "caller", "description": "d", "task": "child",
+             "tool": "tool:conduit", "depends_on": [],
+             "inputs": {"p": "{{ghost.output}}"}},
+        ]
+    )
+    with pytest.raises(
+        ConduitValidationError, match="references unknown task 'ghost'"
+    ):
+        validate_conduit(conduit)
+
+
+def test_validate_scans_conduit_input_out_of_deps():
+    """A tool:conduit inputs ref to a task outside its deps chain fails."""
+    conduit = _conduit(
+        [
+            {"name": "producer", "description": "d", "task": "x",
+             "tool": "tool:bash", "depends_on": []},
+            {"name": "caller", "description": "d", "task": "child",
+             "tool": "tool:conduit", "depends_on": [],
+             "inputs": {"p": "{{producer.output}}"}},
+        ]
+    )
+    with pytest.raises(
+        ConduitValidationError, match="not in its depends_on chain"
+    ):
+        validate_conduit(conduit)
+
+
+def test_validate_accepts_conduit_input_ref_in_deps():
+    """A tool:conduit inputs ref to an in-chain dependency is valid."""
+    conduit = _conduit(
+        [
+            {"name": "producer", "description": "d", "task": "x",
+             "tool": "tool:bash", "depends_on": []},
+            {"name": "caller", "description": "d", "task": "child",
+             "tool": "tool:conduit", "depends_on": ["producer"],
+             "inputs": {"p": "{{producer.output}}"}},
+        ]
+    )
+    validate_conduit(conduit)  # must not raise
+
+
+def test_validate_does_not_require_inputs_declared():
+    """Regression: {{inputs.x}} need not be declared (supplied at run time)."""
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "use {{inputs.undeclared}}",
+             "tool": "tool:bash", "depends_on": []},
+        ]
+    )
+    validate_conduit(conduit)  # must not raise
 
 
 async def test_mid_loop_template_error_marks_task_failed(store):

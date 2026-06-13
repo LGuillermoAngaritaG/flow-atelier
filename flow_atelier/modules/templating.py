@@ -14,7 +14,7 @@ Rules:
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
 
@@ -75,6 +75,37 @@ def extract_task_refs(template: str) -> set[str]:
             continue
         if expr.endswith(".output"):
             refs.add(expr[: -len(".output")])
+    return refs
+
+
+class TemplateRef(NamedTuple):
+    """One ``{{...}}`` expression classified against the resolve grammar."""
+
+    kind: str   # "input" | "loop" | "task" | "unknown"
+    value: str  # input name / loop expr / task name / raw expr
+    raw: str    # original expression, for error messages
+
+
+def extract_template_refs(template: str) -> list[TemplateRef]:
+    """Classify every ``{{...}}`` expression in ``template``.
+
+    Mirrors :func:`resolve`'s check order exactly so validation and runtime
+    never disagree on what a template expression means.
+
+    :param template: the raw task/template string to scan.
+    :returns: refs in source-appearance order (may be empty).
+    """
+    refs: list[TemplateRef] = []
+    for match in _TEMPLATE_RE.finditer(template):
+        expr = match.group(1).strip()
+        if expr.startswith("inputs."):
+            refs.append(TemplateRef("input", expr[len("inputs."):], expr))
+        elif expr in ("loop.previous", "loop.history"):
+            refs.append(TemplateRef("loop", expr, expr))
+        elif expr.endswith(".output"):
+            refs.append(TemplateRef("task", expr[: -len(".output")], expr))
+        else:
+            refs.append(TemplateRef("unknown", expr, expr))
     return refs
 
 

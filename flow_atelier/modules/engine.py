@@ -34,7 +34,7 @@ from flow_atelier.modules.conditions import (
 from flow_atelier.modules.templating import (
     SkipSignal,
     TemplateError,
-    extract_task_refs,
+    extract_template_refs,
     resolve,
 )
 from flow_atelier.schemas.conduit import Conduit, TaskDefinition, ToolType
@@ -136,16 +136,36 @@ def validate_conduit(conduit: Conduit) -> dict[str, list]:
 
     for t in conduit.tasks:
         allowed = reachable(t.name)
-        for ref in sorted(extract_task_refs(t.task)):
-            if ref not in task_names:
-                raise ConduitValidationError(
-                    f"task {t.name!r} references unknown task {ref!r}"
-                )
-            if ref not in allowed:
-                raise ConduitValidationError(
-                    f"task {t.name!r} references {ref!r} which is not in its "
-                    f"depends_on chain; add it as a dependency"
-                )
+        targets = [t.task]
+        if t.tool == ToolType.conduit:
+            targets += [v for v in t.inputs.values() if isinstance(v, str)]
+        for template in targets:
+            for ref in extract_template_refs(template):
+                if ref.kind == "task":
+                    if ref.value not in task_names:
+                        raise ConduitValidationError(
+                            f"task {t.name!r} references unknown task "
+                            f"{ref.value!r}"
+                        )
+                    if ref.value not in allowed:
+                        raise ConduitValidationError(
+                            f"task {t.name!r} references {ref.value!r} which is "
+                            f"not in its depends_on chain; add it as a dependency"
+                        )
+                elif ref.kind == "loop":
+                    if t.repeat <= 1:
+                        raise ConduitValidationError(
+                            f"task {t.name!r} uses {{{{{ref.raw}}}}} but does "
+                            f"not loop (repeat is 1); loop.* is only available "
+                            f"when repeat > 1"
+                        )
+                elif ref.kind == "unknown":
+                    raise ConduitValidationError(
+                        f"task {t.name!r} has an unrecognized template "
+                        f"expression {{{{{ref.raw}}}}}"
+                    )
+                # ref.kind == "input": not validated — inputs may be supplied
+                # at run time via --input or HITL, so they need not be declared.
 
     return parsed
 
