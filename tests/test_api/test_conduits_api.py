@@ -113,6 +113,36 @@ async def test_create_conduit_invalid_returns_400(client):
     assert resp.status_code in (400, 422)
 
 
+async def test_create_conduit_traversal_name_rejected(client, tmp_path):
+    """Verify a path-traversal conduit name is rejected and writes nothing outside.
+
+    :param client: httpx client fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    outside = tmp_path / "evil"
+    resp = await client.post(
+        "/conduits", json=_payload(name=f"../../../../{outside}")
+    )
+    assert resp.status_code in (400, 422)
+    assert not outside.exists()
+
+
+async def test_update_conduit_traversal_rename_rejected(client, tmp_path):
+    """Verify renaming a conduit to a traversal name is rejected.
+
+    :param client: httpx client fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    await client.post("/conduits", json=_payload())
+    outside = tmp_path / "evil"
+    resp = await client.patch(
+        "/conduits/release_notes",
+        json={"name": f"../../../../{outside}"},
+    )
+    assert resp.status_code in (400, 422)
+    assert not outside.exists()
+
+
 # ---------------------------------------------------------------- update
 
 

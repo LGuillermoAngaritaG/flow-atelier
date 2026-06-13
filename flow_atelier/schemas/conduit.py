@@ -8,6 +8,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _TASK_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+# Conduit names become a single filesystem path component (conduits/<name>/),
+# so they must reject "/", ".", ".." to prevent path traversal on write/delete.
+# Hyphens are allowed because real conduits on disk use them (autonomous-projects).
+_CONDUIT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class ToolType(str, Enum):
@@ -132,6 +136,21 @@ class Conduit(BaseModel):
     max_concurrency: int = Field(default=3, ge=1)
     inputs: dict[str, InputSpec] = Field(default_factory=dict)
     tasks: list[TaskDefinition]
+
+    @field_validator("name")
+    @classmethod
+    def _name_valid(cls, v: str) -> str:
+        """Restrict conduit names to a safe single filesystem path component.
+
+        :param v: the proposed conduit name.
+        :returns: the validated name unchanged.
+        """
+        if not _CONDUIT_NAME_RE.match(v):
+            raise ValueError(
+                f"invalid conduit name {v!r}: only letters, digits, "
+                "underscores and hyphens are allowed"
+            )
+        return v
 
     @model_validator(mode="before")
     @classmethod

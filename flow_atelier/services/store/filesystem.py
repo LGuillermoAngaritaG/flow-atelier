@@ -76,12 +76,27 @@ class FilesystemStore(StoreBase):
 
     # ------------------------------------------------------------------ paths
 
+    @staticmethod
+    def _safe_conduit_name(name: str) -> str:
+        """Reject conduit names that aren't a single safe path component.
+
+        Defense-in-depth behind :class:`Conduit`'s name validator: guards any
+        caller that builds a conduit path without going through the schema.
+
+        :param name: conduit name to check.
+        :returns: the name unchanged when safe.
+        :raises ValueError: if the name contains a path separator or is ``.``/``..``.
+        """
+        if name in ("", ".", "..") or "/" in name or "\\" in name or os.sep in name:
+            raise ValueError(f"unsafe conduit name: {name!r}")
+        return name
+
     def _conduit_dir(self, name: str) -> Path:
         """Return the project-level directory for conduit ``name``.
 
         :param name: conduit name
         """
-        return self.base_dir / "conduits" / name
+        return self.base_dir / "conduits" / self._safe_conduit_name(name)
 
     def _conduit_yaml(self, name: str) -> Path:
         """Return the project-level ``conduit.yaml`` path for ``name``.
@@ -97,7 +112,7 @@ class FilesystemStore(StoreBase):
         """
         if self.global_dir is None:
             return None
-        return self.global_dir / "conduits" / name
+        return self.global_dir / "conduits" / self._safe_conduit_name(name)
 
     def _global_conduit_yaml(self, name: str) -> Path | None:
         """Return the global ``conduit.yaml`` path for ``name`` or ``None``.

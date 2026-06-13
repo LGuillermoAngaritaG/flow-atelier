@@ -256,6 +256,32 @@ def test_invalid_task_names_rejected(bad_name):
 
 
 @pytest.mark.parametrize(
+    "bad_name", ["../evil", "a/b", "..", ".", "a.b", "a b", ""]
+)
+def test_invalid_conduit_names_rejected(bad_name):
+    """Verify conduit names that escape a single path component are rejected.
+
+    :param bad_name: parametrized unsafe conduit name under test.
+    """
+    with pytest.raises(Exception, match="invalid conduit name"):
+        Conduit.model_validate(
+            {"name": bad_name, "description": "d", "tasks": []}
+        )
+
+
+@pytest.mark.parametrize("good_name", ["autonomous-projects", "x", "a_b-c1"])
+def test_hyphenated_conduit_names_allowed(good_name):
+    """Verify real dash-named conduits still validate.
+
+    :param good_name: parametrized safe conduit name under test.
+    """
+    conduit = Conduit.model_validate(
+        {"name": good_name, "description": "d", "tasks": []}
+    )
+    assert conduit.name == good_name
+
+
+@pytest.mark.parametrize(
     "tool_str",
     ["harness:opencode", "harness:copilot", "harness:cursor"],
 )
