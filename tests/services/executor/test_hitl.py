@@ -71,6 +71,29 @@ async def test_hitl_collects_and_persists(store, monkeypatch, capsys):
     assert "needs the following inputs" in captured.out
 
 
+async def test_hitl_exhausted_input_returns_friendly_error(store, monkeypatch):
+    """Verify HITL returns a friendly result, not a bare EOFError, when the
+    input stream runs dry (e.g. a scripted run short on answers).
+
+    :param store: filesystem store fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    flow_id = store.create_flow("hello", {})
+    ctx = FlowContext(flow_id=flow_id, store=store, inputs={})
+
+    def _raise_eof(prompt=""):
+        """Stand in for ``input`` exhausted of data by raising ``EOFError``."""
+        raise EOFError
+
+    monkeypatch.setattr(builtins, "input", _raise_eof)
+
+    result = await HitlExecutor().execute(_task(), "I need some details:", ctx)
+
+    assert result.exit_code == 1
+    assert result.stderr == "interactive input unavailable: EOFError"
+    assert result.output == ""
+
+
 async def test_hitl_overwrite_collision(store, monkeypatch):
     """Verify a new HITL answer overwrites a prior value for the same key.
 

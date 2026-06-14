@@ -54,7 +54,20 @@ class HitlExecutor(ExecutorBase):
             print(preamble_text, file=sys.stdout, flush=True)
             for name, description in task.inputs.items():
                 prompt = f"  {name} ({description}): "
-                response = await multiline_input(prompt, hint="Alt+Enter to submit")
+                try:
+                    response = await multiline_input(
+                        prompt, hint="Alt+Enter to submit"
+                    )
+                except EOFError:
+                    # Input stream ran dry (e.g. a scripted run that didn't
+                    # supply enough answers). Mirror the harness's friendly
+                    # report instead of dying with a bare EOFError traceback.
+                    return ExecutionResult(
+                        exit_code=1,
+                        stdout=preamble_text,
+                        stderr="interactive input unavailable: EOFError",
+                        output="",
+                    )
                 # Piped stdin doesn't echo keystrokes nor add a newline; print
                 # the consumed value so scripted transcripts read like a real
                 # terminal session instead of two prompts smashed together.

@@ -507,3 +507,81 @@ def test_read_logs_silent_on_truncated_trailing_line(store, caplog):
         entries = store.read_logs(fid)
     assert [e.task for e in entries] == ["greet"]
     assert not any("unreadable line" in r.message for r in caplog.records)
+
+
+# ------------------------------------------------ default timeout/concurrency
+
+_NO_LIMITS_YAML = """
+name: bare
+description: no limits declared
+tasks:
+  - greet:
+      description: greet
+      task: "echo hi"
+      tool: tool:bash
+      depends_on: []
+"""
+
+_EXPLICIT_LIMITS_YAML = """
+name: explicit
+description: declares its own limits
+timeout: 99
+max_concurrency: 7
+tasks:
+  - greet:
+      description: greet
+      task: "echo hi"
+      tool: tool:bash
+      depends_on: []
+"""
+
+
+def test_read_conduit_injects_env_defaults_when_omitted(tmp_path):
+    """A conduit omitting timeout/max_concurrency picks up the store defaults.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
+    s = FilesystemStore(
+        tmp_path / ".atelier", default_timeout=42, default_max_concurrency=2
+    )
+    _write_conduit(tmp_path / ".atelier", "bare", _NO_LIMITS_YAML)
+    c = s.read_conduit("bare")
+    assert c.timeout == 42
+    assert c.max_concurrency == 2
+
+
+def test_read_conduit_explicit_limits_win_over_defaults(tmp_path):
+    """An explicit YAML timeout/max_concurrency is not overridden by defaults.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
+    s = FilesystemStore(
+        tmp_path / ".atelier", default_timeout=42, default_max_concurrency=2
+    )
+    _write_conduit(tmp_path / ".atelier", "explicit", _EXPLICIT_LIMITS_YAML)
+    c = s.read_conduit("explicit")
+    assert c.timeout == 99
+    assert c.max_concurrency == 7
+
+
+# ------------------------------------------------------------ read_all_conduits
+
+
+def test_read_all_conduits_unions_and_shadows(tmp_path):
+    """read_all_conduits returns project+global once, project shadowing global.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
+    project = tmp_path / ".atelier"
+    global_dir = tmp_path / "global_atelier"
+    s = FilesystemStore(project, global_dir=global_dir)
+    _write_conduit(
+        global_dir, "hello", GLOBAL_DEPLOY_YAML.replace("deploy", "hello")
+    )
+    _write_conduit(global_dir, "deploy", GLOBAL_DEPLOY_YAML)
+    _write_conduit(project, "hello", PROJECT_HELLO_OVERRIDE_YAML)
+    conduits = s.read_all_conduits()
+    by_name = {c.name: c for c in conduits}
+    assert sorted(by_name) == ["deploy", "hello"]
+    assert by_name["hello"].description == "Project-specific hello"
+    assert by_name["deploy"].description == "Global deploy"

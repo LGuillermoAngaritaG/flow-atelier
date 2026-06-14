@@ -208,6 +208,70 @@ async def test_delete_unknown_returns_404(client):
     assert resp.status_code == 404
 
 
+_GLOBAL_YAML = """
+name: shared
+description: Shared workflow
+tasks:
+  - step:
+      description: step
+      task: "echo hi"
+      tool: tool:bash
+      depends_on: []
+"""
+
+
+def _seed_global(global_dir: Path) -> Path:
+    """Write a global-only ``shared`` conduit and return its yaml path.
+
+    :param global_dir: isolated global atelier dir.
+    :returns: path to the written ``conduit.yaml``.
+    """
+    cdir = global_dir / "conduits" / "shared"
+    cdir.mkdir(parents=True)
+    yaml_path = cdir / "conduit.yaml"
+    yaml_path.write_text(_GLOBAL_YAML)
+    return yaml_path
+
+
+async def test_delete_global_only_conduit_returns_409(
+    client, _isolate_global_atelier_dir
+):
+    """A global-only conduit is visible but deleting it returns 409, not 404.
+
+    :param client: httpx client fixture.
+    :param _isolate_global_atelier_dir: isolated global atelier dir fixture.
+    """
+    yaml_path = _seed_global(_isolate_global_atelier_dir)
+    listed = await client.get("/conduits")
+    assert "shared" in [c["name"] for c in listed.json()]
+
+    resp = await client.delete("/conduits/shared")
+    assert resp.status_code == 409
+    assert "global" in resp.json()["detail"]
+    # The shared original must survive a refused project delete.
+    assert yaml_path.exists()
+
+
+async def test_edit_global_only_conduit_forks_and_leaves_global_intact(
+    client, _isolate_global_atelier_dir
+):
+    """Patching a global-only conduit forks a project copy; global is unchanged.
+
+    :param client: httpx client fixture.
+    :param _isolate_global_atelier_dir: isolated global atelier dir fixture.
+    """
+    yaml_path = _seed_global(_isolate_global_atelier_dir)
+    before = yaml_path.read_bytes()
+
+    resp = await client.patch(
+        "/conduits/shared", json={"description": "edited locally"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["description"] == "edited locally"
+    # The global original is byte-for-byte unchanged (the edit forked a copy).
+    assert yaml_path.read_bytes() == before
+
+
 # ---------------------------------------------------------------- open-path
 
 

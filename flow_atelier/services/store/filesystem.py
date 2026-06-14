@@ -56,12 +56,21 @@ class FilesystemStore(StoreBase):
         self,
         base_dir: Path | str,
         global_dir: Path | str | None = None,
+        *,
+        default_timeout: int = 3600,
+        default_max_concurrency: int = 3,
     ):
         """Initialise the filesystem store with project and optional global dirs.
 
         :param base_dir: project-level ``.atelier/`` directory
         :param global_dir: optional user-level directory for shared conduits
+        :param default_timeout: fallback ``timeout`` injected when a conduit
+            omits it (sourced from ``ATELIER_DEFAULT_TIMEOUT``)
+        :param default_max_concurrency: fallback ``max_concurrency`` injected
+            when a conduit omits it (``ATELIER_DEFAULT_MAX_CONCURRENCY``)
         """
+        self._default_timeout = default_timeout
+        self._default_max_concurrency = default_max_concurrency
         self.base_dir = Path(base_dir)
         (self.base_dir / "conduits").mkdir(parents=True, exist_ok=True)
         (self.base_dir / "flows").mkdir(parents=True, exist_ok=True)
@@ -147,6 +156,30 @@ class FilesystemStore(StoreBase):
 
     # ------------------------------------------------------------------ conduits
 
+    def _parse_conduit_file(self, path: Path, name: str) -> Conduit:
+        """Parse a ``conduit.yaml`` at ``path`` into a validated :class:`Conduit`.
+
+        Injects the env-driven ``default_timeout`` / ``default_max_concurrency``
+        for any key the YAML omits, so those settings actually take effect, and
+        checks the declared name matches its folder.
+
+        :param path: path to a ``conduit.yaml`` file.
+        :param name: folder name the conduit is expected to declare.
+        """
+        try:
+            data = yaml.safe_load(path.read_text())
+        except yaml.YAMLError as e:
+            raise ValueError(f"{name}: invalid YAML — {e}") from e
+        if isinstance(data, dict):
+            data.setdefault("timeout", self._default_timeout)
+            data.setdefault("max_concurrency", self._default_max_concurrency)
+        conduit = Conduit.model_validate(data)
+        if conduit.name != name:
+            raise ValueError(
+                f"conduit.yaml name {conduit.name!r} != folder name {name!r}"
+            )
+        return conduit
+
     def read_conduit(self, name: str) -> Conduit:
         """Load conduit ``name`` from the project store, falling back to global.
 
@@ -160,16 +193,37 @@ class FilesystemStore(StoreBase):
             path = global_path
         else:
             raise FileNotFoundError(f"conduit not found: {name} ({project_path})")
-        try:
-            data = yaml.safe_load(path.read_text())
-        except yaml.YAMLError as e:
-            raise ValueError(f"{name}: invalid YAML — {e}") from e
-        conduit = Conduit.model_validate(data)
-        if conduit.name != name:
-            raise ValueError(
-                f"conduit.yaml name {conduit.name!r} != folder name {name!r}"
-            )
-        return conduit
+        return self._parse_conduit_file(path, name)
+
+    def read_all_conduits(self) -> list[Conduit]:
+        """Load every visible conduit in a single pass over the conduit dirs.
+
+        Walks the global then project ``conduits/`` directories once each, so a
+        project conduit shadows a global one of the same name — matching
+        :meth:`list_conduits_with_source`. Avoids the list-names-then-reopen
+        double pass of calling :meth:`read_conduit` per listed name.
+
+        :returns: conduits sorted by name; unreadable files are skipped.
+        """
+        by_name: dict[str, Conduit] = {}
+        roots: list[Path] = []
+        if self.global_dir is not None:
+            roots.append(self.global_dir / "conduits")
+        roots.append(self.base_dir / "conduits")  # project last → shadows global
+        for root in roots:
+            if not root.exists():
+                continue
+            for child in root.iterdir():
+                yaml_path = child / "conduit.yaml"
+                if not child.is_dir() or not yaml_path.exists():
+                    continue
+                try:
+                    by_name[child.name] = self._parse_conduit_file(
+                        yaml_path, child.name
+                    )
+                except ValueError:
+                    continue
+        return [by_name[n] for n in sorted(by_name)]
 
     def _scan_conduits_dir(self, root: Path) -> list[str]:
         """List conduit names under ``root`` that have a ``conduit.yaml``.

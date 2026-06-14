@@ -29,6 +29,10 @@ def _parse_inputs(pairs: list[str]) -> dict[str, str]:
         if "=" not in p:
             raise typer.BadParameter(f"--input expects key=value, got {p!r}")
         key, value = p.split("=", 1)
+        if not key:
+            raise typer.BadParameter(f"--input has an empty key: {p!r}")
+        if key in out:
+            raise typer.BadParameter(f"--input has a duplicate key: {key!r}")
         out[key] = value
     return out
 

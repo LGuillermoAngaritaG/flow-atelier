@@ -202,3 +202,59 @@ def test_open_conduit_path_refuses_unknown_path(tmp_path, atelier):
         ok = atelier.open_conduit_path(str(tmp_path / "not-a-flow-run"))
     assert ok is False
     popen.assert_not_called()
+
+
+def test_settings_default_timeout_flows_through_to_loaded_conduit(
+    tmp_path, _isolate_global_atelier_dir
+):
+    """``default_timeout``/``default_max_concurrency`` settings reach the store.
+
+    A conduit YAML that omits both keys, loaded via an Atelier whose settings
+    carry non-default values, yields a Conduit with those values.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param _isolate_global_atelier_dir: isolated global atelier dir fixture.
+    """
+    global_dir: Path = _isolate_global_atelier_dir
+    atelier = Atelier(
+        settings=AtelierSettings(
+            atelier_dir=tmp_path / ".atelier",
+            global_atelier_dir=global_dir,
+            default_timeout=42,
+            default_max_concurrency=2,
+        ),
+    )
+    cdir = atelier.store.base_dir / "conduits" / "bare"
+    cdir.mkdir(parents=True)
+    (cdir / "conduit.yaml").write_text(
+        "name: bare\ndescription: d\n"
+        "tasks:\n  - t: {description: d, task: echo, tool: tool:bash, depends_on: []}\n"
+    )
+    conduit = atelier.store.read_conduit("bare")
+    assert conduit.timeout == 42
+    assert conduit.max_concurrency == 2
+
+
+def test_delete_global_only_conduit_raises(tmp_path, _isolate_global_atelier_dir):
+    """Deleting a global-only conduit raises (not a silent False=not-found).
+
+    :param tmp_path: pytest temp directory fixture.
+    :param _isolate_global_atelier_dir: isolated global atelier dir fixture.
+    """
+    global_dir: Path = _isolate_global_atelier_dir
+    atelier = Atelier(
+        settings=AtelierSettings(
+            atelier_dir=tmp_path / ".atelier",
+            global_atelier_dir=global_dir,
+        ),
+    )
+    cdir = global_dir / "conduits" / "shared"
+    cdir.mkdir(parents=True)
+    (cdir / "conduit.yaml").write_text(
+        "name: shared\ndescription: d\n"
+        "tasks:\n  - t: {description: d, task: echo, tool: tool:bash, depends_on: []}\n"
+    )
+    with pytest.raises(ValueError, match="global"):
+        atelier.delete_conduit("shared")
+    # Truly-absent name still returns False (maps to 404), not a raise.
+    assert atelier.delete_conduit("ghost") is False

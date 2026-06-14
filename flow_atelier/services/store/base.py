@@ -29,6 +29,11 @@ class StoreBase(ABC):
         ...
 
     @abstractmethod
+    def read_all_conduits(self) -> list[Conduit]:
+        """Load every visible conduit in one pass (project shadows global)."""
+        ...
+
+    @abstractmethod
     def list_conduits_with_source(self) -> list[tuple[str, ConduitSource]]:
         """Return ``(name, source)`` pairs. Project shadows global on collision."""
         ...

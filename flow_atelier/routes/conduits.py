@@ -24,14 +24,10 @@ async def list_conduits(atelier: Atelier = Depends(get_atelier)) -> list[Conduit
     :param atelier: injected :class:`Atelier` facade.
     :returns: :class:`ConduitDTO` for each readable conduit.
     """
-    out: list[ConduitDTO] = []
-    for name in atelier.list_conduits():
-        try:
-            conduit = atelier.store.read_conduit(name)
-        except FileNotFoundError:
-            continue
-        out.append(ConduitDTO.model_validate(conduit.model_dump()))
-    return out
+    return [
+        ConduitDTO.model_validate(conduit.model_dump())
+        for conduit in atelier.store.read_all_conduits()
+    ]
 
 
 @router.get("/{name}", response_model=ConduitDTO)
@@ -100,7 +96,11 @@ async def delete_conduit(name: str, atelier: Atelier = Depends(get_atelier)) -> 
     :param atelier: injected :class:`Atelier` facade.
     :returns: empty 204 response.
     """
-    if not atelier.delete_conduit(name):
+    try:
+        deleted = atelier.delete_conduit(name)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    if not deleted:
         raise HTTPException(status_code=404, detail=f"conduit not found: {name}")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
