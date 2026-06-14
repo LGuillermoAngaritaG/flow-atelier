@@ -27,14 +27,19 @@ inputs:
     default: "2"
   max_pending_review:
     description: >-
-      Skip a project once its pending-review/ folder has at least this many
-      task files.
-    default: "3"
+      Pause to-do execution (not idea/review generation) once a project's
+      pending-review/ folder has at least this many task files.
+    default: "10"
   token_limit:
     description: >-
       Token ceiling used to compute usage %. Approximate your 5h Claude Code
       session quota.
     default: "19000000"
+  max_ideas:
+    description: >-
+      Stop generating ideas/reviews for a project once its ideas/ folder already
+      holds this many idea (resp. review) documents.
+    default: "20"
 
 tasks:
   - pick_project:
@@ -47,68 +52,159 @@ tasks:
           --projects-dir "{{inputs.projects_dir}}" \
           --max-usage-pct "{{inputs.max_usage_pct}}" \
           --idle-hours "{{inputs.idle_hours}}" \
-          --max-pending-review "{{inputs.max_pending_review}}" \
           --token-limit "{{inputs.token_limit}}"
 
-  - loop_until_done:
-      description: Hand the chosen project to the goal conduit so it loops until a DONE verdict.
-      task: task-with-review
-      tool: tool:conduit
+  - resolve_project_file:
+      description: Extract the clean project .md path from the picker output.
+      tool: tool:bash
       depends_on:
         - "pick_project.output.match(^READY: )"
-      repeat: 100
+      task: |
+        set -eu
+        printf '%s' "$(printf '%s' '{{pick_project.output}}' | sed -n 's/^READY:[[:space:]]*//p')"
+
+  - resolve_name:
+      description: Extract the project name (file stem) from the picker output.
+      tool: tool:bash
+      depends_on:
+        - "pick_project.output.match(^READY: )"
+      task: |
+        set -eu
+        printf '%s' "$(printf '%s' '{{pick_project.output}}' | sed -n 's/^NAME:[[:space:]]*//p')"
+
+  - resolve_location:
+      description: Read the frontmatter location (codebase dir) from the picker output.
+      tool: tool:bash
+      depends_on:
+        - "pick_project.output.match(^READY: )"
+      task: |
+        set -eu
+        printf '%s' "$(printf '%s' '{{pick_project.output}}' | sed -n 's/^LOCATION:[[:space:]]*//p')"
+
+  - gen_gate:
+      description: Allow idea/review generation only while under the combined max_ideas cap.
+      tool: tool:bash
+      depends_on: [resolve_name]
+      task: |
+        set -eu
+        dir="{{inputs.projects_dir}}/tasks/{{resolve_name.output}}/ideas"
+        count="$(find "$dir" -maxdepth 1 \( -name 'idea_*.md' -o -name 'review_*.md' \) 2>/dev/null | wc -l | tr -d ' ')"
+        if [ "$count" -lt "{{inputs.max_ideas}}" ]; then
+          echo "GEN: yes ($count idea+review docs < {{inputs.max_ideas}})"
+        else
+          echo "GEN: skip ($count idea+review docs >= {{inputs.max_ideas}})"
+        fi
+
+  - generate_idea:
+      description: Generate one idea into the project's ideas/ folder.
+      tool: tool:conduit
+      task: generate-idea
+      depends_on:
+        - resolve_location
+        - resolve_project_file
+        - resolve_name
+        - "gen_gate.output.match(GEN: yes)"
+      inputs:
+        path: "{{resolve_location.output}}"
+        project_document: "{{resolve_project_file.output}}"
+        path_idea: "{{inputs.projects_dir}}/tasks/{{resolve_name.output}}/ideas"
+        current_ideas: "{{inputs.projects_dir}}/tasks/{{resolve_name.output}}/ideas"
+        bad_ideas: "{{inputs.projects_dir}}/tasks/{{resolve_name.output}}/bad_ideas"
+        tasks_dir: "{{inputs.projects_dir}}/tasks/{{resolve_name.output}}"
+
+  - generate_review:
+      description: Generate one review into the project's ideas/ folder.
+      tool: tool:conduit
+      task: generate-review
+      depends_on:
+        - resolve_location
+        - resolve_project_file
+        - resolve_name
+        - "gen_gate.output.match(GEN: yes)"
+      inputs:
+        path: "{{resolve_location.output}}"
+        project_document: "{{resolve_project_file.output}}"
+        path_review: "{{inputs.projects_dir}}/tasks/{{resolve_name.output}}/ideas"
+        current_reviews: "{{inputs.projects_dir}}/tasks/{{resolve_name.output}}/ideas"
+        bad_ideas: "{{inputs.projects_dir}}/tasks/{{resolve_name.output}}/bad_ideas"
+        tasks_dir: "{{inputs.projects_dir}}/tasks/{{resolve_name.output}}"
+
+  - check_todo:
+      description: Decide whether there is a task to execute this tick.
+      tool: tool:bash
+      depends_on: [resolve_name]
+      task: |
+        set -eu
+        base="{{inputs.projects_dir}}/tasks/{{resolve_name.output}}"
+        if find "$base/to-do" "$base/in-progress" -maxdepth 1 -name '*.md' 2>/dev/null | grep -q .; then
+          echo "WORK: yes"
+        else
+          echo "WORK: none"
+        fi
+
+  - pr_gate:
+      description: Pause to-do execution once pending-review/ is full (does not gate generation).
+      tool: tool:bash
+      depends_on: [resolve_name]
+      task: |
+        set -eu
+        dir="{{inputs.projects_dir}}/tasks/{{resolve_name.output}}/pending-review"
+        count="$(find "$dir" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+        if [ "$count" -lt "{{inputs.max_pending_review}}" ]; then
+          echo "PR: ok ($count pending-review < {{inputs.max_pending_review}})"
+        else
+          echo "PR: full ($count pending-review >= {{inputs.max_pending_review}})"
+        fi
+
+  - work_task:
+      description: Advance one existing to-do task, looping until a DONE verdict.
+      tool: tool:conduit
+      task: task-with-review
+      depends_on:
+        - resolve_project_file
+        - resolve_name
+        - "check_todo.output.match(WORK: yes)"
+        - "pr_gate.output.match(PR: ok)"
+      repeat: 10
       until: 'output.match(VERDICT:\s*DONE)'
       inputs:
         task: |
           You are advancing an autonomous project tracked in a folder-structured project directory.
-
-          The picker emitted:
-          {{pick_project.output}}
 
           Reviewer feedback from your previous attempt this run (empty on the
           first iteration):
           {{loop.previous}}
 
           If that feedback is a NOT_DONE verdict, treat its REASON as the
-          priority signal — address what the reviewer flagged before picking
-          unrelated work.
+          priority signal — address what the reviewer flagged before doing
+          anything else.
 
-          The project file path is on the line beginning with "READY: ". It lives at
-          {{inputs.projects_dir}}/projects/working/<name>.md.
+          The project markdown file is at: {{resolve_project_file.output}}
+          The task directory is at: {{inputs.projects_dir}}/tasks/{{resolve_name.output}}/
 
           Do the following:
-          1. Read the project markdown file (path from the READY line). Parse the YAML
-             frontmatter (priority, location, use_git), the `# Goal` section, and the
-             `# Constraints` section if present. Treat this file as READ-ONLY: it is
-             owned by the human. Never edit it. The constraints are binding — every task
-             you propose or execute must respect them. If a constraint blocks the obvious
-             next step or names a decision only the human can make, do not work around it:
-             record the conflict in the task's `# Validation process` and pick work that
-             does not depend on the unresolved decision.
-          2. The project name is the stem of the project markdown file. Find its task
-             directory at: {{inputs.projects_dir}}/tasks/<project-name>/
-          3. For memory of what has already happened, skim the task files in `done/` and
+          1. Read the project markdown file. Parse the YAML frontmatter (priority,
+             location, use_git), the `# Goal` section, and the `# Constraints` section if
+             present. Treat this file as READ-ONLY: it is owned by the human. Never edit it.
+             The constraints are binding — every task you execute must respect them. If a
+             constraint blocks the obvious next step or names a decision only the human can
+             make, do not work around it: record the conflict in the task's
+             `# Validation process`.
+          2. For memory of what has already happened, skim the task files in `done/` and
              `pending-review/` — their `# What` and `# Validation process` sections record
              past work. Use them to avoid repeating work already completed or awaiting review.
-          4. If in-progress/ has a .md file, resume it — skip to step 7 to finish that
-             task before picking new work.
-          5. If to-do/ has at least one .md file, pick the top one. This is the task to work on.
-             If to-do/ is empty: review the project against its `# Goal` and the task
-             history from step 3, propose one concrete next step, and create a new task .md
-             file there by copying `.atelier/conduits/autonomous-projects/task template.md`
-             and filling in `# What`
-             (the next step), `# Why`, and `# How`. Leave the frontmatter and
-             `# Validation process` for the completion step. Name the file with a descriptive
-             slug (e.g. `setup-ci-pipeline.md`). This new file is now the task to work on.
-          6. Move that file from to-do/ to in-progress/.
-          7. Read the task file. The `# What` section tells you what to do.
-          8. cd into the project's `location` directory from the frontmatter.
-          9. Do the work. Respect `use_git`: if true, commit changes with a clear message;
+          3. If in-progress/ has a .md file, resume it — skip to step 5 to finish that task.
+          4. Otherwise pick the top .md file in to-do/. This is the task to work on. Do NOT
+             propose or create new tasks — only existing to-do/in-progress tasks are executed.
+             If both to-do/ and in-progress/ are empty, output "NOTHING TO DO" and stop.
+             Move the chosen file from to-do/ to in-progress/.
+          5. Read the task file. The `# What` section tells you what to do.
+          6. cd into the project's `location` directory from the frontmatter.
+          7. Do the work. Respect `use_git`: if true, commit changes with a clear message;
              if false, just edit files.
-          10. When finished, update the task file: fill in the frontmatter (`datetime`
-              — the completion date AND time, e.g. the output of
-              `date '+%Y-%m-%d %H:%M:%S %Z'`; `location` (local path or PR URL);
-              `commits`) and the `# Validation process`
-              section describing how you verified the work. Then move the file from
-              in-progress/ to pending-review/. Never move tasks to done/ — that is reserved
-              for the human reviewer.
+          8. When finished, update the task file: fill in the frontmatter (`datetime`
+             — the completion date AND time, e.g. the output of
+             `date '+%Y-%m-%d %H:%M:%S %Z'`; `location` (local path or PR URL);
+             `commits`) and the `# Validation process` section describing how you verified
+             the work. Then move the file from in-progress/ to pending-review/. Never move
+             tasks to done/ — that is reserved for the human reviewer.
