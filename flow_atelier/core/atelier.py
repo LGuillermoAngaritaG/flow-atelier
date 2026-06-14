@@ -257,6 +257,59 @@ class Atelier:
             stoppable=stoppable,
         )
 
+    async def rerun_flow(
+        self,
+        flow_id: str,
+        overrides: dict[str, Any] | None = None,
+        on_task_event: TaskEventCallback | None = None,
+        on_flow_started: FlowStartedCallback | None = None,
+        on_task_starting: TaskStartingCallback | None = None,
+        show_steps: bool = True,
+        working_dir: Path | str | None = None,
+        stoppable: bool = False,
+    ) -> str:
+        """Start a brand-new flow of a past run's conduit, reusing its inputs.
+
+        Unlike :meth:`resume_flow`, this does not continue the old run: it
+        allocates a fresh flow id and re-executes the whole conduit from the
+        top. There is no status gate, so a ``completed`` flow can be repeated.
+        The source flow's persisted ``input.yaml`` is reused verbatim; keys in
+        ``overrides`` win, letting the caller vary one input (e.g. ``run_path``)
+        while keeping the rest.
+
+        :param flow_id: flow id of the prior run whose inputs to reuse
+        :param overrides: per-key input overrides applied on top of the stored
+            inputs; defaults to ``{}``
+        :param on_task_event: optional task-event callback forwarded to the engine
+        :param on_flow_started: optional flow-started callback
+        :param on_task_starting: optional task-starting callback
+        :param show_steps: stream intermediate harness steps
+        :param working_dir: working directory for task execution; when ``None``,
+            falls back to the stored ``run_path`` input
+        :param stoppable: install a SIGTERM stop handler for this run (the
+            ``atelier stop`` path); only the foreground CLI sets this.
+        :returns: the newly created flow id (distinct from ``flow_id``)
+        :raises FileNotFoundError: if the source flow or its conduit is gone
+        """
+        conduit_name, _, _ = parse_flow_id(flow_id)
+        conduit = self.store.read_conduit(conduit_name)
+        inputs = {**self.store.read_input(flow_id), **(overrides or {})}
+        if working_dir is None:
+            stored_run_path = inputs.get("run_path")
+            if stored_run_path:
+                working_dir = stored_run_path
+        wd = Path(working_dir) if working_dir is not None else None
+        return await self.engine.run(
+            conduit,
+            inputs,
+            on_task_event=on_task_event,
+            on_flow_started=on_flow_started,
+            on_task_starting=on_task_starting,
+            show_steps=show_steps,
+            working_dir=wd,
+            stoppable=stoppable,
+        )
+
     def get_status(self, flow_id: str) -> Progress:
         """Return the latest :class:`Progress` snapshot for ``flow_id``.
 
