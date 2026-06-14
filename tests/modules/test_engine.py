@@ -1554,6 +1554,97 @@ async def test_backstop_timeout_still_kills_non_hitl(store, monkeypatch):
     assert logs[-1].exit_code == 124
 
 
+async def test_per_task_timeout_override_kills_early(store, monkeypatch):
+    """A per-task timeout supersedes the larger conduit ceiling for that task.
+
+    :param store: FilesystemStore fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    import flow_atelier.modules.engine as engine_mod
+
+    monkeypatch.setattr(engine_mod, "BACKSTOP_GRACE_SECONDS", 0)
+
+    class IgnoresTimeout(ExecutorBase):
+        async def execute(self, task, resolved_command, context):
+            await asyncio.sleep(1.3)
+            return ExecutionResult(exit_code=0, output="ok", stdout="ok")
+
+    # Conduit ceiling is huge (30s); the task's own 1s override drives the kill.
+    conduit = _conduit(
+        [
+            {"name": "slow", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "timeout": 1},
+        ],
+        timeout=30,
+    )
+    engine = Engine({"tool:bash": IgnoresTimeout()}, store)
+    captured: dict[str, str] = {}
+    with pytest.raises(RuntimeError, match="exit=124"):
+        await engine.run(
+            conduit, {}, on_flow_started=lambda fid: captured.update(id=fid)
+        )
+    logs = store.read_logs(captured["id"])
+    assert logs[-1].exit_code == 124
+    assert "engine timeout after 1s" in logs[-1].stderr
+
+
+async def test_effective_timeout_override_vs_inheritance(store):
+    """ctx.timeout reflects a task's override when set, else the conduit value.
+
+    :param store: FilesystemStore fixture.
+    """
+    seen: dict[str, int] = {}
+
+    class CaptureTimeout(ExecutorBase):
+        async def execute(self, task, resolved_command, context):
+            seen[task.name] = context.timeout
+            return ExecutionResult(exit_code=0, output="ok", stdout="ok")
+
+    conduit = _conduit(
+        [
+            {"name": "over", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "timeout": 7},
+            {"name": "inherit", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": []},
+        ],
+        timeout=42,
+    )
+    engine = Engine({"tool:bash": CaptureTimeout()}, store)
+    flow_id = await engine.run(conduit, {})
+    assert store.read_progress(flow_id).status == FlowStatus.completed
+    assert seen["over"] == 7
+    assert seen["inherit"] == 42
+
+
+async def test_hitl_ignores_configured_timeout(store, monkeypatch):
+    """A configured timeout on a hitl task is ignored — it stays unbounded.
+
+    :param store: FilesystemStore fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    import flow_atelier.modules.engine as engine_mod
+
+    monkeypatch.setattr(engine_mod, "BACKSTOP_GRACE_SECONDS", 0)
+
+    class SlowHitl(ExecutorBase):
+        async def execute(self, task, resolved_command, context):
+            await asyncio.sleep(1.3)
+            return ExecutionResult(exit_code=0, output="ok", stdout="ok")
+
+    conduit = _conduit(
+        [
+            {"name": "ask", "description": "d", "task": "x", "tool": "tool:hitl",
+             "depends_on": [], "timeout": 1},
+        ],
+        timeout=30,
+    )
+    engine = Engine({"tool:hitl": SlowHitl()}, store)
+    flow_id = await engine.run(conduit, {})
+    p = store.read_progress(flow_id)
+    assert p.status == FlowStatus.completed
+    assert p.tasks["ask"].status == TaskStatus.completed
+
+
 # --------------------------------------------------------------- nested cycle guard
 
 

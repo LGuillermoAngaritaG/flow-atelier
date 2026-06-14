@@ -564,12 +564,18 @@ class Engine:
                         )
                     return
 
+                # An explicit per-task timeout supersedes the conduit-wide
+                # ceiling for this task only; None inherits conduit.timeout.
+                effective_timeout = (
+                    t.timeout if t.timeout is not None else conduit.timeout
+                )
+
                 ctx = FlowContext(
                     flow_id=flow_id,
                     store=self.store,
                     inputs=runtime_inputs,
                     task_outputs=outputs,
-                    timeout=conduit.timeout,
+                    timeout=effective_timeout,
                     working_dir=working_dir,
                     show_steps=show_steps,
                     run_nested_conduit=self._make_nested_runner(
@@ -646,13 +652,13 @@ class Engine:
                                     timeout=(
                                         None
                                         if is_hitl
-                                        else conduit.timeout + BACKSTOP_GRACE_SECONDS
+                                        else effective_timeout + BACKSTOP_GRACE_SECONDS
                                     ),
                                 )
                             except TimeoutError:
                                 result = ExecutionResult(
                                     exit_code=124,
-                                    stderr=f"engine timeout after {conduit.timeout}s",
+                                    stderr=f"engine timeout after {effective_timeout}s",
                                 )
                             except Exception as exc:  # noqa: BLE001
                                 result = ExecutionResult(

@@ -60,6 +60,7 @@ class TaskDefinition(BaseModel):
     stagnation_limit: int | None = None
     retries: int = 0
     retry_backoff: float = 0.0
+    timeout: int | None = None
     interactive: bool = False
     inputs: dict[str, Any] = Field(default_factory=dict)
 
@@ -112,6 +113,18 @@ class TaskDefinition(BaseModel):
         """
         if v < 0:
             raise ValueError("retry_backoff must be >= 0")
+        return v
+
+    @field_validator("timeout")
+    @classmethod
+    def _timeout_positive(cls, v: int | None) -> int | None:
+        """Ensure an explicit per-task ``timeout`` is at least one second.
+
+        :param v: the proposed ``timeout`` value, or ``None`` to inherit.
+        :returns: the validated ``timeout`` value unchanged.
+        """
+        if v is not None and v < 1:
+            raise ValueError("timeout must be >= 1")
         return v
 
     @model_validator(mode="after")

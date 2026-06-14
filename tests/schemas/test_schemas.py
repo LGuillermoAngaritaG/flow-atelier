@@ -323,6 +323,40 @@ def test_repeat_must_be_positive():
         )
 
 
+@pytest.mark.parametrize("bad", [0, -1])
+def test_task_timeout_must_be_positive(bad):
+    """Verify an explicit per-task timeout below 1 is rejected.
+
+    :param bad: a non-positive timeout value expected to fail validation.
+    """
+    with pytest.raises(Exception, match="timeout must be >= 1"):
+        Conduit.model_validate(
+            {
+                "name": "x",
+                "description": "d",
+                "tasks": [
+                    {"a": {"description": "d", "task": "x", "tool": "tool:bash", "depends_on": [], "timeout": bad}}
+                ],
+            }
+        )
+
+
+def test_task_timeout_none_and_positive_ok():
+    """Verify an omitted timeout defaults to None and a positive value loads."""
+    c = Conduit.model_validate(
+        {
+            "name": "x",
+            "description": "d",
+            "tasks": [
+                {"a": {"description": "d", "task": "x", "tool": "tool:bash", "depends_on": []}},
+                {"b": {"description": "d", "task": "x", "tool": "tool:bash", "depends_on": [], "timeout": 60}},
+            ],
+        }
+    )
+    assert c.tasks[0].timeout is None
+    assert c.tasks[1].timeout == 60
+
+
 def _task_with_until(**overrides):
     """Build a Conduit payload with an `until` task, applying overrides.
 
