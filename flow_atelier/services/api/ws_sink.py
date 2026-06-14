@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from flow_atelier.modules.engine import _current_flow_ctx, _current_task_ctx
+from flow_atelier.modules.engine import current_flow_id, current_task
 from flow_atelier.services.api.ws_manager import WebSocketBroker
 from flow_atelier.services.executor.prompt_sink import PermissionOption
 
@@ -78,8 +78,8 @@ class WsPromptSink:
         await self._broker.send(
             {
                 "type": "step",
-                "flow_id": _current_flow_ctx.get(self._flow_id),
-                "task": _current_task_ctx.get(""),
+                "flow_id": current_flow_id(self._flow_id),
+                "task": current_task(""),
                 "step": step.model_dump(mode="json"),
             }
         )

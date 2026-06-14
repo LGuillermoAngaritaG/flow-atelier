@@ -575,3 +575,49 @@ async def test_find_child_to_resume_disambiguates_by_invoking_task(store):
     assert engine._find_child_to_resume(parent, "build", "step1") == c1
     # step2's child already completed → nothing to resume.
     assert engine._find_child_to_resume(parent, "build", "step2") is None
+
+
+async def test_find_child_to_resume_skips_live_running_child(store):
+    """A `running` child whose runner is still alive must not be picked up.
+
+    Resuming it would drive the same child directory from two engines at once.
+    A `running` child is resumable only when its runner is provably dead.
+
+    :param store: FilesystemStore fixture.
+    """
+    import os
+    import socket
+    import subprocess
+
+    parent = store.create_flow("parent", {})
+    child = store.create_flow(
+        "build", {}, parent_flow_id=parent, flow_id="20260101_aaaaaaaa_build"
+    )
+    host = socket.gethostname()
+
+    # Live runner (this very test process): the child must be left alone.
+    store.write_progress(
+        child,
+        Progress(
+            status=FlowStatus.running,
+            invoking_task="step1",
+            runner_pid=os.getpid(),
+            runner_host=host,
+        ),
+    )
+    engine = Engine({}, store)
+    assert engine._find_child_to_resume(parent, "build", "step1") is None
+
+    # Dead runner (a pid that has exited): the orphaned child is resumable.
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    store.write_progress(
+        child,
+        Progress(
+            status=FlowStatus.running,
+            invoking_task="step1",
+            runner_pid=dead.pid,
+            runner_host=host,
+        ),
+    )
+    assert engine._find_child_to_resume(parent, "build", "step1") == child

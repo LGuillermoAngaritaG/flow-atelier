@@ -5,6 +5,7 @@ import json
 
 import pytest
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from flow_atelier.core.atelier import Atelier
 from flow_atelier.services.api.app import FastApiServer
@@ -187,22 +188,25 @@ def test_ws_run_unknown_conduit_emits_flow_failed(env, tmp_path):
 
 
 def test_ws_rejects_bad_token(env):
-    """With an api_token configured, a WS without the right ?token= closes.
+    """With an api_token configured, a WS without the right ?token= is rejected
+    before the handshake is accepted (closed with 1008).
 
     :param env: env fixture providing (atelier, app).
     """
     atelier, _ = env
     app = FastApiServer().create_app(atelier, api_token="s3cret")
     with TestClient(app) as client:
-        with client.websocket_connect("/ws/run-conduit") as ws:
-            closed = ws.receive()
-        assert closed["type"] == "websocket.close"
-        assert closed["code"] == 1008
+        # The token check runs before accept(), so Starlette turns the
+        # pre-accept close into a disconnect raised at connect time.
+        with pytest.raises(WebSocketDisconnect) as missing:
+            with client.websocket_connect("/ws/run-conduit"):
+                pass
+        assert missing.value.code == 1008
 
-        with client.websocket_connect("/ws/run-conduit?token=wrong") as ws:
-            closed = ws.receive()
-        assert closed["type"] == "websocket.close"
-        assert closed["code"] == 1008
+        with pytest.raises(WebSocketDisconnect) as wrong:
+            with client.websocket_connect("/ws/run-conduit?token=wrong"):
+                pass
+        assert wrong.value.code == 1008
 
 
 def test_ws_accepts_valid_token(env, tmp_path):

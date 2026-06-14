@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -97,6 +98,23 @@ class ScheduleConfig(BaseModel):
     days: list[int] | None = None
     times: list[str] | None = None
     run_at: datetime | None = None
+    timezone: str | None = None
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, v: str | None) -> str | None:
+        """Reject a timezone string ``ZoneInfo`` cannot construct.
+
+        :param v: IANA timezone name to validate, or ``None``.
+        :returns: the validated name unchanged, or ``None`` if not provided.
+        """
+        if v is None:
+            return v
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise ValueError(f"invalid timezone: {v!r}") from e
+        return v
 
     @field_validator("days")
     @classmethod

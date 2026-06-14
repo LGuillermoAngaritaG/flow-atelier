@@ -902,3 +902,50 @@ def test_is_available_false_when_binary_missing(monkeypatch) -> None:
     ok, reason = executor.is_available()
     assert ok is False
     assert "npx" in reason
+
+
+async def test_nontext_only_turn_notes_empty_success() -> None:
+    """A turn whose only content is non-text yields an empty-but-noted success.
+
+    Without the note, a successful turn with no captured text is
+    indistinguishable from a genuinely empty one, so downstream steps reading
+    its output silently get "".
+    """
+    from acp.schema import AgentMessageChunk, ImageContentBlock
+
+    from flow_atelier.services.executor.harness import (
+        AcpHarnessExecutor,
+        _BufferingClient,
+    )
+
+    client = _BufferingClient(sink=RecordingSink())
+    image = ImageContentBlock(type="image", data="abc", mimeType="image/png")
+    await client.session_update(
+        "s", AgentMessageChunk(sessionUpdate="agent_message_chunk", content=image)
+    )
+
+    result = AcpHarnessExecutor._result_for_turn(client, "end_turn")
+    assert result.exit_code == 0
+    assert result.output == ""
+    assert result.stderr == "agent produced only non-text content"
+
+
+async def test_text_turn_has_no_nontext_note() -> None:
+    """A normal text turn stays clean: success with empty stderr."""
+    from acp.schema import AgentMessageChunk, TextContentBlock
+
+    from flow_atelier.services.executor.harness import (
+        AcpHarnessExecutor,
+        _BufferingClient,
+    )
+
+    client = _BufferingClient(sink=RecordingSink())
+    text = TextContentBlock(type="text", text="hello")
+    await client.session_update(
+        "s", AgentMessageChunk(sessionUpdate="agent_message_chunk", content=text)
+    )
+
+    result = AcpHarnessExecutor._result_for_turn(client, "end_turn")
+    assert result.exit_code == 0
+    assert result.output == "hello"
+    assert result.stderr == ""

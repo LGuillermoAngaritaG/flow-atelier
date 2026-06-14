@@ -35,6 +35,7 @@ from flow_atelier.modules.conditions import (
     parse_dependencies,
     parse_output_predicate,
 )
+from flow_atelier.modules.liveness import is_crashed
 from flow_atelier.modules.templating import (
     SkipSignal,
     TemplateError,
@@ -42,7 +43,7 @@ from flow_atelier.modules.templating import (
     resolve,
 )
 from flow_atelier.schemas.conduit import (
-    _CONDUIT_NAME_RE,
+    CONDUIT_NAME_RE,
     Conduit,
     TaskDefinition,
     ToolType,
@@ -85,6 +86,29 @@ def _now() -> str:
 
 _current_task_ctx: ContextVar[str] = ContextVar("current_task_name", default="")
 _current_flow_ctx: ContextVar[str] = ContextVar("current_flow_id", default="")
+
+
+def current_flow_id(default: str = "") -> str:
+    """Return the flow id of the run executing on this task (child-aware).
+
+    Public accessor over the internal ``_current_flow_ctx`` ContextVar so
+    callers outside this module don't depend on the private name.
+
+    :param default: value to return when no flow context is set.
+    :returns: the current flow id, or ``default``.
+    """
+    return _current_flow_ctx.get(default)
+
+
+def current_task(default: str = "") -> str:
+    """Return the name of the task currently executing on this run.
+
+    Public accessor over the internal ``_current_task_ctx`` ContextVar.
+
+    :param default: value to return when no task context is set.
+    :returns: the current task name, or ``default``.
+    """
+    return _current_task_ctx.get(default)
 
 
 def validate_conduit(conduit: Conduit) -> dict[str, list[Dependency]]:
@@ -163,7 +187,7 @@ def validate_conduit(conduit: Conduit) -> dict[str, list[Dependency]]:
         if (
             t.tool == ToolType.conduit
             and "{{" not in t.task
-            and not _CONDUIT_NAME_RE.match(t.task.strip())
+            and not CONDUIT_NAME_RE.match(t.task.strip())
         ):
             raise ConduitValidationError(
                 f"task {t.name!r}: tool:conduit target {t.task!r} is not a valid "
@@ -971,12 +995,15 @@ class Engine:
     ) -> str | None:
         """Find the most recent resumable child flow for a conduit.
 
-        Matches children whose status is not ``completed`` — i.e. ``failed``,
-        ``running`` (orphaned by a prior cancel), or any other non-terminal
-        state. A child is considered only when it was spawned by the same
-        parent step (``invoking_task``), so a parent with two distinct steps
-        invoking the same sub-conduit resumes the child belonging to the step
-        being re-run rather than the most recent child of that name.
+        Matches a ``failed`` child unconditionally, and a ``running`` child only
+        when its runner is *provably* dead (:func:`is_crashed`) — a child left
+        ``running`` is either an orphan from a crashed parent (resumable) or a
+        flow still in flight, and picking up a live one would drive the same
+        child directory from two engines at once. A child is considered only
+        when it was spawned by the same parent step (``invoking_task``), so a
+        parent with two distinct steps invoking the same sub-conduit resumes the
+        child belonging to the step being re-run rather than the most recent
+        child of that name.
 
         :param parent_flow_id: parent flow to search under
         :param conduit_name: child conduit name to match
@@ -996,8 +1023,12 @@ class Engine:
                 continue
             if p.invoking_task != invoking_task:
                 continue
-            if p.status in (FlowStatus.failed, FlowStatus.running):
+            if p.status == FlowStatus.failed:
                 return fid
+            if p.status == FlowStatus.running:
+                # A still-live child must not be double-driven; only resume one
+                # whose runner is provably dead.
+                return fid if is_crashed(p) else None
             return None  # most recent child for this step already completed
         return None
 

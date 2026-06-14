@@ -30,6 +30,7 @@ from flow_atelier.schemas.api import (
     ScheduledJob,
     ScheduleRunRecord,
 )
+from flow_atelier.services.scheduler.triggers import default_local_zone
 
 logger = logging.getLogger(__name__)
 
@@ -196,12 +197,19 @@ class ScheduleStore:
             raise FileExistsError(
                 f"schedule already exists for name {name!r} ({path.name})"
             )
+        # Pin the host's current zone when the caller named none, so a later
+        # host-timezone change can't silently shift this schedule's fire times.
+        schedule = payload.schedule
+        if schedule.timezone is None:
+            schedule = schedule.model_copy(
+                update={"timezone": default_local_zone().key}
+            )
         job = ScheduledJob(
             id=f"SCH-{uuid.uuid4().hex[:12]}",
             conduit_name=payload.conduit_name,
             inputs=dict(payload.inputs),
             run_path=payload.run_path,
-            schedule=payload.schedule,
+            schedule=schedule,
             created_at=int(time.time() * 1000),
             runs_completed=0,
         )

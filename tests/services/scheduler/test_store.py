@@ -81,6 +81,36 @@ def test_create_assigns_id_created_at_counters(store):
     assert job.conduit_name == "report"
 
 
+def test_create_pins_local_timezone_when_omitted(store):
+    """create() stamps the host's current zone so a later tz change can't shift fires.
+
+    :param store: ScheduleStore fixture.
+    """
+    from flow_atelier.services.scheduler.triggers import default_local_zone
+
+    job = store.create(_recurring_payload())
+    assert job.schedule.timezone == default_local_zone().key
+
+
+def test_create_preserves_explicit_timezone(store):
+    """An explicit schedule timezone is kept verbatim, not overwritten.
+
+    :param store: ScheduleStore fixture.
+    """
+    job = store.create(
+        _recurring_payload(
+            schedule={
+                "mode": "recurring",
+                "name": "ny mornings",
+                "days": [1],
+                "times": ["09:00"],
+                "timezone": "America/New_York",
+            }
+        )
+    )
+    assert job.schedule.timezone == "America/New_York"
+
+
 def test_create_persists_to_yaml_file(store):
     """Verify create() persists the schedule into a per-name YAML file.
 

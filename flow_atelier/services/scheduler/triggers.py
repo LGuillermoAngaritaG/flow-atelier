@@ -50,18 +50,20 @@ def to_trigger(job: ScheduledJob, default_zone: ZoneInfo) -> BaseTrigger:
     """Build an APScheduler trigger for ``job``.
 
     :param job: persisted schedule
-    :param default_zone: timezone used for naive ``run_at`` values
+    :param default_zone: timezone used when the schedule pins none and for
+        naive ``run_at`` values
     :returns: ``DateTrigger`` for ``mode="once"``; ``CronTrigger`` (or
         ``OrTrigger`` of crons) for ``mode="recurring"``
     """
     schedule = job.schedule
+    zone = ZoneInfo(schedule.timezone) if schedule.timezone else default_zone
     if schedule.mode == "once":
         run_at = schedule.run_at
         assert run_at is not None  # validated upstream
         run_date = (
-            run_at if run_at.tzinfo is not None else run_at.replace(tzinfo=default_zone)
+            run_at if run_at.tzinfo is not None else run_at.replace(tzinfo=zone)
         )
-        return DateTrigger(run_date=run_date, timezone=default_zone)
+        return DateTrigger(run_date=run_date, timezone=zone)
     days = schedule.days or []
     times = schedule.times or []
     day_of_week = ",".join(_ISO_DAY_TO_CRON[d] for d in days)
@@ -74,7 +76,7 @@ def to_trigger(job: ScheduledJob, default_zone: ZoneInfo) -> BaseTrigger:
                 hour=int(hour_str),
                 minute=int(minute_str),
                 second=0,
-                timezone=default_zone,
+                timezone=zone,
             )
         )
     if len(crons) == 1:

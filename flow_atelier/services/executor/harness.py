@@ -224,6 +224,9 @@ class _BufferingClient:
         self._stream_steps = stream_steps
         self._done_marker = done_marker
         self.buffer: list[str] = []
+        # Set when an agent message chunk carried only non-text content
+        # (image/resource); lets an empty-but-successful turn be flagged.
+        self._saw_nontext_content = False
         self.steps: list[IntermediateStep] = []
         self._pending_thinking: list[str] = []
         self._pending_thinking_len: int = 0
@@ -273,6 +276,8 @@ class _BufferingClient:
                 self.buffer.append(text)
                 if self._stream_messages:
                     await self._sink.display(text.replace(self._done_marker, ""))
+            else:
+                self._saw_nontext_content = True
         elif isinstance(update, AgentThoughtChunk):
             text = getattr(update.content, "text", "") or ""
             if not text:
@@ -768,8 +773,15 @@ class AcpHarnessExecutor(ExecutorBase):
         output = "".join(client.buffer)
         usage = _usage_from_client(client)
         if stop_reason == "end_turn":
+            # An empty success is indistinguishable from a real one unless we
+            # note that the agent's only content was non-text (image/resource).
+            stderr = (
+                "agent produced only non-text content"
+                if not output and client._saw_nontext_content
+                else ""
+            )
             return ExecutionResult(
-                exit_code=0, stdout=output, stderr="", output=output,
+                exit_code=0, stdout=output, stderr=stderr, output=output,
                 steps=client.steps, usage=usage,
             )
         if stop_reason == "max_tokens":
