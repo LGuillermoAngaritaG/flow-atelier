@@ -741,6 +741,118 @@ def test_scheduler_status_alias(workdir, tmp_path):
     assert "nightly" in result.output
 
 
+def _add_schedule_and_record(tmp_path, status, flow_id):
+    """Install the recurring schedule and inject one history record.
+
+    Run history is normally written by the daemon's fire path; CLI tests
+    bypass the daemon, so we seed a record directly into the same store the
+    CLI reads from.
+
+    :param tmp_path: isolated working directory (== cwd in workdir fixture).
+    :param status: ``"succeeded"`` or ``"failed"``.
+    :param flow_id: flow id to attach to the record.
+    :returns: the installed schedule's id.
+    """
+    from flow_atelier.services.scheduler.store import ScheduleStore
+
+    src = tmp_path / "nightly.json"
+    src.write_text(SCHEDULE_RECURRING_JSON)
+    runner = CliRunner()
+    runner.invoke(app, ["schedule", "add", str(src)])
+    store = ScheduleStore(tmp_path / ".atelier")
+    job = store.get_by_name("nightly")
+    store.append_run_record(job.id, status, flow_id)
+    return job.id
+
+
+def test_schedule_history_empty(workdir, tmp_path):
+    """`schedule history` reports a friendly message when there is no history.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    src = tmp_path / "nightly.json"
+    src.write_text(SCHEDULE_RECURRING_JSON)
+    runner = CliRunner()
+    runner.invoke(app, ["schedule", "add", str(src)])
+    result = runner.invoke(app, ["schedule", "history", "nightly"])
+    assert result.exit_code == 0, result.output
+    assert "no recorded runs" in result.output
+
+
+def test_schedule_history_lists_records(workdir, tmp_path):
+    """`schedule history` shows the flow id and status of recorded fires.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    _add_schedule_and_record(tmp_path, "failed", "FLOW-overnight")
+    runner = CliRunner()
+    result = runner.invoke(app, ["schedule", "history", "nightly"])
+    assert result.exit_code == 0, result.output
+    assert "FLOW-overnight" in result.output
+    assert "FAILED" in result.output
+
+
+def test_schedule_history_json(workdir, tmp_path):
+    """`schedule history --json` emits the records as structured data.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    _add_schedule_and_record(tmp_path, "succeeded", "FLOW-good")
+    runner = CliRunner()
+    result = runner.invoke(app, ["schedule", "history", "nightly", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.output)
+    assert payload["name"] == "nightly"
+    assert payload["runs"][0]["flow_id"] == "FLOW-good"
+    assert payload["runs"][0]["status"] == "succeeded"
+
+
+def test_schedule_history_unknown(workdir):
+    """`schedule history` errors when the schedule is unknown.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    result = runner.invoke(app, ["schedule", "history", "ghost"])
+    assert result.exit_code != 0
+    assert "schedule not found" in result.output
+
+
+def test_schedule_list_includes_last_run(workdir, tmp_path):
+    """`schedule list` surfaces the most recent run at a glance.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    _add_schedule_and_record(tmp_path, "succeeded", "FLOW-glance")
+    runner = CliRunner()
+    result = runner.invoke(app, ["schedule", "list"])
+    assert result.exit_code == 0, result.output
+    # The "last run" column is present; the flow id may be width-truncated in
+    # the table, so the full-id round-trip is asserted via --json elsewhere.
+    assert "last run" in result.output
+    assert "FLOW-gla" in result.output
+
+
+def test_schedule_list_json_includes_last_run(workdir, tmp_path):
+    """`schedule list --json` includes a last_run object per schedule.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    _add_schedule_and_record(tmp_path, "failed", "FLOW-json")
+    runner = CliRunner()
+    result = runner.invoke(app, ["schedule", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.output)
+    entry = payload["schedules"][0]
+    assert entry["last_run"]["flow_id"] == "FLOW-json"
+    assert entry["last_run"]["status"] == "failed"
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
 def test_run_failure_prints_flow_id_and_status_hint(tmp_path, monkeypatch):
     """Failure output must include the flow_id and a next-step hint so

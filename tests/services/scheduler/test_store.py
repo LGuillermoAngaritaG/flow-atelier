@@ -293,6 +293,117 @@ def test_increment_runs_skips_when_file_gone(store):
     assert list(store.schedules_dir.glob("*.yaml")) == []
 
 
+# ----------------------------------------------------------- run history
+
+
+def test_append_and_read_run_history(store):
+    """append_run_record persists records; run_history reads them oldest-first.
+
+    :param store: ScheduleStore fixture.
+    """
+    job = store.create(_recurring_payload())
+    store.append_run_record(job.id, "succeeded", "FLOW-1")
+    store.append_run_record(job.id, "failed", "FLOW-2")
+    history = store.run_history(job.id)
+    assert [r.flow_id for r in history] == ["FLOW-1", "FLOW-2"]
+    assert history[0].status == "succeeded"
+    assert history[1].status == "failed"
+
+
+def test_run_history_empty_when_none(store):
+    """run_history returns [] for a schedule with no recorded fires.
+
+    :param store: ScheduleStore fixture.
+    """
+    job = store.create(_recurring_payload())
+    assert store.run_history(job.id) == []
+
+
+def test_last_run_returns_newest(store):
+    """last_run returns the most recently appended record.
+
+    :param store: ScheduleStore fixture.
+    """
+    job = store.create(_recurring_payload())
+    assert store.last_run(job.id) is None
+    store.append_run_record(job.id, "succeeded", "FLOW-old")
+    store.append_run_record(job.id, "failed", "FLOW-new")
+    last = store.last_run(job.id)
+    assert last is not None
+    assert last.flow_id == "FLOW-new"
+    assert last.status == "failed"
+
+
+def test_run_history_bounded_at_max(store):
+    """History is trimmed to the last _MAX_HISTORY records.
+
+    :param store: ScheduleStore fixture.
+    """
+    from flow_atelier.services.scheduler.store import _MAX_HISTORY
+
+    job = store.create(_recurring_payload())
+    for i in range(_MAX_HISTORY + 10):
+        store.append_run_record(job.id, "succeeded", f"FLOW-{i}")
+    history = store.run_history(job.id)
+    assert len(history) == _MAX_HISTORY
+    # Oldest 10 dropped; newest preserved.
+    assert history[-1].flow_id == f"FLOW-{_MAX_HISTORY + 9}"
+    assert history[0].flow_id == "FLOW-10"
+
+
+def test_mark_fired_preserves_existing_history(store):
+    """mark_fired must merge, not clobber an existing runs list (regression).
+
+    :param store: ScheduleStore fixture.
+    """
+    job = store.create(_once_payload())
+    store.append_run_record(job.id, "succeeded", "FLOW-keep")
+    store.mark_fired(job.id)
+    assert store.fired_at(job.id) is not None
+    history = store.run_history(job.id)
+    assert len(history) == 1
+    assert history[0].flow_id == "FLOW-keep"
+
+
+def test_append_run_record_preserves_fired_marker(store):
+    """Appending history must not drop an existing fired-once marker.
+
+    :param store: ScheduleStore fixture.
+    """
+    job = store.create(_once_payload())
+    store.mark_fired(job.id)
+    store.append_run_record(job.id, "succeeded", "FLOW-x")
+    assert store.fired_at(job.id) is not None
+    assert len(store.run_history(job.id)) == 1
+
+
+def test_delete_drops_run_history(store):
+    """Deleting a schedule clears its recorded history.
+
+    :param store: ScheduleStore fixture.
+    """
+    job = store.create(_recurring_payload())
+    store.append_run_record(job.id, "succeeded", "FLOW-1")
+    store.delete(job.id)
+    assert store.run_history(job.id) == []
+
+
+def test_run_history_skips_malformed_entries(store):
+    """run_history tolerates malformed entries in the runs list.
+
+    :param store: ScheduleStore fixture.
+    """
+    job = store.create(_recurring_payload())
+    store.append_run_record(job.id, "succeeded", "FLOW-good")
+    # Inject a malformed record directly into state.
+    data = store._read_state()
+    data["schedules"][job.id]["runs"].append({"bogus": True})
+    store._write_state(data)
+    history = store.run_history(job.id)
+    assert len(history) == 1
+    assert history[0].flow_id == "FLOW-good"
+
+
 def test_recreate_after_load_round_trips(store, tmp_path):
     """Verify a fresh ScheduleStore reloads previously persisted data.
 

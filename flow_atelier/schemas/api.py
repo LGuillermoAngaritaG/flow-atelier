@@ -198,6 +198,20 @@ class CreateScheduleInput(BaseModel):
         return self
 
 
+class ScheduleRunRecord(BaseModel):
+    """One durable record of a scheduler fire: when, outcome, and the flow id.
+
+    ``flow_id`` is nullable because a fire can fail before ``on_flow_started``
+    ever runs (e.g. a conduit read error), so there is no run to point at.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ran_at_iso: str
+    status: Literal["succeeded", "failed"]
+    flow_id: str | None = None
+
+
 class ScheduledJob(BaseModel):
     """Server-side representation of a persisted schedule (per SPEC §7)."""
 

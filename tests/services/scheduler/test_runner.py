@@ -93,14 +93,23 @@ class _RecordingExecutor:
         """Initialize a recording executor with empty call history."""
         self.calls: list[tuple[ScheduledJob, Path]] = []
         self.raise_on_next = False
+        self.report_flow_id = "FLOW-test-id"
 
-    async def __call__(self, job: ScheduledJob, working_dir: Path) -> None:
-        """Record an execution and optionally raise to simulate failure.
+    async def __call__(
+        self, job: ScheduledJob, working_dir: Path, report
+    ) -> None:
+        """Record an execution, report a flow id, optionally raise to fail.
+
+        Reports the flow id before any failure, mirroring how a real run
+        fires ``on_flow_started`` before the first task runs.
 
         :param job: scheduled job being fired.
         :param working_dir: working directory for the run.
+        :param report: flow-id reporter callback supplied by the daemon.
         """
         self.calls.append((job, working_dir))
+        if self.report_flow_id is not None:
+            report(self.report_flow_id)
         if self.raise_on_next:
             self.raise_on_next = False
             raise RuntimeError("forced failure for test")
@@ -371,6 +380,96 @@ async def test_fire_skips_deleted_schedules(daemon, store, executor):
     store.delete(job.id)
     await daemon._fire(job.id)
     assert executor.calls == []
+
+
+# -------------------------------------------------------------- run history
+
+
+async def test_fire_records_succeeded_with_flow_id(daemon, store, executor):
+    """A successful fire records a 'succeeded' record carrying the flow id.
+
+    :param daemon: SchedulerDaemon fixture.
+    :param store: ScheduleStore fixture.
+    :param executor: recording executor fixture.
+    """
+    job = store.create(_recurring())
+    await daemon.start()
+    executor.report_flow_id = "FLOW-ok"
+    await daemon._fire(job.id)
+    history = store.run_history(job.id)
+    assert len(history) == 1
+    assert history[-1].status == "succeeded"
+    assert history[-1].flow_id == "FLOW-ok"
+
+
+async def test_fire_records_failed_with_captured_flow_id(daemon, store, executor):
+    """A failing fire records a 'failed' record still carrying the captured id.
+
+    :param daemon: SchedulerDaemon fixture.
+    :param store: ScheduleStore fixture.
+    :param executor: recording executor fixture.
+    """
+    job = store.create(_recurring())
+    await daemon.start()
+    executor.report_flow_id = "FLOW-doomed"
+    executor.raise_on_next = True
+    await daemon._fire(job.id)  # must NOT raise
+    history = store.run_history(job.id)
+    assert len(history) == 1
+    assert history[-1].status == "failed"
+    assert history[-1].flow_id == "FLOW-doomed"
+
+
+async def test_fire_records_failure_without_flow_id(daemon, store, executor):
+    """A fire that fails before reporting an id records a null flow id.
+
+    :param daemon: SchedulerDaemon fixture.
+    :param store: ScheduleStore fixture.
+    :param executor: recording executor fixture.
+    """
+    job = store.create(_recurring())
+    await daemon.start()
+    executor.report_flow_id = None  # never reports → fails before on_started
+    executor.raise_on_next = True
+    await daemon._fire(job.id)
+    history = store.run_history(job.id)
+    assert len(history) == 1
+    assert history[-1].status == "failed"
+    assert history[-1].flow_id is None
+
+
+async def test_fire_records_recurring_schedules(daemon, store, executor):
+    """Recurring schedules accumulate history across repeated fires.
+
+    :param daemon: SchedulerDaemon fixture.
+    :param store: ScheduleStore fixture.
+    :param executor: recording executor fixture.
+    """
+    job = store.create(_recurring())
+    await daemon.start()
+    await daemon._fire(job.id)
+    await daemon._fire(job.id)
+    assert len(store.run_history(job.id)) == 2
+
+
+async def test_compute_planned_view_attaches_last_run(daemon, store, executor, tmp_path):
+    """compute_planned_view surfaces the schedule's most recent run.
+
+    :param daemon: SchedulerDaemon fixture.
+    :param store: ScheduleStore fixture.
+    :param executor: recording executor fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    job = store.create(_recurring())
+    await daemon.start()
+    executor.report_flow_id = "FLOW-glance"
+    await daemon._fire(job.id)
+    view = compute_planned_view(
+        store, default_zone=UTC, default_working_dir=tmp_path
+    )
+    assert view[0].last_run is not None
+    assert view[0].last_run.flow_id == "FLOW-glance"
+    assert view[0].last_run.status == "succeeded"
 
 
 async def test_fire_increments_runs_completed(daemon, store, executor):

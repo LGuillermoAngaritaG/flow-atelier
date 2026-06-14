@@ -479,12 +479,33 @@ def render_plan(plan: ExecutionPlan, console: Console) -> None:
             _render_planned_task(task, console)
 
 
+def _format_last_run(record) -> str:
+    """Render a schedule's most recent fire outcome for the planned table.
+
+    :param record: the last :class:`ScheduleRunRecord`, or ``None`` when the
+        schedule has no recorded fires yet.
+    :returns: a colored ``ok``/``FAILED`` marker plus the flow id, or ``—``.
+    """
+    if record is None:
+        return "[dim]—[/dim]"
+    marker = (
+        "[green]ok[/green]"
+        if record.status == "succeeded"
+        else "[red]FAILED[/red]"
+    )
+    if record.flow_id:
+        return f"{marker} [dim]{record.flow_id}[/dim]"
+    return marker
+
+
 def _render_planned_table(planned: list[PlannedJob]) -> Table:
     """Render planned scheduler jobs as a Rich table.
 
     :param planned: planned jobs with computed next-fire times.
     """
-    table = Table("id", "name", "conduit", "kind", "next fire", "working_dir")
+    table = Table(
+        "id", "name", "conduit", "kind", "next fire", "last run", "working_dir"
+    )
     for p in planned:
         kind_style = "cyan" if p.schedule_kind == "recurring" else "magenta"
         next_cell = _format_next_fire(p.next_fire_time)
@@ -496,6 +517,7 @@ def _render_planned_table(planned: list[PlannedJob]) -> Table:
             p.conduit_name,
             f"[{kind_style}]{p.schedule_kind}[/{kind_style}]",
             next_cell,
+            _format_last_run(p.last_run),
             str(p.working_dir),
         )
     return table

@@ -7,8 +7,9 @@ from pathlib import Path
 
 import typer
 from rich.markup import escape
+from rich.table import Table
 
-from flow_atelier.cli._shared import _schedule_store, console
+from flow_atelier.cli._shared import _format_clock, _schedule_store, console
 from flow_atelier.cli.main import schedule_app
 from flow_atelier.cli.rendering.render import (
     _render_planned_table,
@@ -114,6 +115,9 @@ def schedule_list_cmd(
                     "next_fire_time": (
                         p.next_fire_time.isoformat() if p.next_fire_time else None
                     ),
+                    "last_run": (
+                        p.last_run.model_dump(mode="json") if p.last_run else None
+                    ),
                     "working_dir": str(p.working_dir),
                 }
                 for p in planned
@@ -144,6 +148,57 @@ def schedule_remove_cmd(
         raise typer.Exit(code=1)
     store.delete(job.id)
     console.print(f"[green]removed[/green] {job.id}")
+
+
+@schedule_app.command(
+    "history",
+    help="Show a schedule's recorded run history (newest first).",
+)
+def schedule_history_cmd(
+    ref: str = typer.Argument(..., help="Schedule id or schedule.name."),
+    json_mode: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON instead of a table."
+    ),
+) -> None:
+    """List the recorded fires for a schedule, newest first.
+
+    Each record carries the flow id verbatim — the same id ``atelier logs
+    <id>`` and ``atelier run --resume <id>`` accept — so a failed overnight
+    run leads straight to its logs.
+
+    :param ref: schedule id or ``schedule.name`` to inspect.
+    :param json_mode: when true, emit machine-readable JSON instead of a table.
+    """
+    store = _schedule_store()
+    job = _resolve_schedule(store, ref)
+    if job is None:
+        console.print(f"[red]schedule not found:[/red] {ref}")
+        raise typer.Exit(code=1)
+
+    records = list(reversed(store.run_history(job.id)))
+
+    if json_mode:
+        payload = {
+            "id": job.id,
+            "name": job.schedule.name,
+            "runs": [r.model_dump(mode="json") for r in records],
+        }
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    if not records:
+        console.print("[yellow]no recorded runs yet[/yellow]")
+        return
+
+    table = Table("ran at", "status", "flow_id")
+    for r in records:
+        status = (
+            "[green]ok[/green]"
+            if r.status == "succeeded"
+            else "[red]FAILED[/red]"
+        )
+        table.add_row(_format_clock(r.ran_at_iso), status, r.flow_id or "—")
+    console.print(table)
 
 
 @schedule_app.command(

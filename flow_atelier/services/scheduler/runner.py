@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from flow_atelier.schemas.api import ScheduledJob
+from flow_atelier.schemas.api import ScheduledJob, ScheduleRunRecord
 from flow_atelier.services.scheduler.store import ScheduleStore
 from flow_atelier.services.scheduler.triggers import default_local_zone, to_trigger
 
@@ -27,7 +27,12 @@ logger = logging.getLogger(__name__)
 _RELOAD_JOB_ID = "__atelier_sync__"
 
 
-ScheduleExecutor = Callable[[ScheduledJob, Path], Awaitable[None]]
+# An executor receives the schedule, its working dir, and a flow-id reporter it
+# must invoke (via ``on_flow_started``) so the daemon can record which run a
+# fire produced — even when the fire later fails.
+ScheduleExecutor = Callable[
+    [ScheduledJob, Path, Callable[[str], None]], Awaitable[None]
+]
 
 
 def _resolve_run_path(run_path: str, base: Path) -> Path:
@@ -46,17 +51,23 @@ def _resolve_run_path(run_path: str, base: Path) -> Path:
     return wd if wd.is_absolute() else (base / wd).resolve()
 
 
-async def _default_executor(job: ScheduledJob, working_dir: Path) -> None:
+async def _default_executor(
+    job: ScheduledJob, working_dir: Path, report: Callable[[str], None]
+) -> None:
     """Default fire action: instantiate ``Atelier(base_dir=working_dir/.atelier)``
     and ``await run_conduit(...)``. Imported lazily to avoid a circular import.
 
     :param job: schedule being fired
     :param working_dir: directory under which ``.atelier`` is resolved
+    :param report: flow-id reporter invoked once the run starts, forwarded as
+        ``on_flow_started`` so the id is captured before any failure
     """
     from flow_atelier.core.atelier import Atelier
 
     atelier = Atelier(base_dir=working_dir / ".atelier")
-    await atelier.run_conduit(job.conduit_name, dict(job.inputs))
+    await atelier.run_conduit(
+        job.conduit_name, dict(job.inputs), on_flow_started=report
+    )
 
 
 @dataclass(frozen=True)
@@ -69,6 +80,7 @@ class PlannedJob:
     next_fire_time: datetime | None
     working_dir: Path
     schedule_kind: str  # "once" | "recurring"
+    last_run: ScheduleRunRecord | None = None
 
 
 class SchedulerDaemon:
@@ -279,8 +291,17 @@ class SchedulerDaemon:
             working_dir,
         )
         succeeded = False
+        captured: dict[str, str | None] = {"id": None}
+
+        def on_started(flow_id: str) -> None:
+            """Capture the flow id the moment the run begins.
+
+            :param flow_id: flow id assigned when the run starts
+            """
+            captured["id"] = flow_id
+
         try:
-            await self.executor(job, working_dir)
+            await self.executor(job, working_dir, on_started)
             succeeded = True
             logger.info(
                 "DONE schedule %s → conduit '%s'", schedule_id, job.conduit_name
@@ -292,6 +313,11 @@ class SchedulerDaemon:
         finally:
             if job.schedule.mode == "once":
                 self.store.mark_fired(schedule_id)
+            self.store.append_run_record(
+                schedule_id,
+                "succeeded" if succeeded else "failed",
+                captured["id"],
+            )
         if succeeded:
             self.store.increment_runs(schedule_id)
 
@@ -332,6 +358,7 @@ def compute_planned_view(
     planned: list[PlannedJob] = []
     for job in store.list():
         working_dir = _resolve_run_path(job.run_path, base)
+        last_run = store.last_run(job.id)
         if job.schedule.mode == "once" and store.fired_at(job.id):
             planned.append(
                 PlannedJob(
@@ -341,6 +368,7 @@ def compute_planned_view(
                     next_fire_time=None,
                     working_dir=working_dir,
                     schedule_kind="once",
+                    last_run=last_run,
                 )
             )
             continue
@@ -354,6 +382,7 @@ def compute_planned_view(
                 next_fire_time=next_fire,
                 working_dir=working_dir,
                 schedule_kind=job.schedule.mode,
+                last_run=last_run,
             )
         )
     planned.sort(key=lambda p: p.id)
