@@ -511,15 +511,18 @@ class Engine:
             ]
             self.store.write_progress(flow_id, progress)
 
-        def mark_failed(name: str) -> None:
+        def mark_failed(name: str, reason: str = "") -> None:
             """Mark a task as failed and persist progress.
 
             :param name: task name that has failed.
+            :param reason: human-readable explanation for the failure,
+                surfaced in the status ``reason`` column (empty -> None).
             """
             statuses[name] = TaskStatus.failed
             progress.tasks[name] = TaskProgress(
                 status=TaskStatus.failed,
                 of=task_map[name].repeat,
+                reason=reason or None,
             )
             self.store.write_progress(flow_id, progress)
 
@@ -554,20 +557,20 @@ class Engine:
                     mark_skipped(t.name, str(e))
                     return
                 except TemplateError as e:
-                    mark_failed(t.name)
+                    reason = str(e)
+                    mark_failed(t.name, reason)
                     if not failed:
                         failed = True
-                        failure_error = ValueError(f"task {t.name!r}: {e}")
+                        failure_error = ValueError(f"task {t.name!r}: {reason}")
                     return
 
                 executor = self.executors.get(t.tool.value)
                 if executor is None:
-                    mark_failed(t.name)
+                    reason = f"no executor registered for tool {t.tool.value!r}"
+                    mark_failed(t.name, reason)
                     if not failed:
                         failed = True
-                        failure_error = ValueError(
-                            f"no executor registered for tool {t.tool.value!r}"
-                        )
+                        failure_error = ValueError(reason)
                     return
 
                 # An explicit per-task timeout supersedes the conduit-wide
@@ -629,12 +632,12 @@ class Engine:
                             except (SkipSignal, TemplateError) as e:
                                 # Mid-loop the task has already produced
                                 # output, so a silent skip would lie: fail.
-                                mark_failed(t.name)
+                                reason = f"iteration {iteration}: {e}"
+                                mark_failed(t.name, reason)
                                 if not failed:
                                     failed = True
                                     failure_error = ValueError(
-                                        f"task {t.name!r} iteration "
-                                        f"{iteration}: {e}"
+                                        f"task {t.name!r} {reason}"
                                     )
                                 return
                         mark_running(t.name, iteration, start_iteration)
@@ -709,12 +712,15 @@ class Engine:
                             if attempt < max_attempts:
                                 await asyncio.sleep(t.retry_backoff)
                                 continue
-                            mark_failed(t.name)
+                            reason = (
+                                f"exit={result.exit_code} "
+                                f"stderr={result.stderr.strip()[:200]}"
+                            )
+                            mark_failed(t.name, reason)
                             if not failed:
                                 failed = True
                                 failure_error = RuntimeError(
-                                    f"task {t.name!r} failed: exit={result.exit_code} "
-                                    f"stderr={result.stderr.strip()[:200]}"
+                                    f"task {t.name!r} failed: {reason}"
                                 )
                             return
                         previous_output = last_output
@@ -733,13 +739,15 @@ class Engine:
                             else:
                                 stagnant_streak = 1
                             if stagnant_streak >= t.stagnation_limit:
-                                mark_failed(t.name)
+                                reason = (
+                                    f"stagnated: {stagnant_streak} identical "
+                                    "consecutive outputs"
+                                )
+                                mark_failed(t.name, reason)
                                 if not failed:
                                     failed = True
                                     failure_error = RuntimeError(
-                                        f"task {t.name!r} stagnated: "
-                                        f"{stagnant_streak} identical "
-                                        "consecutive outputs"
+                                        f"task {t.name!r} {reason}"
                                     )
                                 return
                         if loop_predicate is not None:
@@ -762,13 +770,15 @@ class Engine:
                     completion_reason = ""
                     if loop_predicate is not None and not predicate_matched:
                         if t.on_exhaust == "fail":
-                            mark_failed(t.name)
+                            reason = (
+                                f"exhausted {t.repeat} iterations without "
+                                "matching its loop predicate"
+                            )
+                            mark_failed(t.name, reason)
                             if not failed:
                                 failed = True
                                 failure_error = RuntimeError(
-                                    f"task {t.name!r} exhausted {t.repeat} "
-                                    "iterations without matching its loop "
-                                    "predicate"
+                                    f"task {t.name!r} {reason}"
                                 )
                             return
                         completion_reason = (

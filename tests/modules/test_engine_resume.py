@@ -381,6 +381,7 @@ async def test_until_exhaustion_fails_when_on_exhaust_fail(store):
     p = store.read_progress(flow_id)
     assert p.status == FlowStatus.failed
     assert p.tasks["loop"].status == TaskStatus.failed
+    assert "exhausted" in (p.tasks["loop"].reason or "")
 
 
 async def test_until_match_leaves_no_exhaustion_reason(store):
@@ -421,6 +422,7 @@ async def test_stagnation_limit_fails_on_identical_outputs(store):
     flow_id = store.list_flows()[0]
     p = store.read_progress(flow_id)
     assert p.tasks["loop"].status == TaskStatus.failed
+    assert "stagnated" in (p.tasks["loop"].reason or "")
 
 
 async def test_stagnation_limit_allows_varied_outputs(store):

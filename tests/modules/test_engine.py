@@ -611,6 +611,25 @@ async def test_mid_loop_template_error_marks_task_failed(store):
     p = store.read_progress(captured[0])
     assert p.status == FlowStatus.failed
     assert p.tasks["a"].status == TaskStatus.failed
+    assert "iteration" in (p.tasks["a"].reason or "")
+
+
+async def test_failed_task_reason_persisted(store):
+    """Verify a failing executor's reason is saved onto the task progress.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [{"name": "a", "description": "d", "task": "x", "tool": "tool:bash", "depends_on": []}]
+    )
+    engine = Engine({"tool:bash": FakeExecutor(fail={"a"})}, store)
+    with pytest.raises(RuntimeError, match="task 'a' failed"):
+        await engine.run(conduit, {})
+    p = store.read_progress(store.list_flows()[0])
+    assert p.tasks["a"].status == TaskStatus.failed
+    reason = p.tasks["a"].reason or ""
+    assert "exit=1" in reason
+    assert "boom" in reason
 
 
 async def test_first_failure_error_preserved(store):
