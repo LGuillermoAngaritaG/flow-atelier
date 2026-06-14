@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import time
@@ -32,6 +33,8 @@ from flow_atelier.schemas.flow import new_flow_id, parse_flow_id
 from flow_atelier.schemas.log import LogEntry
 from flow_atelier.schemas.progress import Progress
 from flow_atelier.services.store.base import ConduitSource, StoreBase
+
+logger = logging.getLogger(__name__)
 
 if os.name == "nt":
     def _atomic_replace(src: str | Path, dst: str | Path) -> None:
@@ -420,12 +423,24 @@ class FilesystemStore(StoreBase):
         jsonl_path = flow_dir / "logs.jsonl"
         if jsonl_path.exists():
             entries: list[LogEntry] = []
-            for line in jsonl_path.read_text().splitlines():
+            lines = jsonl_path.read_text().splitlines()
+            last_index = len(lines) - 1
+            for index, line in enumerate(lines):
                 if not line.strip():
                     continue
                 try:
                     entries.append(LogEntry.model_validate(json.loads(line)))
                 except (json.JSONDecodeError, ValueError):
+                    # A truncated trailing line is the expected aftermath of a
+                    # crash mid-write; a corrupt *interior* line means a real
+                    # entry vanished, which must not happen silently.
+                    if index != last_index:
+                        logger.warning(
+                            "read_logs: dropping unreadable line %d of %d in %s",
+                            index + 1,
+                            len(lines),
+                            jsonl_path,
+                        )
                     continue
             return entries
         legacy_path = flow_dir / "logs.json"

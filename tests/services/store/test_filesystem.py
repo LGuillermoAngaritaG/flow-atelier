@@ -465,3 +465,45 @@ def test_delete_flow_removes_nested_children(store):
     assert parent not in store._flow_paths
     assert child not in store._flow_paths
     assert child not in store._log_locks
+
+
+def test_read_logs_warns_on_corrupt_interior_line(store, caplog):
+    """A corrupt interior log line is dropped with a warning, not silently.
+
+    :param store: FilesystemStore fixture.
+    :param caplog: pytest log-capture fixture.
+    """
+    fid = store.create_flow("hello", {})
+    good = LogEntry(
+        task="greet", tool="tool:bash", command="echo hi",
+        output="hi", exit_code=0,
+        started_at="2026-04-12T10:00:00Z", finished_at="2026-04-12T10:00:00Z",
+    )
+    line = good.model_dump_json()
+    logs_path = store._flow_dir(fid) / "logs.jsonl"
+    logs_path.write_text(f"{line}\n{{not json\n{line}\n")
+    with caplog.at_level("WARNING"):
+        entries = store.read_logs(fid)
+    assert [e.task for e in entries] == ["greet", "greet"]
+    assert any("unreadable line" in r.message for r in caplog.records)
+
+
+def test_read_logs_silent_on_truncated_trailing_line(store, caplog):
+    """A truncated trailing line (crash mid-write) is dropped without warning.
+
+    :param store: FilesystemStore fixture.
+    :param caplog: pytest log-capture fixture.
+    """
+    fid = store.create_flow("hello", {})
+    good = LogEntry(
+        task="greet", tool="tool:bash", command="echo hi",
+        output="hi", exit_code=0,
+        started_at="2026-04-12T10:00:00Z", finished_at="2026-04-12T10:00:00Z",
+    )
+    line = good.model_dump_json()
+    logs_path = store._flow_dir(fid) / "logs.jsonl"
+    logs_path.write_text(f"{line}\n{{truncat")
+    with caplog.at_level("WARNING"):
+        entries = store.read_logs(fid)
+    assert [e.task for e in entries] == ["greet"]
+    assert not any("unreadable line" in r.message for r in caplog.records)

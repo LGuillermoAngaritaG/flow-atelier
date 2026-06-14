@@ -135,15 +135,15 @@ async def test_sub_outputs_empty_when_child_has_no_logs():
     assert result.sub_outputs == []
 
 
-async def test_sub_outputs_includes_failed_iterations():
-    """Predicate evaluation should see all sub-task outputs, including
-    failed ones — the engine still decides what to do with them."""
+async def test_sub_outputs_excludes_failed_sub_tasks():
+    """Predicate evaluation must see only exit-0 sub-task outputs: a failed
+    sub-task's partial/error text must not be able to trip an `until`."""
     logs = [
         _log("step_a", "ok"),
         _log("step_b", "boom", exit_code=1),
     ]
     result = await _run(logs, status=FlowStatus.failed)
-    assert result.sub_outputs == ["ok", "boom"]
+    assert result.sub_outputs == ["ok"]
 
 
 def _child_conduit(tasks: list[tuple[str, list[str]]]) -> Conduit:

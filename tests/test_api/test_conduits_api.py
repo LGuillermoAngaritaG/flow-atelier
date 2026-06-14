@@ -170,6 +170,20 @@ async def test_update_unknown_returns_404(client):
     assert resp.status_code == 404
 
 
+async def test_update_rename_to_existing_returns_409(client):
+    """Verify renaming a conduit onto an existing name returns 409.
+
+    :param client: httpx client fixture.
+    """
+    await client.post("/conduits", json=_payload(name="conduit_a"))
+    await client.post("/conduits", json=_payload(name="conduit_b", description="B"))
+    resp = await client.patch("/conduits/conduit_a", json={"name": "conduit_b"})
+    assert resp.status_code == 409
+    # conduit_b's description is unchanged.
+    got = await client.get("/conduits/conduit_b")
+    assert got.json()["description"] == "B"
+
+
 # ---------------------------------------------------------------- delete
 
 

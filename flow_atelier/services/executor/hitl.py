@@ -1,6 +1,7 @@
 """tool:hitl executor — prompts the user for named inputs on stdin."""
 from __future__ import annotations
 
+import asyncio
 import sys
 
 import yaml
@@ -8,6 +9,11 @@ import yaml
 from flow_atelier.schemas.conduit import TaskDefinition
 from flow_atelier.schemas.log import ExecutionResult
 from flow_atelier.services.executor.base import ExecutorBase, FlowContext
+
+# HITL tasks bypass the engine's concurrency semaphore (a human may be away),
+# so nothing else serializes two ready HITL tasks. There is exactly one stdin;
+# this process-wide lock keeps at most one prompt session owning the terminal.
+_STDIN_LOCK = asyncio.Lock()
 
 
 class HitlExecutor(ExecutorBase):
@@ -41,21 +47,22 @@ class HitlExecutor(ExecutorBase):
             preamble_lines.append(resolved_command.strip())
         preamble_lines.append(f"[hitl] Task '{task.name}' needs the following inputs:")
         preamble_text = "\n".join(preamble_lines) + "\n"
-        print(preamble_text, file=sys.stdout, flush=True)
 
         from flow_atelier.cli.rendering.multiline_input import multiline_input
 
-        for name, description in task.inputs.items():
-            prompt = f"  {name} ({description}): "
-            response = await multiline_input(prompt, hint="Alt+Enter to submit")
-            # Piped stdin doesn't echo keystrokes nor add a newline; print
-            # the consumed value so scripted transcripts read like a real
-            # terminal session instead of two prompts smashed together.
-            if not sys.stdin.isatty():
-                print(response, file=sys.stdout, flush=True)
-            collected[name] = response
-            context.store.append_input(context.flow_id, name, response)
-            context.inputs[name] = response
+        async with _STDIN_LOCK:
+            print(preamble_text, file=sys.stdout, flush=True)
+            for name, description in task.inputs.items():
+                prompt = f"  {name} ({description}): "
+                response = await multiline_input(prompt, hint="Alt+Enter to submit")
+                # Piped stdin doesn't echo keystrokes nor add a newline; print
+                # the consumed value so scripted transcripts read like a real
+                # terminal session instead of two prompts smashed together.
+                if not sys.stdin.isatty():
+                    print(response, file=sys.stdout, flush=True)
+                collected[name] = response
+                context.store.append_input(context.flow_id, name, response)
+                context.inputs[name] = response
 
         output = yaml.safe_dump(collected, sort_keys=False).strip()
         return ExecutionResult(

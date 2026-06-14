@@ -8,7 +8,21 @@ import pytest
 from flow_atelier.core.atelier import Atelier
 from flow_atelier.core.settings import AtelierSettings
 from flow_atelier.schemas.api import RunTaskInput
+from flow_atelier.schemas.log import LogEntry
 from flow_atelier.schemas.progress import FlowStatus
+
+
+def _entry(task: str, output: str) -> LogEntry:
+    """Build a minimal LogEntry for log-aggregation tests.
+
+    :param task: sub-task name.
+    :param output: captured output text.
+    """
+    return LogEntry(
+        task=task, tool="tool:bash", command="x", output=output, stdout=output,
+        exit_code=0,
+        started_at="2026-04-12T10:00:00Z", finished_at="2026-04-12T10:00:00Z",
+    )
 
 
 @pytest.fixture
@@ -133,6 +147,27 @@ async def test_get_logs_returns_child_entries(atelier, tmp_path):
     logs = atelier.get_flow_logs(result.flow_id)
     # The parent flow has at least one entry
     assert any("parent-output" in (e.stdout or "") for e in logs)
+
+
+async def test_get_logs_aggregates_grandchild_entries(atelier):
+    """Logs from a grandchild (2 levels down) appear in the parent's logs,
+    tagged with the grandchild's flow id.
+
+    :param atelier: Atelier facade fixture.
+    """
+    store = atelier.store
+    parent = store.create_flow("hello", {})
+    child = store.create_flow("hello", {}, parent_flow_id=parent)
+    grandchild = store.create_flow("hello", {}, parent_flow_id=child)
+    await store.append_log(parent, _entry("p", "parent-out"))
+    await store.append_log(child, _entry("c", "child-out"))
+    await store.append_log(grandchild, _entry("g", "grandchild-out"))
+
+    logs = atelier.get_flow_logs(parent)
+    outputs = {e.output for e in logs}
+    assert {"parent-out", "child-out", "grandchild-out"} <= outputs
+    gc = [e for e in logs if e.output == "grandchild-out"]
+    assert gc and gc[0].extra["flow_id"] == grandchild
 
 
 async def test_get_logs_does_not_mutate_entries(atelier, tmp_path):

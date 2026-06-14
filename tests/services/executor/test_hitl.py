@@ -1,4 +1,5 @@
 """HitlExecutor tests."""
+import asyncio
 import builtins
 
 import pytest
@@ -94,3 +95,53 @@ async def test_hitl_overwrite_collision(store, monkeypatch):
     data = yaml.safe_load((store._flow_dir(flow_id) / "input.yaml").read_text())
     assert data["confirm"] == "new"
     assert ctx.inputs["confirm"] == "new"
+
+
+async def test_concurrent_hitl_prompts_do_not_interleave(store, monkeypatch):
+    """Two HITL tasks launched concurrently must not interleave their stdin
+    prompts: the second session may only begin after the first fully ends.
+
+    :param store: filesystem store fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    events: list[str] = []
+
+    async def fake_multiline_input(prompt: str, hint: str = "") -> str:
+        """Record prompt entry/exit keyed by the task tag in the prompt.
+
+        :param prompt: prompt string (carries the input's name).
+        :param hint: ignored submit hint.
+        """
+        tag = prompt.strip().split("_", 1)[0]
+        events.append(f"{tag}:enter")
+        await asyncio.sleep(0)  # yield: let the other coroutine run if it can
+        events.append(f"{tag}:exit")
+        return "x"
+
+    monkeypatch.setattr(
+        "flow_atelier.cli.rendering.multiline_input.multiline_input",
+        fake_multiline_input,
+    )
+
+    def _hitl_task(tag: str) -> TaskDefinition:
+        return TaskDefinition(
+            name=f"ask_{tag}", description="d", task="", tool=ToolType.hitl,
+            depends_on=[], inputs={f"{tag}_a": "d", f"{tag}_b": "d"},
+        )
+
+    fid1 = store.create_flow("hello", {})
+    fid2 = store.create_flow("hello", {})
+    ctx1 = FlowContext(flow_id=fid1, store=store, inputs={})
+    ctx2 = FlowContext(flow_id=fid2, store=store, inputs={})
+
+    await asyncio.gather(
+        HitlExecutor().execute(_hitl_task("t1"), "", ctx1),
+        HitlExecutor().execute(_hitl_task("t2"), "", ctx2),
+    )
+
+    # Each task owns the terminal for its whole session: one task's four
+    # events must be contiguous, not split by the other's.
+    first_tag = events[0].split(":", 1)[0]
+    boundary = next(i for i, e in enumerate(events) if not e.startswith(first_tag))
+    assert all(e.startswith(first_tag) for e in events[:boundary])
+    assert all(not e.startswith(first_tag) for e in events[boundary:])

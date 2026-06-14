@@ -297,11 +297,14 @@ class Atelier:
 
         :param payload: validated :class:`CreateConduitInput`
         :returns: the persisted :class:`Conduit`
-        :raises FileExistsError: if a project conduit with that name exists
+        :raises FileExistsError: if a conduit with that name already exists
+            in the project or global store
         """
-        existing = self.store.base_dir / "conduits" / payload.name
-        if existing.exists():
+        try:
+            self.store.conduit_source(payload.name)
             raise FileExistsError(f"conduit already exists: {payload.name}")
+        except FileNotFoundError:
+            pass
         conduit = Conduit.model_validate(payload.model_dump())
         self.store.write_conduit(conduit)
         return conduit
@@ -315,6 +318,7 @@ class Atelier:
         :param payload: subset of fields to overwrite
         :returns: the updated :class:`Conduit`
         :raises FileNotFoundError: if the conduit doesn't exist
+        :raises FileExistsError: if the update renames to a name already taken
         """
         existing = self.store.read_conduit(name)
         merged = existing.model_dump()
@@ -322,6 +326,13 @@ class Atelier:
             merged[key] = value
         merged["name"] = merged.get("name") or name
         updated = Conduit.model_validate(merged)
+        if updated.name != name:
+            # Rename: refuse to clobber an existing conduit at the target name.
+            try:
+                self.store.conduit_source(updated.name)
+                raise FileExistsError(f"conduit already exists: {updated.name}")
+            except FileNotFoundError:
+                pass
         self.store.write_conduit(updated)
         if updated.name != name:
             # Rename: drop the old folder.
@@ -447,10 +458,12 @@ class Atelier:
         return out
 
     def get_flow_logs(self, flow_id: str) -> list[LogEntry]:
-        """Return the log entries for ``flow_id`` including child flow logs.
+        """Return the log entries for ``flow_id`` including all descendant logs.
 
-        Child flow entries are tagged with ``extra["flow_id"]`` so callers
-        can distinguish their origin.
+        Descendant flow entries are tagged with ``extra["flow_id"]`` so callers
+        can distinguish their origin. Aggregation recurses depth-first, so a
+        ``tool:conduit`` whose child itself nests a conduit contributes its
+        grandchildren's logs too.
 
         :param flow_id: flow identifier
         :returns: list of :class:`LogEntry` (empty if the file is empty)
@@ -460,15 +473,24 @@ class Atelier:
         self.store._flow_dir(flow_id)
         logs = self.store.read_logs(flow_id)
         for child_id in self.store.list_child_flows(flow_id):
-            child_logs = self.store.read_logs(child_id)
-            tagged = [
-                entry.model_copy(
-                    update={"extra": {**(entry.extra or {}), "flow_id": child_id}}
-                )
-                for entry in child_logs
-            ]
-            logs.extend(tagged)
+            logs.extend(self._descendant_logs(child_id))
         return logs
+
+    def _descendant_logs(self, flow_id: str) -> list[LogEntry]:
+        """Return ``flow_id``'s logs plus all descendants', tagged by origin.
+
+        :param flow_id: flow identifier whose own and descendant logs to gather
+        :returns: log entries tagged with ``extra["flow_id"]`` of their flow
+        """
+        entries = [
+            entry.model_copy(
+                update={"extra": {**(entry.extra or {}), "flow_id": flow_id}}
+            )
+            for entry in self.store.read_logs(flow_id)
+        ]
+        for child_id in self.store.list_child_flows(flow_id):
+            entries.extend(self._descendant_logs(child_id))
+        return entries
 
     def _known_run_paths(self) -> set[Path]:
         """Return the resolved ``run_path`` of every known flow.

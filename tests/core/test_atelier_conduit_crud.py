@@ -103,6 +103,34 @@ def test_update_conduit_unknown_raises_not_found(atelier):
         )
 
 
+def test_update_conduit_rename_to_existing_is_rejected(atelier):
+    """Renaming a conduit onto an existing name must not clobber it.
+
+    :param atelier: Atelier facade fixture.
+    """
+    atelier.create_conduit(_payload(name="conduit_a", description="A"))
+    atelier.create_conduit(_payload(name="conduit_b", description="B"))
+    with pytest.raises(FileExistsError):
+        atelier.update_conduit(
+            "conduit_a", UpdateConduitInput(name="conduit_b")
+        )
+    # B is untouched and A still exists.
+    assert atelier.store.read_conduit("conduit_b").description == "B"
+    assert sorted(atelier.list_conduits()) == ["conduit_a", "conduit_b"]
+
+
+def test_create_conduit_rejects_global_shadow(atelier):
+    """Creating a project conduit whose name exists only globally is refused.
+
+    :param atelier: Atelier facade fixture.
+    """
+    conduit = atelier.create_conduit(_payload(name="shared"))
+    atelier.store.write_conduit_global(conduit)
+    atelier.delete_conduit("shared")  # leave it only in the global store
+    with pytest.raises(FileExistsError):
+        atelier.create_conduit(_payload(name="shared"))
+
+
 # ----------------------------------------------------------- delete
 
 

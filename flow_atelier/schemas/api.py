@@ -57,7 +57,11 @@ class OpenPathOutput(BaseModel):
 
 
 class FlowLogsOutput(BaseModel):
-    """Response shape for ``GET /flows/:flow_id/logs``."""
+    """Response shape for ``GET /flows/:flow_id/logs``.
+
+    ``logs`` spans the flow and all of its descendants (each entry tagged with
+    ``extra["flow_id"]``); ``children`` lists only the flow's direct children.
+    """
 
     run_path: str | None = None
     logs: list[LogEntry] = Field(default_factory=list)
