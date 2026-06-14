@@ -71,6 +71,7 @@ from flow_atelier.cli.commands import (  # noqa: E402, F401
     check,
     init,
     logs,
+    outputs,
     rm,
     run,
     schedule,

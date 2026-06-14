@@ -443,6 +443,80 @@ def test_logs_json(workdir):
     assert "alpha-output" in alpha["output"]
 
 
+# ---------------------------------------------------------------- outputs cmd
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
+def test_outputs_human(workdir):
+    """Verify `outputs` prints each task's saved result.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    flow_id = _run_and_id(runner, "hello", "--input", "name=a")
+    result = runner.invoke(app, ["outputs", flow_id])
+    assert result.exit_code == 0, result.output
+    assert "greet" in result.output
+    assert "hello a" in result.output
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
+def test_outputs_json(workdir):
+    """Verify `outputs --json` returns the per-task result map.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_multi(workdir)
+    runner = CliRunner()
+    flow_id = _run_and_id(runner, "multi")
+    result = runner.invoke(app, ["outputs", flow_id, "--json"])
+    assert result.exit_code == 0, result.output
+    data = _json.loads(result.output)
+    assert isinstance(data, dict)
+    assert "alpha-output" in data["alpha"]
+    assert "beta-output" in data["beta"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
+def test_outputs_single_task(workdir):
+    """Verify `outputs --task` prints only the named task's raw output.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_multi(workdir)
+    runner = CliRunner()
+    flow_id = _run_and_id(runner, "multi")
+    result = runner.invoke(app, ["outputs", flow_id, "--task", "alpha"])
+    assert result.exit_code == 0, result.output
+    assert "alpha-output" in result.output
+    assert "beta-output" not in result.output
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
+def test_outputs_unknown_task(workdir):
+    """Verify `outputs --task` errors on an unknown task name.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_multi(workdir)
+    runner = CliRunner()
+    flow_id = _run_and_id(runner, "multi")
+    result = runner.invoke(app, ["outputs", flow_id, "--task", "nope"])
+    assert result.exit_code != 0
+    assert "unknown task" in result.output
+
+
+def test_outputs_unknown_flow(workdir):
+    """Verify `outputs` errors on an unknown flow id.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    result = runner.invoke(app, ["outputs", "no_such_flow"])
+    assert result.exit_code != 0
+    assert "unknown flow" in result.output
+
+
 # ---------------------------------------------------------------- --follow
 
 

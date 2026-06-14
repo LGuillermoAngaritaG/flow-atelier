@@ -257,6 +257,16 @@ class Atelier:
         """
         return self.store.read_progress(flow_id)
 
+    def get_outputs(self, flow_id: str) -> dict[str, Any]:
+        """Return the per-task results saved to ``outputs.yaml`` for ``flow_id``.
+
+        :param flow_id: flow identifier
+        :returns: mapping of task name to output value; ``{}`` if no
+            ``outputs.yaml`` has been written yet (flow still running or it
+            failed before any task completed)
+        """
+        return self.store.read_outputs(flow_id)
+
     def list_conduits(self) -> list[str]:
         """List all available conduit names.
 
