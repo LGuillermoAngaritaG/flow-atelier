@@ -37,3 +37,5 @@ class Progress(BaseModel):
     finished_at: str | None = None
     runner_pid: int | None = None
     runner_host: str | None = None
+    run_path: str | None = None
+    invoking_task: str | None = None

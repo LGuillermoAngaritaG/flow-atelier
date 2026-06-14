@@ -225,6 +225,15 @@ class Atelier:
         runner on another host can't be probed, so a cross-machine
         still-running flow could still be double-run.
 
+        Resume is at-least-once: an iteration's log entry is written before its
+        completion/output is persisted, so an iteration that finished but whose
+        completion was killed before being saved will execute again on resume.
+        This is mostly harmless, but for a paid AI-agent task it can re-spend
+        tokens on work that was already done. Recovering loop context also
+        re-reads and re-parses the full log file once per resume, a cost that
+        grows with long, repeatedly-resumed runs (folded into the retention/
+        pruning work rather than fixed here).
+
         :param flow_id: flow id of the prior failed/crashed run to resume
         :param on_task_event: optional task-event callback forwarded to the engine
         :param on_flow_started: optional flow-started callback
@@ -249,10 +258,8 @@ class Atelier:
         conduit_name, _, _ = parse_flow_id(flow_id)
         conduit = self.store.read_conduit(conduit_name)
         inputs = self.store.read_input(flow_id)
-        if working_dir is None:
-            stored_run_path = inputs.get("run_path")
-            if stored_run_path:
-                working_dir = stored_run_path
+        if working_dir is None and prior.run_path:
+            working_dir = prior.run_path
         wd = Path(working_dir) if working_dir is not None else None
         return await self.engine.run(
             conduit,
@@ -283,8 +290,10 @@ class Atelier:
         allocates a fresh flow id and re-executes the whole conduit from the
         top. There is no status gate, so a ``completed`` flow can be repeated.
         The source flow's persisted ``input.yaml`` is reused verbatim; keys in
-        ``overrides`` win, letting the caller vary one input (e.g. ``run_path``)
-        while keeping the rest.
+        ``overrides`` win, letting the caller vary individual inputs while
+        keeping the rest. The working directory is not an input; it comes from
+        the ``working_dir`` argument, falling back to the source flow's recorded
+        ``run_path`` when omitted.
 
         :param flow_id: flow id of the prior run whose inputs to reuse
         :param overrides: per-key input overrides applied on top of the stored
@@ -294,7 +303,7 @@ class Atelier:
         :param on_task_starting: optional task-starting callback
         :param show_steps: stream intermediate harness steps
         :param working_dir: working directory for task execution; when ``None``,
-            falls back to the stored ``run_path`` input
+            falls back to the source flow's recorded ``run_path``
         :param stoppable: install a SIGTERM stop handler for this run (the
             ``atelier stop`` path); only the foreground CLI sets this.
         :returns: the newly created flow id (distinct from ``flow_id``)
@@ -304,7 +313,7 @@ class Atelier:
         conduit = self.store.read_conduit(conduit_name)
         inputs = {**self.store.read_input(flow_id), **(overrides or {})}
         if working_dir is None:
-            stored_run_path = inputs.get("run_path")
+            stored_run_path = self.store.read_progress(flow_id).run_path
             if stored_run_path:
                 working_dir = stored_run_path
         wd = Path(working_dir) if working_dir is not None else None
@@ -557,12 +566,12 @@ class Atelier:
     def _known_run_paths(self) -> set[Path]:
         """Return the resolved ``run_path`` of every known flow.
 
-        :returns: set of resolved run-path directories recorded in flow inputs.
+        :returns: set of resolved run-path directories recorded on flow progress.
         """
         known: set[Path] = set()
         for flow_id in self.store.list_flows():
             try:
-                rp = self.store.read_input(flow_id).get("run_path")
+                rp = self.store.read_progress(flow_id).run_path
             except (FileNotFoundError, ValueError):
                 continue
             if rp:

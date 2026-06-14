@@ -87,7 +87,8 @@ async def test_rerun_overrides_win_and_preserve_untouched(atelier, tmp_path):
     )
     inputs = atelier.store.read_input(new_id)
     assert inputs.get("msg") == "two"
-    assert inputs.get("run_path") == str(tmp_path)
+    assert "run_path" not in inputs
+    assert atelier.store.read_progress(new_id).run_path == str(tmp_path)
 
 
 async def test_rerun_carries_stored_run_path_into_working_dir(atelier, tmp_path):
@@ -99,7 +100,7 @@ async def test_rerun_carries_stored_run_path_into_working_dir(atelier, tmp_path)
     _seed_conduit(atelier)
     src = await atelier.run_conduit("hello", {"msg": "one"}, working_dir=tmp_path)
     new_id = await atelier.rerun_flow(src)
-    assert atelier.store.read_input(new_id).get("run_path") == str(tmp_path)
+    assert atelier.store.read_progress(new_id).run_path == str(tmp_path)
 
 
 async def test_rerun_unknown_flow_raises(atelier):

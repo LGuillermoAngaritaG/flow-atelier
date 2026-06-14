@@ -161,8 +161,9 @@ async def test_resume_flow_reuses_stored_run_path(atelier, tmp_path):
             run_path=str(tmp_path),
         )
     )
-    inputs = atelier.store.read_input(result.flow_id)
-    assert inputs.get("run_path") == str(tmp_path)
+    # run_path is engine bookkeeping on progress, not a user input.
+    assert "run_path" not in atelier.store.read_input(result.flow_id)
+    assert atelier.store.read_progress(result.flow_id).run_path == str(tmp_path)
 
 
 # ---------------------------------------------------------------- _resolve_flow_id

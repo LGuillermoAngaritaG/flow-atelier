@@ -511,7 +511,8 @@ class FilesystemStore(StoreBase):
         path = self._flow_dir(flow_id) / "input.yaml"
         if not path.exists():
             return {}
-        return yaml.safe_load(path.read_text()) or {}
+        loaded = yaml.safe_load(path.read_text())
+        return loaded if isinstance(loaded, dict) else {}
 
     def append_input(self, flow_id: str, key: str, value: Any) -> None:
         """Set ``key=value`` in the flow's ``input.yaml``.

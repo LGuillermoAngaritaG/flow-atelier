@@ -223,7 +223,10 @@ async def test_open_path_invokes_opener(client, monkeypatch, tmp_path):
     atelier = client._transport.app.state.atelier
     run_path = tmp_path / "runs"
     run_path.mkdir()
-    atelier.store.create_flow("release_notes", {"run_path": str(run_path)})
+    _fid = atelier.store.create_flow("release_notes", {})
+    _progress = atelier.store.read_progress(_fid)
+    _progress.run_path = str(run_path)
+    atelier.store.write_progress(_fid, _progress)
     calls = []
 
     class _FakeProc:

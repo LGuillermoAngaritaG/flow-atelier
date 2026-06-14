@@ -36,7 +36,7 @@ async def get_flow_logs(
         raise HTTPException(status_code=404, detail=str(e)) from e
     children = atelier.store.list_child_flows(flow_id)
     return FlowLogsOutput(
-        run_path=atelier.store.read_input(flow_id).get("run_path"),
+        run_path=atelier.store.read_progress(flow_id).run_path,
         logs=logs,
         children=children,
     )

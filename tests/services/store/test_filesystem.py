@@ -201,6 +201,17 @@ def test_append_input_overwrites(store):
     assert data == {"existing": "changed", "new": "added"}
 
 
+def test_read_input_returns_empty_for_non_mapping(store):
+    """A non-map input.yaml (bare list/scalar) degrades to {} rather than
+    handing the engine a value it would mis-merge as inputs.
+
+    :param store: FilesystemStore fixture.
+    """
+    fid = store.create_flow("hello", {})
+    (store._flow_dir(fid) / "input.yaml").write_text("- just\n- a\n- list\n")
+    assert store.read_input(fid) == {}
+
+
 def test_flow_dir_resolves_top_level_without_scan(store, monkeypatch):
     """A fresh store instance must resolve top-level flow dirs from the
     deterministic path, never via the recursive rglob fallback.
