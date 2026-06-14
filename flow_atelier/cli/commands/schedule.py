@@ -70,13 +70,18 @@ def schedule_add_cmd(
 
     :param file: path to a schedule JSON or YAML file to install.
     """
-    store = _schedule_store()
     try:
         payload = _load_schedule_payload(file)
     except Exception as e:  # noqa: BLE001
         console.print(f"[red]invalid schedule:[/red] {e}")
         raise typer.Exit(code=1)
-    job = store.create(payload)
+    # Route through the facade so conduit_name is validated against the store
+    # (a typo'd conduit otherwise installs cleanly and only fails at fire time).
+    try:
+        job = Atelier().create_schedule(payload)
+    except (ValueError, FileExistsError) as e:
+        console.print(f"[red]invalid schedule:[/red] {e}")
+        raise typer.Exit(code=1)
     console.print(f"[green]installed[/green] {job.id}")
 
 

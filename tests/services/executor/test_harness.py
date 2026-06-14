@@ -1,8 +1,10 @@
 """HarnessExecutor unit tests using the fake ACP agent fixture."""
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -766,3 +768,91 @@ class TestLastTurnOutput:
         assert result.exit_code == 0
         assert result.last_turn_output is None
         assert "hi" in result.output
+
+
+class TestDrainPendingNotifications:
+    async def test_drain_awaits_queued_and_inflight_handlers(self) -> None:
+        """The drain must wait for every queued notification's handler to
+        finish — including handlers that only append after a scheduling
+        gap — so no streamed chunk is dropped from the buffered output.
+
+        Uses the real ACP dispatcher (queue -> supervisor.create(handler))
+        with slow handlers; a buffer-stability poll would sample the empty
+        buffer and return early, while the deterministic drain guarantees
+        every handler has completed before it returns.
+        """
+        from acp.task import (
+            DefaultMessageDispatcher,
+            InMemoryMessageQueue,
+            InMemoryMessageStateStore,
+            RpcTask,
+            RpcTaskKind,
+            TaskSupervisor,
+        )
+
+        queue = InMemoryMessageQueue()
+        supervisor = TaskSupervisor(source="test")
+        store = InMemoryMessageStateStore()
+        buffer: list[str] = []
+
+        async def notification_runner(message: dict[str, Any]) -> None:
+            # Append only after a scheduling gap: a 20ms stability poll
+            # would have already given up by the time this lands.
+            await asyncio.sleep(0.05)
+            buffer.append(message["params"]["text"])
+
+        async def request_runner(message: dict[str, Any]) -> Any:
+            return None
+
+        dispatcher = DefaultMessageDispatcher(
+            queue=queue,
+            supervisor=supervisor,
+            store=store,
+            request_runner=request_runner,
+            notification_runner=notification_runner,
+        )
+        dispatcher.start()
+        try:
+            for i in range(5):
+                await queue.publish(
+                    RpcTask(
+                        RpcTaskKind.NOTIFICATION,
+                        {"method": "session/update", "params": {"text": f"c{i}"}},
+                    )
+                )
+            conn = types.SimpleNamespace(
+                _conn=types.SimpleNamespace(_queue=queue, _tasks=supervisor)
+            )
+            await AcpHarnessExecutor._drain_pending_notifications(conn)
+            assert buffer == ["c0", "c1", "c2", "c3", "c4"]
+        finally:
+            await dispatcher.stop()
+            await supervisor.shutdown()
+
+    async def test_drain_noop_when_connection_shape_missing(self) -> None:
+        """Drain degrades to a no-op if the ACP internals aren't present,
+        rather than raising."""
+        conn = types.SimpleNamespace()  # no _conn
+        await AcpHarnessExecutor._drain_pending_notifications(conn)
+
+
+def test_is_available_true_when_binary_on_path(monkeypatch) -> None:
+    """is_available returns (True, "") when the launch binary resolves."""
+    monkeypatch.setattr(
+        "flow_atelier.services.executor.harness.shutil.which",
+        lambda _binary: "/usr/bin/npx",
+    )
+    executor = AcpHarnessExecutor(launch_cmd=["npx", "-y", "pkg"])
+    assert executor.is_available() == (True, "")
+
+
+def test_is_available_false_when_binary_missing(monkeypatch) -> None:
+    """is_available returns (False, reason) naming the missing binary."""
+    monkeypatch.setattr(
+        "flow_atelier.services.executor.harness.shutil.which",
+        lambda _binary: None,
+    )
+    executor = AcpHarnessExecutor(launch_cmd=["npx", "-y", "pkg"])
+    ok, reason = executor.is_available()
+    assert ok is False
+    assert "npx" in reason

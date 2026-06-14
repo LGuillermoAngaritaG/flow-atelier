@@ -5,11 +5,16 @@ from typing import Any
 import pytest
 import yaml
 
-from flow_atelier.modules.engine import ConduitValidationError, Engine
+from flow_atelier.modules.engine import (
+    ConduitValidationError,
+    Engine,
+    validate_conduit,
+)
 from flow_atelier.schemas.conduit import Conduit
 from flow_atelier.schemas.log import ExecutionResult
 from flow_atelier.schemas.progress import FlowStatus, TaskStatus
 from flow_atelier.services.executor.base import ExecutorBase
+from flow_atelier.services.executor.conduit import ConduitExecutor
 from flow_atelier.services.store.filesystem import FilesystemStore
 
 
@@ -464,6 +469,118 @@ async def test_validate_accepts_ref_via_conditional_dep(store):
     engine = Engine({"tool:bash": FakeExecutor()}, store)
     flow_id = await engine.run(conduit, {})
     assert store.read_progress(flow_id).status == FlowStatus.completed
+
+
+def test_validate_rejects_unrecognized_expression():
+    """A {{...}} matching none of the grammar forms is rejected at author time."""
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "use {{inputs}}",
+             "tool": "tool:bash", "depends_on": []},
+        ]
+    )
+    with pytest.raises(
+        ConduitValidationError,
+        match=r"task 'a' has an unrecognized template expression \{\{inputs\}\}",
+    ):
+        validate_conduit(conduit)
+
+
+def test_validate_rejects_misspelled_output():
+    """A misspelled `.output` ({{x.outpt}}) is unrecognized and rejected."""
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "use {{job.outpt}}",
+             "tool": "tool:bash", "depends_on": []},
+        ]
+    )
+    with pytest.raises(
+        ConduitValidationError, match=r"unrecognized template expression"
+    ):
+        validate_conduit(conduit)
+
+
+def test_validate_rejects_loop_ref_in_non_looping_task():
+    """{{loop.previous}}/{{loop.history}} in a repeat==1 task is rejected."""
+    for expr in ("loop.previous", "loop.history"):
+        conduit = _conduit(
+            [
+                {"name": "a", "description": "d", "task": f"use {{{{{expr}}}}}",
+                 "tool": "tool:bash", "depends_on": []},
+            ]
+        )
+        with pytest.raises(
+            ConduitValidationError, match=r"does not loop \(repeat is 1\)"
+        ):
+            validate_conduit(conduit)
+
+
+def test_validate_accepts_loop_ref_in_looping_task():
+    """{{loop.*}} is valid when the task actually loops (repeat > 1)."""
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "use {{loop.previous}}",
+             "tool": "tool:bash", "depends_on": [], "repeat": 3},
+        ]
+    )
+    validate_conduit(conduit)  # must not raise
+
+
+def test_validate_scans_conduit_input_unknown_task():
+    """A tool:conduit task's inputs value referencing an unknown task fails."""
+    conduit = _conduit(
+        [
+            {"name": "caller", "description": "d", "task": "child",
+             "tool": "tool:conduit", "depends_on": [],
+             "inputs": {"p": "{{ghost.output}}"}},
+        ]
+    )
+    with pytest.raises(
+        ConduitValidationError, match="references unknown task 'ghost'"
+    ):
+        validate_conduit(conduit)
+
+
+def test_validate_scans_conduit_input_out_of_deps():
+    """A tool:conduit inputs ref to a task outside its deps chain fails."""
+    conduit = _conduit(
+        [
+            {"name": "producer", "description": "d", "task": "x",
+             "tool": "tool:bash", "depends_on": []},
+            {"name": "caller", "description": "d", "task": "child",
+             "tool": "tool:conduit", "depends_on": [],
+             "inputs": {"p": "{{producer.output}}"}},
+        ]
+    )
+    with pytest.raises(
+        ConduitValidationError, match="not in its depends_on chain"
+    ):
+        validate_conduit(conduit)
+
+
+def test_validate_accepts_conduit_input_ref_in_deps():
+    """A tool:conduit inputs ref to an in-chain dependency is valid."""
+    conduit = _conduit(
+        [
+            {"name": "producer", "description": "d", "task": "x",
+             "tool": "tool:bash", "depends_on": []},
+            {"name": "caller", "description": "d", "task": "child",
+             "tool": "tool:conduit", "depends_on": ["producer"],
+             "inputs": {"p": "{{producer.output}}"}},
+        ]
+    )
+    validate_conduit(conduit)  # must not raise
+
+
+def test_validate_does_not_require_inputs_declared():
+    """Regression: {{inputs.x}} need not be declared (supplied at run time)."""
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "use {{inputs.undeclared}}",
+             "tool": "tool:bash", "depends_on": []},
+        ]
+    )
+    validate_conduit(conduit)  # must not raise
 
 
 async def test_mid_loop_template_error_marks_task_failed(store):
@@ -1435,3 +1552,362 @@ async def test_backstop_timeout_still_kills_non_hitl(store, monkeypatch):
     assert p.status == FlowStatus.failed
     logs = store.read_logs(captured["id"])
     assert logs[-1].exit_code == 124
+
+
+async def test_per_task_timeout_override_kills_early(store, monkeypatch):
+    """A per-task timeout supersedes the larger conduit ceiling for that task.
+
+    :param store: FilesystemStore fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    import flow_atelier.modules.engine as engine_mod
+
+    monkeypatch.setattr(engine_mod, "BACKSTOP_GRACE_SECONDS", 0)
+
+    class IgnoresTimeout(ExecutorBase):
+        async def execute(self, task, resolved_command, context):
+            await asyncio.sleep(1.3)
+            return ExecutionResult(exit_code=0, output="ok", stdout="ok")
+
+    # Conduit ceiling is huge (30s); the task's own 1s override drives the kill.
+    conduit = _conduit(
+        [
+            {"name": "slow", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "timeout": 1},
+        ],
+        timeout=30,
+    )
+    engine = Engine({"tool:bash": IgnoresTimeout()}, store)
+    captured: dict[str, str] = {}
+    with pytest.raises(RuntimeError, match="exit=124"):
+        await engine.run(
+            conduit, {}, on_flow_started=lambda fid: captured.update(id=fid)
+        )
+    logs = store.read_logs(captured["id"])
+    assert logs[-1].exit_code == 124
+    assert "engine timeout after 1s" in logs[-1].stderr
+
+
+async def test_effective_timeout_override_vs_inheritance(store):
+    """ctx.timeout reflects a task's override when set, else the conduit value.
+
+    :param store: FilesystemStore fixture.
+    """
+    seen: dict[str, int] = {}
+
+    class CaptureTimeout(ExecutorBase):
+        async def execute(self, task, resolved_command, context):
+            seen[task.name] = context.timeout
+            return ExecutionResult(exit_code=0, output="ok", stdout="ok")
+
+    conduit = _conduit(
+        [
+            {"name": "over", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "timeout": 7},
+            {"name": "inherit", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": []},
+        ],
+        timeout=42,
+    )
+    engine = Engine({"tool:bash": CaptureTimeout()}, store)
+    flow_id = await engine.run(conduit, {})
+    assert store.read_progress(flow_id).status == FlowStatus.completed
+    assert seen["over"] == 7
+    assert seen["inherit"] == 42
+
+
+async def test_hitl_ignores_configured_timeout(store, monkeypatch):
+    """A configured timeout on a hitl task is ignored — it stays unbounded.
+
+    :param store: FilesystemStore fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    import flow_atelier.modules.engine as engine_mod
+
+    monkeypatch.setattr(engine_mod, "BACKSTOP_GRACE_SECONDS", 0)
+
+    class SlowHitl(ExecutorBase):
+        async def execute(self, task, resolved_command, context):
+            await asyncio.sleep(1.3)
+            return ExecutionResult(exit_code=0, output="ok", stdout="ok")
+
+    conduit = _conduit(
+        [
+            {"name": "ask", "description": "d", "task": "x", "tool": "tool:hitl",
+             "depends_on": [], "timeout": 1},
+        ],
+        timeout=30,
+    )
+    engine = Engine({"tool:hitl": SlowHitl()}, store)
+    flow_id = await engine.run(conduit, {})
+    p = store.read_progress(flow_id)
+    assert p.status == FlowStatus.completed
+    assert p.tasks["ask"].status == TaskStatus.completed
+
+
+# --------------------------------------------------------------- nested cycle guard
+
+
+def _named_conduit(name, tasks):
+    """Build a Conduit with an explicit name (the _conduit helper hardcodes one).
+
+    :param name: conduit name.
+    :param tasks: list of task dicts each containing a ``name`` and task fields.
+    """
+    return Conduit.model_validate(
+        {
+            "name": name,
+            "description": "d",
+            "tasks": [
+                {t["name"]: {k: v for k, v in t.items() if k != "name"}}
+                for t in tasks
+            ],
+        }
+    )
+
+
+def _count_progress_files(store):
+    """Return how many flow ``progress.json`` files exist under the store.
+
+    :param store: FilesystemStore fixture.
+    """
+    return len(list((store.base_dir / "flows").rglob("progress.json")))
+
+
+async def test_nested_conduit_self_cycle_fails_fast(store):
+    """A conduit whose tool:conduit task targets itself fails with a cycle
+    error and creates no nested flow (only the top-level flow exists).
+
+    :param store: FilesystemStore fixture.
+    """
+    a = _named_conduit(
+        "selfcyc",
+        [{"name": "again", "description": "d", "task": "selfcyc",
+          "tool": "tool:conduit"}],
+    )
+    store.write_conduit(a)
+    engine = Engine({"tool:conduit": ConduitExecutor()}, store)
+    with pytest.raises(Exception) as ei:  # noqa: PT011
+        await engine.run(a, {})
+    assert "cycle" in str(ei.value).lower()
+    # Only the top-level flow's progress was written; the cycle is caught
+    # before any nested flow dir is created.
+    assert _count_progress_files(store) == 1
+
+
+async def test_nested_conduit_mutual_cycle_fails_fast(store):
+    """A -> B -> A mutual recursion is caught and bounded.
+
+    :param store: FilesystemStore fixture.
+    """
+    a = _named_conduit(
+        "muta",
+        [{"name": "callb", "description": "d", "task": "mutb",
+          "tool": "tool:conduit"}],
+    )
+    b = _named_conduit(
+        "mutb",
+        [{"name": "calla", "description": "d", "task": "muta",
+          "tool": "tool:conduit"}],
+    )
+    store.write_conduit(a)
+    store.write_conduit(b)
+    engine = Engine({"tool:conduit": ConduitExecutor()}, store)
+    with pytest.raises(Exception) as ei:  # noqa: PT011
+        await engine.run(a, {})
+    assert "cycle" in str(ei.value).lower()
+    # A and B each created one flow; the re-entry into A is rejected before
+    # a third flow dir is created.
+    assert _count_progress_files(store) == 2
+
+
+async def test_nested_conduit_legitimate_chain_completes(store):
+    """A legitimate A -> B (B has a non-conduit leaf task) still completes.
+
+    :param store: FilesystemStore fixture.
+    """
+    a = _named_conduit(
+        "parent",
+        [{"name": "callchild", "description": "d", "task": "child",
+          "tool": "tool:conduit"}],
+    )
+    b = _named_conduit(
+        "child",
+        [{"name": "leaf", "description": "d", "task": "echo hi",
+          "tool": "tool:bash"}],
+    )
+    store.write_conduit(a)
+    store.write_conduit(b)
+    engine = Engine(
+        {"tool:conduit": ConduitExecutor(), "tool:bash": FakeExecutor()}, store
+    )
+    flow_id = await engine.run(a, {})
+    p = store.read_progress(flow_id)
+    assert p.status == FlowStatus.completed
+
+
+def test_validate_rejects_literal_conduit_traversal_target():
+    """A literal tool:conduit target with path separators fails validation."""
+    c = _conduit(
+        [{"name": "n", "description": "d", "task": "../evil",
+          "tool": "tool:conduit"}]
+    )
+    with pytest.raises(ConduitValidationError):
+        validate_conduit(c)
+
+
+def test_validate_allows_templated_conduit_target():
+    """A templated tool:conduit target is deferred to runtime, not rejected."""
+    c = _conduit(
+        [
+            {"name": "pick", "description": "d", "task": "echo", "tool": "tool:bash"},
+            {"name": "n", "description": "d", "task": "{{pick.output}}",
+             "tool": "tool:conduit", "depends_on": ["pick"]},
+        ]
+    )
+    validate_conduit(c)  # must not raise
+
+
+# ---------------------------------------------------------------- retry on failure
+
+
+class FailNThenSucceed(FakeExecutor):
+    """Fail the first ``fail_times`` executions, then succeed."""
+
+    def __init__(self, fail_times: int):
+        """Initialize the executor with a budget of failing calls.
+
+        :param fail_times: number of leading executions that should fail.
+        """
+        super().__init__()
+        self.fail_times = fail_times
+
+    async def execute(self, task, resolved_command, context):
+        """Fail until ``fail_times`` is exhausted, then succeed.
+
+        :param task: task definition being executed.
+        :param resolved_command: command string after template resolution.
+        :param context: flow context provided by the engine.
+        """
+        self.calls.append(task.name)
+        if len(self.calls) <= self.fail_times:
+            return ExecutionResult(exit_code=1, stderr="boom")
+        return ExecutionResult(exit_code=0, output="ok")
+
+
+async def test_retry_succeeds_after_failures(store):
+    """A task that fails N times then succeeds completes when retries >= N.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "retries": 2},
+        ]
+    )
+    fake = FailNThenSucceed(fail_times=2)
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    p = store.read_progress(flow_id)
+    assert p.status == FlowStatus.completed
+    assert p.tasks["a"].status == TaskStatus.completed
+    assert fake.calls == ["a", "a", "a"]  # 2 failures + 1 success
+
+
+async def test_retry_exhausted_fails(store):
+    """A task that always fails trips fail-fast after 1 + retries attempts.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "retries": 2},
+        ]
+    )
+    fake = FakeExecutor(fail={"a"})
+    engine = Engine({"tool:bash": fake}, store)
+    with pytest.raises(RuntimeError):
+        await engine.run(conduit, {})
+    assert fake.calls == ["a", "a", "a"]  # exactly 3 attempts
+
+
+async def test_retry_logs_each_attempt(store):
+    """Every attempt is persisted as its own LogEntry with attempt metadata.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": [], "retries": 2},
+        ]
+    )
+    fake = FailNThenSucceed(fail_times=2)
+    engine = Engine({"tool:bash": fake}, store)
+    flow_id = await engine.run(conduit, {})
+    logs = [e for e in store.read_logs(flow_id) if e.task == "a"]
+    assert [e.exit_code for e in logs] == [1, 1, 0]
+    assert [e.extra["attempt"] for e in logs] == [1, 2, 3]
+    assert all(e.extra["of_attempts"] == 3 for e in logs)
+
+
+async def test_retries_zero_identical_to_current(store):
+    """retries: 0 fails after a single attempt, unchanged from today.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": []},
+        ]
+    )
+    fake = FakeExecutor(fail={"a"})
+    engine = Engine({"tool:bash": fake}, store)
+    with pytest.raises(RuntimeError):
+        await engine.run(conduit, {})
+    assert fake.calls == ["a"]  # exactly one call, no retry
+    # No retries configured: the persisted log entry must carry no attempt
+    # metadata, byte-for-byte identical to pre-retry behavior.
+    flow_id = store.list_flows()[0]
+    logs = [e for e in store.read_logs(flow_id) if e.task == "a"]
+    assert len(logs) == 1
+    assert logs[0].extra == {}
+
+
+async def test_hitl_not_retried(store):
+    """A tool:hitl task never auto-retries even when retries is set.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "ask", "description": "d", "task": "x", "tool": "tool:hitl",
+             "depends_on": [], "retries": 3},
+        ]
+    )
+    fake = FakeExecutor(fail={"ask"})
+    engine = Engine({"tool:hitl": fake}, store)
+    with pytest.raises(RuntimeError):
+        await engine.run(conduit, {})
+    assert fake.calls == ["ask"]  # one attempt only, retries ignored
+
+
+def test_negative_retries_rejected():
+    """Conduit validation rejects a negative retries value."""
+    with pytest.raises(Exception, match="retries"):  # noqa: PT011
+        _conduit(
+            [{"name": "a", "description": "d", "task": "x",
+              "tool": "tool:bash", "retries": -1}]
+        )
+
+
+def test_negative_retry_backoff_rejected():
+    """Conduit validation rejects a negative retry_backoff value."""
+    with pytest.raises(Exception, match="retry_backoff"):  # noqa: PT011
+        _conduit(
+            [{"name": "a", "description": "d", "task": "x",
+              "tool": "tool:bash", "retry_backoff": -1}]
+        )

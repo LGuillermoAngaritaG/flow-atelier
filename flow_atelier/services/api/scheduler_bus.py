@@ -25,9 +25,15 @@ class SchedulerEventBus:
     subscriber whose send raises (treated as a disconnect).
     """
 
-    def __init__(self) -> None:
-        """Initialise with an empty subscriber set."""
+    def __init__(self, send_timeout: float = 5.0) -> None:
+        """Initialise with an empty subscriber set.
+
+        :param send_timeout: max seconds to wait on a subscriber's send before
+            treating it as a disconnect; bounds head-of-line blocking on the
+            scheduler fire path so one stuck client can't pace dispatch.
+        """
         self._subscribers: set[SendCallable] = set()
+        self._send_timeout = send_timeout
 
     def subscribe(self, send: SendCallable) -> None:
         """Register ``send`` as a subscriber. Idempotent.
@@ -63,19 +69,22 @@ class SchedulerEventBus:
             if not ok:
                 self._subscribers.discard(sub)
 
-    @staticmethod
-    async def _safe_send(send: SendCallable, envelope: dict[str, Any]) -> bool:
-        """Invoke ``send`` and return True on success, False on any raise.
+    async def _safe_send(self, send: SendCallable, envelope: dict[str, Any]) -> bool:
+        """Invoke ``send`` (bounded by the timeout); True on success else False.
+
+        A send that raises or exceeds ``send_timeout`` is treated as a dead
+        subscriber and dropped, so a slow/backpressured socket can't stall the
+        fire path.
 
         :param send: subscriber send callable
         :param envelope: envelope to deliver
         """
         try:
-            await send(envelope)
+            await asyncio.wait_for(send(envelope), timeout=self._send_timeout)
             return True
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — includes TimeoutError
             logger.debug(
-                "scheduler bus: dropping subscriber after send error",
+                "scheduler bus: dropping subscriber after send error/timeout",
                 exc_info=True,
             )
             return False

@@ -5,6 +5,7 @@ inputs:
   idle_hours: '0.1'
   max_pending_review: '20'
   token_limit: '19000000'
+  max_ideas: '20'
 run_path: /Users/ganga/Documents/personal_repos/flow-atelier
 schedule:
   mode: recurring
@@ -45,4 +46,4 @@ schedule:
   - 08:00
   - 08:30
 created_at: 1779778874
-runs_completed: 30
+runs_completed: 49

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import socket
 import sys
 import traceback
 from collections.abc import Callable
@@ -34,28 +36,41 @@ from flow_atelier.modules.conditions import (
 from flow_atelier.modules.templating import (
     SkipSignal,
     TemplateError,
-    extract_task_refs,
+    extract_template_refs,
     resolve,
 )
-from flow_atelier.schemas.conduit import Conduit, TaskDefinition, ToolType
+from flow_atelier.schemas.conduit import (
+    _CONDUIT_NAME_RE,
+    Conduit,
+    TaskDefinition,
+    ToolType,
+)
 from flow_atelier.schemas.flow import parse_flow_id
 from flow_atelier.schemas.log import ExecutionResult, LogEntry, TaskEvent
+from flow_atelier.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
+from flow_atelier.services.executor.base import ExecutorBase, FlowContext
+from flow_atelier.services.store.base import StoreBase
 
 TaskEventCallback = Callable[[TaskEvent], None]
 FlowStartedCallback = Callable[[str], None]
 TaskStartingCallback = Callable[[str, str], None]
-from flow_atelier.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
-from flow_atelier.services.executor.base import ExecutorBase, FlowContext
-from flow_atelier.services.store.base import StoreBase
 
 
 class ConduitValidationError(ValueError):
     pass
 
 
+class ConduitCycleError(ConduitValidationError):
+    """Raised when nested ``tool:conduit`` runs form a cycle or exceed depth."""
+
+
 # Margin added to conduit.timeout for the engine's backstop wait_for, so
 # executors that self-enforce ctx.timeout always finish gracefully first.
 BACKSTOP_GRACE_SECONDS = 5
+
+# Hard ceiling on nested tool:conduit recursion as a backstop for chains
+# that are acyclic-by-name yet still pathologically deep.
+MAX_NESTED_CONDUIT_DEPTH = 25
 
 
 def _now() -> str:
@@ -70,7 +85,7 @@ _current_task_ctx: ContextVar[str] = ContextVar("current_task_name", default="")
 _current_flow_ctx: ContextVar[str] = ContextVar("current_flow_id", default="")
 
 
-def _validate_dag(conduit: Conduit) -> dict[str, list]:
+def validate_conduit(conduit: Conduit) -> dict[str, list]:
     """Return {task_name: [parsed deps]}. Raises on cycle/unknown/invalid regex.
 
     :param conduit: parsed conduit whose tasks/dependencies to validate.
@@ -135,17 +150,50 @@ def _validate_dag(conduit: Conduit) -> dict[str, list]:
         return closure[name]
 
     for t in conduit.tasks:
+        # A literal tool:conduit target becomes a single filesystem path
+        # component at read time; reject traversal at author time. Templated
+        # targets are skipped here (resolved/validated at run time).
+        if (
+            t.tool == ToolType.conduit
+            and "{{" not in t.task
+            and not _CONDUIT_NAME_RE.match(t.task.strip())
+        ):
+            raise ConduitValidationError(
+                f"task {t.name!r}: tool:conduit target {t.task!r} is not a valid "
+                "conduit name (letters, digits, '_' and '-' only)"
+            )
+
         allowed = reachable(t.name)
-        for ref in sorted(extract_task_refs(t.task)):
-            if ref not in task_names:
-                raise ConduitValidationError(
-                    f"task {t.name!r} references unknown task {ref!r}"
-                )
-            if ref not in allowed:
-                raise ConduitValidationError(
-                    f"task {t.name!r} references {ref!r} which is not in its "
-                    f"depends_on chain; add it as a dependency"
-                )
+        targets = [t.task]
+        if t.tool == ToolType.conduit:
+            targets += [v for v in t.inputs.values() if isinstance(v, str)]
+        for template in targets:
+            for ref in extract_template_refs(template):
+                if ref.kind == "task":
+                    if ref.value not in task_names:
+                        raise ConduitValidationError(
+                            f"task {t.name!r} references unknown task "
+                            f"{ref.value!r}"
+                        )
+                    if ref.value not in allowed:
+                        raise ConduitValidationError(
+                            f"task {t.name!r} references {ref.value!r} which is "
+                            f"not in its depends_on chain; add it as a dependency"
+                        )
+                elif ref.kind == "loop":
+                    if t.repeat <= 1:
+                        raise ConduitValidationError(
+                            f"task {t.name!r} uses {{{{{ref.raw}}}}} but does "
+                            f"not loop (repeat is 1); loop.* is only available "
+                            f"when repeat > 1"
+                        )
+                elif ref.kind == "unknown":
+                    raise ConduitValidationError(
+                        f"task {t.name!r} has an unrecognized template "
+                        f"expression {{{{{ref.raw}}}}}"
+                    )
+                # ref.kind == "input": not validated — inputs may be supplied
+                # at run time via --input or HITL, so they need not be declared.
 
     return parsed
 
@@ -192,6 +240,7 @@ class Engine:
         working_dir: Path | None = None,
         flow_id: str | None = None,
         resume_from: str | None = None,
+        ancestor_conduits: tuple[str, ...] = (),
     ) -> str:
         """Execute a conduit to completion, returning the flow id.
 
@@ -213,11 +262,27 @@ class Engine:
             store generates one. Ignored when ``resume_from`` is set.
         :param resume_from: flow id of a prior failed run to resume; skips
             already-completed tasks and reuses their persisted outputs.
+        :param ancestor_conduits: names of the conduits already on the nested
+            ``tool:conduit`` call stack above this run; used to detect cycles
+            and bound recursion depth. Empty for a top-level run.
         :returns: the new flow id on success
         :raises ConduitValidationError: DAG is invalid (cycle, unknown dep, bad regex)
+        :raises ConduitCycleError: nested conduits form a cycle or exceed depth
         :raises ValueError: required inputs are missing
         :raises Exception: first task failure propagates after fail-fast cancel
         """
+        # Guard nested tool:conduit recursion before any flow dir is created:
+        # a self- or mutually-referential conduit would otherwise recurse
+        # until the host exhausts the stack or the disk fills.
+        if conduit.name in ancestor_conduits:
+            chain = " -> ".join((*ancestor_conduits, conduit.name))
+            raise ConduitCycleError(f"nested conduit cycle detected: {chain}")
+        if len(ancestor_conduits) >= MAX_NESTED_CONDUIT_DEPTH:
+            chain = " -> ".join((*ancestor_conduits, conduit.name))
+            raise ConduitCycleError(
+                f"nested conduit depth exceeded {MAX_NESTED_CONDUIT_DEPTH}: {chain}"
+            )
+
         # Apply declared defaults, then require inputs that have none.
         inputs = {
             **{
@@ -231,7 +296,7 @@ class Engine:
         if missing:
             raise ValueError(f"missing required inputs: {missing}")
 
-        parsed_deps = _validate_dag(conduit)
+        parsed_deps = validate_conduit(conduit)
 
         if resume_from is not None:
             flow_id = resume_from
@@ -261,6 +326,8 @@ class Engine:
                 for t in conduit.tasks
             },
             started_at=_now(),
+            runner_pid=os.getpid(),
+            runner_host=socket.gethostname(),
         )
         self.store.write_progress(flow_id, progress)
 
@@ -497,12 +564,18 @@ class Engine:
                         )
                     return
 
+                # An explicit per-task timeout supersedes the conduit-wide
+                # ceiling for this task only; None inherits conduit.timeout.
+                effective_timeout = (
+                    t.timeout if t.timeout is not None else conduit.timeout
+                )
+
                 ctx = FlowContext(
                     flow_id=flow_id,
                     store=self.store,
                     inputs=runtime_inputs,
                     task_outputs=outputs,
-                    timeout=conduit.timeout,
+                    timeout=effective_timeout,
                     working_dir=working_dir,
                     show_steps=show_steps,
                     run_nested_conduit=self._make_nested_runner(
@@ -511,6 +584,7 @@ class Engine:
                         on_task_starting=on_task_starting,
                         show_steps=show_steps,
                         working_dir=working_dir,
+                        ancestor_conduits=(*ancestor_conduits, conduit.name),
                     ),
                     loop_history=loop_history,
                     loop_history_limit=self.loop_history_limit,
@@ -558,57 +632,76 @@ class Engine:
                                     )
                                 return
                         mark_running(t.name, iteration, start_iteration)
-                        started = _now()
-                        start_ts = datetime.now(UTC)
-                        try:
-                            # Grace margin: executors that self-enforce
-                            # ctx.timeout (bash, harness) return a graceful
-                            # result preserving output; this outer wrapper is
-                            # the backstop for those that don't, and must not
-                            # win the race against them. HITL is exempt: a
-                            # human stepping away is not a timeout.
-                            result = await asyncio.wait_for(
-                                executor.execute(t, resolved, ctx),
-                                timeout=(
-                                    None
-                                    if is_hitl
-                                    else conduit.timeout + BACKSTOP_GRACE_SECONDS
+                        # A transient non-zero exit is re-attempted in place up
+                        # to `retries` extra times before tripping fail-fast.
+                        # HITL is exempt: a human declining a prompt is not a
+                        # transient failure, so it never auto-retries.
+                        max_attempts = 1 if is_hitl else 1 + t.retries
+                        for attempt in range(1, max_attempts + 1):
+                            started = _now()
+                            start_ts = datetime.now(UTC)
+                            try:
+                                # Grace margin: executors that self-enforce
+                                # ctx.timeout (bash, harness) return a graceful
+                                # result preserving output; this outer wrapper is
+                                # the backstop for those that don't, and must not
+                                # win the race against them. HITL is exempt: a
+                                # human stepping away is not a timeout.
+                                result = await asyncio.wait_for(
+                                    executor.execute(t, resolved, ctx),
+                                    timeout=(
+                                        None
+                                        if is_hitl
+                                        else effective_timeout + BACKSTOP_GRACE_SECONDS
+                                    ),
+                                )
+                            except TimeoutError:
+                                result = ExecutionResult(
+                                    exit_code=124,
+                                    stderr=f"engine timeout after {effective_timeout}s",
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                result = ExecutionResult(
+                                    exit_code=1, stderr=f"{type(exc).__name__}: {exc}"
+                                )
+                            finished = _now()
+                            duration = (
+                                datetime.now(UTC) - start_ts
+                            ).total_seconds()
+                            # Only stamp attempt metadata when retries are
+                            # actually in play; with no retries the log entry
+                            # stays byte-for-byte identical to pre-retry behavior.
+                            attempt_extra = (
+                                {"attempt": attempt, "of_attempts": max_attempts}
+                                if max_attempts > 1
+                                else {}
+                            )
+                            await self.store.append_log(
+                                flow_id,
+                                LogEntry(
+                                    task=t.name,
+                                    tool=t.tool.value,
+                                    iteration=iteration,
+                                    of=t.repeat,
+                                    command=resolved,
+                                    stdout=result.stdout,
+                                    stderr=result.stderr,
+                                    exit_code=result.exit_code,
+                                    output=result.output,
+                                    last_turn_output=result.last_turn_output,
+                                    started_at=started,
+                                    finished_at=finished,
+                                    duration_seconds=round(duration, 3),
+                                    extra=attempt_extra,
+                                    steps=result.steps,
                                 ),
                             )
-                        except TimeoutError:
-                            result = ExecutionResult(
-                                exit_code=124,
-                                stderr=f"engine timeout after {conduit.timeout}s",
-                            )
-                        except Exception as exc:  # noqa: BLE001
-                            result = ExecutionResult(
-                                exit_code=1, stderr=f"{type(exc).__name__}: {exc}"
-                            )
-                        finished = _now()
-                        duration = (
-                            datetime.now(UTC) - start_ts
-                        ).total_seconds()
-                        await self.store.append_log(
-                            flow_id,
-                            LogEntry(
-                                task=t.name,
-                                tool=t.tool.value,
-                                iteration=iteration,
-                                of=t.repeat,
-                                command=resolved,
-                                stdout=result.stdout,
-                                stderr=result.stderr,
-                                exit_code=result.exit_code,
-                                output=result.output,
-                                last_turn_output=result.last_turn_output,
-                                started_at=started,
-                                finished_at=finished,
-                                duration_seconds=round(duration, 3),
-                                steps=result.steps,
-                            ),
-                        )
-                        emit_event(t, iteration, result, duration)
-                        if not result.success:
+                            emit_event(t, iteration, result, duration)
+                            if result.success:
+                                break
+                            if attempt < max_attempts:
+                                await asyncio.sleep(t.retry_backoff)
+                                continue
                             mark_failed(t.name)
                             if not failed:
                                 failed = True
@@ -654,7 +747,7 @@ class Engine:
                                 # iterations via {{loop.history}} and
                                 # false-positive the predicate.
                                 scope_outputs = [last_output]
-                            if evaluate_loop_predicate(
+                            if await evaluate_loop_predicate(
                                 loop_predicate, scope_outputs, loop_mode
                             ):
                                 predicate_matched = True
@@ -704,7 +797,7 @@ class Engine:
                     decision = "satisfied"
                     skip_reason: str | None = None
                     for d in deps:
-                        r, reason = evaluate(d, statuses, outputs)
+                        r, reason = await evaluate(d, statuses, outputs)
                         if r == "skip":
                             decision = "skip"
                             skip_reason = reason
@@ -837,6 +930,7 @@ class Engine:
         on_task_starting: TaskStartingCallback | None = None,
         show_steps: bool = True,
         working_dir: Path | None = None,
+        ancestor_conduits: tuple[str, ...] = (),
     ):
         """Build the nested-conduit runner passed to executors via FlowContext.
 
@@ -845,6 +939,8 @@ class Engine:
         :param on_task_starting: optional task-starting callback forwarded to the child.
         :param show_steps: whether the nested run should surface per-step progress.
         :param working_dir: working directory forwarded to nested runs.
+        :param ancestor_conduits: conduit names already on the nested-run stack,
+            forwarded to each child run so cycles/depth are caught.
         :returns: an async callable ``(conduit_name, child_inputs, parent_flow_id)``
             that loads and runs the named child conduit.
         """
@@ -871,6 +967,7 @@ class Engine:
                     on_task_starting=on_task_starting,
                     show_steps=show_steps,
                     working_dir=working_dir,
+                    ancestor_conduits=ancestor_conduits,
                 )
 
             return await self.run(
@@ -882,6 +979,7 @@ class Engine:
                 on_task_starting=on_task_starting,
                 show_steps=show_steps,
                 working_dir=working_dir,
+                ancestor_conduits=ancestor_conduits,
             )
 
         return _run_nested

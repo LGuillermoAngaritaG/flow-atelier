@@ -128,6 +128,35 @@ class Atelier:
         )
         self.schedule_store = ScheduleStore(self.settings.atelier_dir)
 
+    def tool_readiness(self, conduit: Conduit) -> list[str]:
+        """Report why a conduit can't run, before any task executes.
+
+        Walks ``conduit.tasks`` and, for each, confirms its tool is registered
+        and its executor's :meth:`ExecutorBase.is_available` probe passes (e.g.
+        a harness CLI present on PATH). This is the preflight gate used by
+        ``atelier check`` and the top of ``atelier run`` so an unrunnable
+        conduit fails in second one rather than mid-DAG. Structural validation
+        stays in :func:`validate_conduit`; this layer owns runnability because
+        it is the only one holding both the conduit and the executor registry.
+
+        :param conduit: the loaded conduit to probe.
+        :returns: ordered, de-duplicated problem messages; ``[]`` when ready.
+        """
+        problems: list[str] = []
+        for task in conduit.tasks:
+            tool = task.tool.value
+            executor = self.executors.get(tool)
+            if executor is None:
+                msg = f"task {task.name!r}: no executor registered for tool {tool!r}"
+            else:
+                ok, reason = executor.is_available()
+                if ok:
+                    continue
+                msg = f"task {task.name!r} [{tool}]: {reason}"
+            if msg not in problems:
+                problems.append(msg)
+        return problems
+
     async def run_conduit(
         self,
         name: str,
@@ -289,6 +318,14 @@ class Atelier:
         """
         return self.store.delete_conduit(name)
 
+    def delete_flow(self, flow_id: str) -> bool:
+        """Remove a flow directory and its nested child subtree.
+
+        :param flow_id: flow identifier
+        :returns: True if it existed and was deleted, False otherwise
+        """
+        return self.store.delete_flow(flow_id)
+
     async def run_single_task(self, payload: RunTaskInput) -> RunTaskOutput:
         """Run an ad-hoc one-task conduit and return the resulting logs.
 
@@ -340,9 +377,16 @@ class Atelier:
     def create_schedule(self, payload: CreateScheduleInput) -> ScheduledJob:
         """Persist a new schedule and return it.
 
+        Validates that ``conduit_name`` resolves to a known conduit (in the
+        same store the fire will use), so a typo fails loudly here instead of
+        silently at fire time via a swallowed exception.
+
         :param payload: validated :class:`CreateScheduleInput`
         :returns: the new :class:`ScheduledJob`
+        :raises ValueError: if ``conduit_name`` is not a known conduit
         """
+        if payload.conduit_name not in self.store.list_conduits():
+            raise ValueError(f"unknown conduit: {payload.conduit_name!r}")
         return self.schedule_store.create(payload)
 
     def delete_schedule(self, schedule_id: str) -> ScheduledJob:
@@ -408,12 +452,34 @@ class Atelier:
             logs.extend(tagged)
         return logs
 
+    def _known_run_paths(self) -> set[Path]:
+        """Return the resolved ``run_path`` of every known flow.
+
+        :returns: set of resolved run-path directories recorded in flow inputs.
+        """
+        known: set[Path] = set()
+        for flow_id in self.store.list_flows():
+            try:
+                rp = self.store.read_input(flow_id).get("run_path")
+            except (FileNotFoundError, ValueError):
+                continue
+            if rp:
+                known.add(Path(rp).resolve())
+        return known
+
     def open_conduit_path(self, run_path: str) -> bool:
         """Reveal ``run_path`` in the host's file explorer.
+
+        Only paths recorded as a flow's ``run_path`` are opened: the OS opener
+        can launch arbitrary apps/documents, so an unconstrained caller (the
+        default deployment has no token) must not be able to point it anywhere.
 
         :param run_path: absolute path to open
         :returns: True if the platform opener was launched, False otherwise
         """
+        if Path(run_path).resolve() not in self._known_run_paths():
+            logger.warning("open_conduit_path refused unknown path: %s", run_path)
+            return False
         target = str(Path(run_path))
         cmd: list[str]
         if sys.platform == "darwin":

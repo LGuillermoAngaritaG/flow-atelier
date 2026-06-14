@@ -5,6 +5,7 @@ import json
 from collections import Counter
 
 import typer
+from rich.markup import escape
 from rich.table import Table
 
 from flow_atelier.cli._shared import (
@@ -14,8 +15,13 @@ from flow_atelier.cli._shared import (
     console,
 )
 from flow_atelier.cli.main import list_app
-from flow_atelier.cli.rendering.render import _FLOW_STATUS_STYLE, _task_status_summary
+from flow_atelier.cli.rendering.render import (
+    _FLOW_STATUS_STYLE,
+    _task_status_summary,
+    format_conduit_error,
+)
 from flow_atelier.core.atelier import Atelier
+from flow_atelier.modules.liveness import display_status, is_crashed
 from flow_atelier.schemas.flow import parse_flow_id
 from flow_atelier.schemas.progress import Progress
 
@@ -43,11 +49,13 @@ def list_conduits_cmd(
             num_tasks = len(conduit.tasks)
             num_inputs = len(conduit.inputs)
             readable = True
-        except Exception:  # noqa: BLE001 — broken yaml shouldn't break list
+            error = None
+        except Exception as exc:  # noqa: BLE001 — broken yaml shouldn't break list
             description = ""
             num_tasks = -1
             num_inputs = -1
             readable = False
+            error = format_conduit_error(exc)
         rows.append(
             {
                 "name": name,
@@ -56,6 +64,7 @@ def list_conduits_cmd(
                 "tasks": num_tasks,
                 "inputs": num_inputs,
                 "readable": readable,
+                "error": error,
             }
         )
 
@@ -73,7 +82,7 @@ def list_conduits_cmd(
     for r in rows:
         source_style = "cyan" if r["source"] == "project" else "magenta"
         if not r["readable"]:
-            description_cell = "[red](unreadable)[/red]"
+            description_cell = f"[red](invalid: {escape(str(r['error']))})[/red]"
             tasks_cell = "?"
             inputs_cell = "?"
         else:
@@ -139,6 +148,7 @@ def list_flows_cmd(
                 "flow_id": fid,
                 "conduit": conduit_name,
                 "status": progress.status.value,
+                "crashed": is_crashed(progress),
                 "started_at": progress.started_at,
                 "finished_at": progress.finished_at,
                 "duration_seconds": _flow_duration_seconds(progress),
@@ -164,11 +174,12 @@ def list_flows_cmd(
         if progress is None:
             table.add_row(str(r["flow_id"]), str(r["conduit"]), "[red]?[/red]", "—", "—", "—")
             continue
-        status_style = _FLOW_STATUS_STYLE.get(progress.status.value, "white")
+        effective = display_status(progress)
+        status_style = _FLOW_STATUS_STYLE.get(effective, "white")
         table.add_row(
             str(r["flow_id"]),
             str(r["conduit"]),
-            f"[{status_style}]{progress.status.value}[/{status_style}]",
+            f"[{status_style}]{effective}[/{status_style}]",
             _format_clock(progress.started_at),
             _format_duration_seconds(_flow_duration_seconds(progress)),
             _task_status_summary(progress),

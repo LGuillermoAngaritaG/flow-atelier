@@ -104,3 +104,15 @@ class WebSocketBroker:
         task = self._tasks.get(flow_id)
         if task is not None and not task.done():
             task.cancel()
+
+    def cancel_all(self) -> None:
+        """Cancel every tracked run task (best-effort).
+
+        Called when the WebSocket disconnects: without this an in-flight run
+        keeps executing detached, and a ``tool:hitl`` task blocked on an answer
+        that can no longer arrive would pin the run forever. Cancelling the
+        driving task unwinds ``engine.run`` and unblocks that await.
+        """
+        for task in list(self._tasks.values()):
+            if not task.done():
+                task.cancel()

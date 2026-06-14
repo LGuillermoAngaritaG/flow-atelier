@@ -1,332 +1,199 @@
 ![flow-atelier](./atelier.png)
 
-# flow-atelier
+# Flow Atelier:
 
-**flow-atelier** is a CLI and async workflow engine for running reproducible
-DAG-based workflows called **conduits**. A single run of a conduit is a
-**flow**. Tasks whose dependencies are satisfied run concurrently via
-`asyncio`, subject to a conduit-level concurrency cap.
+## Flow Atelier is built on a simple premise: the world doesn't run on people, it runs on processes that people execute.
+Ask someone to make anything, for example: the best yogurt in the world, what a person will do is that they'll research, experiment, and produce something average. The same is true of an AI agent. But give that person a clear, step-by-step recipe — and keep refining it over time — and you can reach the best yogurt in the world.
+That's what Flow Atelier does. We help you build simple, repeatable instructions for getting something done the same way every time, then let anyone improve on them. It mirrors how real businesses actually work. Coca-Cola and Pepsi don't differ because their managers, lawyers, or engineers are fundamentally different people — they differ because their processes are different.
+Flow Atelier gives you the tool to design and refine those processes. The difference: instead of people executing them, AI agents do the work.
 
-Each task is dispatched to one of eight executors:
+## The words we use
 
-| Tool                  | What it runs                                                     |
-|-----------------------|------------------------------------------------------------------|
-| `tool:bash`           | a shell command (via `asyncio.create_subprocess_shell`)          |
-| `tool:hitl`           | prompts a human on stdin for one or more named inputs            |
-| `tool:conduit`        | another conduit, as a nested flow                                |
-| `harness:claude-code` | Claude Code via the [ACP](https://agentclientprotocol.com) adapter |
-| `harness:codex`       | OpenAI Codex via the ACP adapter                                 |
-| `harness:opencode`    | [opencode](https://opencode.ai) via native `opencode acp`        |
-| `harness:copilot`     | GitHub Copilot CLI via native `copilot --acp`                    |
-| `harness:cursor`      | Cursor CLI via the `@blowmage/cursor-agent-acp` adapter          |
+A few terms show up everywhere in this document:
 
-Harnesses speak the **Agent Client Protocol** (ACP) over stdio, so they
-get real bidirectional interaction: the agent can ask for permission, ask
-the user a free-form question mid-turn, or run a multi-turn conversation.
-Each harness reuses the host CLI's own local configuration and auth —
-flow-atelier does not read, write, or proxy any of it.
+- **Conduit** — a recipe. An ordered set of steps written in a single
+  YAML file.
+- **Task** — one step in that recipe. A task runs a shell command,
+  asks a person a question, calls an AI tool, or runs another conduit.
+- **Flow** — one run of a conduit. Every run is saved to disk, so you
+  can always go back and see exactly what happened.
+- **Harness** — an AI coding tool (Claude Code, Codex, opencode,
+  Copilot, Cursor) that a task can hand work to.
+- **HITL** — "human in the loop": a step that pauses to ask a person a
+  typed question, then continues with the answer.
 
-In `interactive: true` mode, flow-atelier keeps the session open across
-turns: if the agent ends a turn without emitting the `[ATELIER_DONE]`
-marker, the executor prompts the user on the terminal for the next reply
-and sends it back as the next user message. The loop terminates when the
-marker appears in the agent's output.
+## What can you build with it?
+
+Any pipeline that can be described as an ordered sequence or graph of
+steps. The two examples further down — a one-line greeter and a deploy
+pipeline with a human approval gate — illustrate two possible shapes;
+they are not prescriptive templates.
+
+A non-exhaustive list of things people have built:
+
+- **Chatbots and AI agents** that chain multiple turns of conversation
+  with retries, branches, and fallbacks.
+- **Multi-AI pipelines** in which one assistant drafts a specification,
+  a second produces a plan, and a third executes it — or in which two
+  assistants review the same change and a third synthesizes their
+  feedback.
+- **CI/CD-style pipelines** that clone a repository, run tests with
+  retry, request an AI code review, ask a human for confirmation, and
+  then deploy or roll back based on the result.
+- **Scheduled jobs** such as daily reports, weekly syncs, or one-shot
+  reminders at a specific time.
+- **Polling loops with retry and backoff** that call an endpoint until
+  it returns a success status or a rate limit lifts.
+- **Human-in-the-loop automations** — flows that pause to ask the
+  operator a typed question and resume with the answer.
+- **Reusable building blocks** — one conduit invoking another, so a
+  `deploy` conduit written once can be called from many higher-level
+  pipelines.
+- **Pure-shell automation with no AI at all** — flow-atelier works as
+  a general-purpose task runner in this mode.
+
+If a task can be described as a sequence or graph of steps, it can be
+written as a conduit.
+
+## How a conduit runs
+
+You write a conduit YAML file and put it in
+`.atelier/conduits/<name>/conduit.yaml`. When you run
+`atelier run <name>`, flow-atelier:
+
+1. Reads the YAML.
+2. Looks at each task's `depends_on` list to figure out which tasks can
+   start now and which have to wait.
+3. Starts every ready task at the same time, up to a configurable
+   limit (`max_concurrency`).
+4. For each task, picks an executor based on the `tool:` field:
+
+   | Tool                  | What it runs                                                       |
+   |-----------------------|--------------------------------------------------------------------|
+   | `tool:bash`           | a shell command                                                    |
+   | `tool:hitl`           | prompts a human on the terminal for one or more named answers      |
+   | `tool:conduit`        | another conduit, as a nested run                                   |
+   | `harness:claude-code` | Claude Code (via the [ACP](https://agentclientprotocol.com) adapter)|
+   | `harness:codex`       | OpenAI Codex (via the ACP adapter)                                 |
+   | `harness:opencode`    | [opencode](https://opencode.ai)                                    |
+   | `harness:copilot`     | GitHub Copilot CLI                                                 |
+   | `harness:cursor`      | Cursor CLI                                                         |
+
+5. Saves everything to disk under `.atelier/flows/<flow_id>/` — what
+   ran, what each task printed, whether it succeeded, when it
+   finished.
+
+The five AI harnesses use each tool's **own login** that lives on your
+machine. flow-atelier never sees, stores, or proxies any credentials.
 
 ## Install
 
-### From PyPI
+### One-command install (no Python needed)
 
-Requires Python 3.13+. Install with [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/):
+The quickest way. The script downloads a prebuilt `atelier` binary into
+`~/.atelier/bin`, verifies its SHA-256 checksum against the published
+release, and adds it to your `PATH`. It is safe to re-run to upgrade.
+
+**macOS (Apple Silicon) / Linux:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LGuillermoAngaritaG/flow-atelier/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/LGuillermoAngaritaG/flow-atelier/main/install.ps1 | iex
+```
+
+Prebuilt binaries are published for **Linux x86_64**, **macOS arm64
+(Apple Silicon)**, and **Windows x86_64**. Intel Macs are not supported
+(no Rosetta fallback exists for an arm64 binary). Open a new terminal
+after installing so the updated `PATH` takes effect.
+
+### Install with uv (for Python users)
+
+If you have Python 3.13+ and [uv](https://docs.astral.sh/uv/), you can
+install from PyPI instead:
 
 ```bash
 uv tool install flow-atelier
-# or
-pipx install flow-atelier
+uv tool upgrade flow-atelier      # upgrade later
+uv tool uninstall flow-atelier    # remove
 ```
 
-To upgrade or uninstall later:
+Either way, you end up with an `atelier` command on your `PATH`.
 
-```bash
-uv tool upgrade flow-atelier
-uv tool uninstall flow-atelier
-```
+### Optional: AI harnesses
 
-### Standalone binary (no Python required)
-
-Download the appropriate file from the
-[latest release](https://github.com/LGuillermoAngaritaG/flow-atelier/releases/latest):
-
-- `atelier-linux-x86_64`
-- `atelier-macos-arm64`
-- `atelier-windows-x86_64.exe`
-
-Make it executable (Linux/macOS) and put it on your `PATH`:
-
-```bash
-chmod +x atelier-linux-x86_64
-sudo mv atelier-linux-x86_64 /usr/local/bin/atelier
-```
-
-### From source
-
-```bash
-git clone <this-repo> flow-atelier
-cd flow-atelier
-uv tool install .
-```
-
-Or directly from a remote:
-
-```bash
-uv tool install git+<repo-url>
-```
-
-For local development inside the repo, a plain `uv sync` + `uv run atelier`
-also works.
-
-### Harness prerequisites
-
-You only need the prerequisites for the harness(es) you actually plan
-to use. A user who only wants `harness:opencode` does not need `claude`,
-`codex`, `copilot`, or `cursor-agent` installed, and so on.
+You only need to install the harness(es) for the AI tools you actually
+plan to use. If you never use AI in your conduits, you can skip this
+entire section.
 
 - **`harness:claude-code`** — Node.js / `npx` on PATH, plus an
-  authenticated `claude` setup (`~/.claude`, skills, subagents, hooks,
-  MCP servers, CLAUDE.md). On first use `npx` downloads
-  `@zed-industries/claude-code-acp`.
+  authenticated `claude` setup (`~/.claude/...`). On first use `npx`
+  downloads `@zed-industries/claude-code-acp`.
 - **`harness:codex`** — Node.js / `npx` on PATH, plus an authenticated
-  `codex` setup (`~/.codex/config.toml`, auth, AGENTS.md). On first use
-  `npx` downloads `@zed-industries/codex-acp`.
-- **`harness:opencode`** — the `opencode` binary on PATH; ACP is
-  native. As an alternative, an npm-published adapter like
-  `josephschmitt/opencode-acp` can be swapped in via
-  `ATELIER_OPENCODE_LAUNCH_CMD` if you prefer an `npx`-launched flow
-  without a local `opencode` install.
-- **`harness:copilot`** — the `copilot` binary on PATH, from the
-  `@github/copilot` npm package (public preview as of Jan 2026). ACP
-  is native via `copilot --acp`.
+  `codex` setup (`~/.codex/...`). On first use `npx` downloads
+  `@zed-industries/codex-acp`.
+- **`harness:opencode`** — the `opencode` binary on PATH.
+- **`harness:copilot`** — the `copilot` binary on PATH (from the
+  `@github/copilot` npm package).
 - **`harness:cursor`** — Node.js / `npx` on PATH, plus the
-  `cursor-agent` binary on PATH (the community npm adapter
-  `@blowmage/cursor-agent-acp` is pinned exactly at `0.7.1` and shells
-  out to `cursor-agent`).
+  `cursor-agent` binary on PATH.
 
-Each harness reuses its host CLI's own config and auth — flow-atelier
-does not hard-code paths to, or proxy, any of that state.
+Each harness reuses its own CLI's config and login. To pin a custom
+version or point at a different adapter, set the matching
+`ATELIER_*_LAUNCH_CMD` environment variable to a JSON array of argv
+(see `.env.example`).
 
-To pin a custom version or point at a locally installed adapter, set
-the matching `ATELIER_*_LAUNCH_CMD` env var to a JSON array of argv:
-`ATELIER_CLAUDE_LAUNCH_CMD`, `ATELIER_CODEX_LAUNCH_CMD`,
-`ATELIER_OPENCODE_LAUNCH_CMD`, `ATELIER_COPILOT_LAUNCH_CMD`, or
-`ATELIER_CURSOR_LAUNCH_CMD` (see `.env.example`).
-
-## Quick start
-
-Scaffold a project-local `.atelier/` with a hello-world conduit:
+## Quickstart
 
 ```bash
-atelier init
+atelier init                                # creates .atelier/conduits/hello/
+atelier run hello --input name=world        # runs it
+atelier status <flow_id>                    # shows progress
+atelier list flows --conduit hello          # lists previous runs
 ```
 
-This creates `.atelier/conduits/hello/conduit.yaml`. If `.atelier/` already
-exists in the current directory, `init` leaves it alone.
+`atelier init` writes a one-line `hello` conduit that only runs a
+shell command, so this works end-to-end before you install any AI
+tool.
 
-Run it:
+## Examples
 
-```bash
-atelier run hello --input name=world
-# flow_id: hello_7a3c9f2e_20260412T153004Z
+The two conduits below are **illustrative, not prescriptive**. A
+conduit can have one step or fifty, and any combination of shell, AI,
+and human steps. The samples show one minimal conduit and one larger
+one to demonstrate the range; the conduits you write will look
+nothing like them.
+
+### A simple conduit (`hello`)
+
+The one-task conduit that `atelier init` creates. It runs a single
+shell command:
+
+```yaml
+name: hello
+description: Say hello
+inputs:
+  name: Who to greet
+tasks:
+  - greet:
+      description: greet someone
+      task: "echo hello {{inputs.name}}"
+      tool: tool:bash
+      depends_on: []
 ```
 
-If the flow fails, resume it (skips already-completed tasks):
+Run it with `atelier run hello --input name=world`.
 
-```bash
-atelier run --resume hello_7a3c9f2e_20260412T153004Z
-```
+### A bigger conduit (`deploy_pipeline`)
 
-Check status:
-
-```bash
-atelier status hello_7a3c9f2e_20260412T153004Z
-```
-
-List everything:
-
-```bash
-atelier list conduits
-atelier list flows --conduit hello
-```
-
-## Conduit scopes
-
-Conduits can live in two places:
-
-- **Project**: `./.atelier/conduits/` — scaffolded by `atelier init`.
-- **Global**: `~/.atelier/conduits/` — shared across all projects, auto-created
-  on first run of any `atelier` command.
-
-When you invoke `atelier run <name>`, atelier looks for the conduit in the
-project first, then falls back to global. A project conduit with the same
-name as a global one silently wins. `atelier list conduits` tags each entry
-with `[project]` or `[global]` so you can see which copy is in effect.
-
-Flows are **always project-local** — every `atelier run` writes to
-`./.atelier/flows/` in the current working directory, regardless of which
-scope the conduit came from.
-
-Example: keep a general-purpose `deploy` conduit globally and override it
-per project when a specific repo needs different steps.
-
-## Commands
-
-```
-atelier init
-atelier run <conduit> [--input key=value ...]
-atelier run --resume <flow_id>
-atelier status <flow_id>
-atelier list conduits
-atelier list flows [--conduit <name>]
-
-# scheduler
-atelier schedule add <file.{json,yaml}>
-atelier schedule list [--json]
-atelier schedule remove <id-or-name>
-atelier schedule run-now <id-or-name>
-atelier scheduler start [--reload-interval 30] [--log-level INFO]
-atelier scheduler status [--json]
-
-# server (HTTP + WebSocket)
-atelier serve [--host 127.0.0.1] [--port 8000] \
-              [--reload-interval 30] [--cors-origin URL]* \
-              [--log-level INFO]
-```
-
-## Server (`atelier serve`)
-
-`atelier serve` boots a single uvicorn process that hosts both the
-FastAPI HTTP API and the in-process scheduler daemon (one event loop,
-clean SIGTERM cascade). When a `dist/` directory is present (the built
-frontend dashboard), it is served as a SPA with catch-all fallback —
-API and WebSocket routes take priority over static files.
-
-- Binds to `127.0.0.1:8000` by default. Pass `--host 0.0.0.0` to expose
-  on the LAN.
-- `--cors-origin` is repeatable; absent means localhost origins only
-  (the API can run shell commands, so a wildcard would let any webpage
-  drive a local server cross-origin).
-- Optional auth: set `ATELIER_API_TOKEN=<secret>` and every REST request
-  must send `Authorization: Bearer <secret>`; WebSocket connections must
-  pass `?token=<secret>`. Unset means no auth (local trust). `serve`
-  warns when binding a non-loopback host without a token. Note: the
-  bundled dashboard does not send a token yet, so setting one breaks the
-  SPA until the frontend adds support — the token is for headless/API
-  use today.
-- All JSON payloads are snake_case; the frontend translates camelCase ↔
-  snake_case on its side.
-
-Endpoint surface:
-
-| Method   | Path                       | Notes |
-|----------|----------------------------|-------|
-| `GET`    | `/conduits`                | List conduits |
-| `GET`    | `/conduits/:name`          | Read one |
-| `POST`   | `/conduits`                | Create (409 on collision) |
-| `PATCH`  | `/conduits/:name`          | Partial update |
-| `DELETE` | `/conduits/:name`          | Delete |
-| `POST`   | `/conduits/open-path`      | Reveal flow run path in OS file explorer |
-| `POST`   | `/tasks/run`               | Run an ad-hoc one-task conduit |
-| `GET`    | `/schedules`               | List schedules |
-| `POST`   | `/schedules`               | Create (registers with the embedded daemon) |
-| `DELETE` | `/schedules/:id`           | Delete |
-| `GET`    | `/flows`                   | List prior flows |
-| `GET`    | `/flows/:id/logs`          | Per-flow log entries |
-| `WS`     | `/ws/run-conduit`          | Run/resume flows + HITL gates over a multiplexed socket |
-
-## Resuming failed flows
-
-A flow that ended in `failed` status can be resumed — already-completed
-tasks are skipped and their persisted outputs are reused:
-
-```bash
-# CLI
-atelier run --resume <flow_id>
-
-# prefix matching works too
-atelier run --resume hello_7a3c
-```
-
-Over the WebSocket, send a `resume` message instead of `run`:
-
-```json
-{"type": "resume", "flow_id": "hello_7a3c9f2e_20260412T153004Z"}
-```
-
-Resumed runs emit the same lifecycle envelopes (`started`, `step`,
-`step_status`, `log`, `flow_complete` / `flow_failed`) as a fresh run,
-so the dashboard treats them identically. The `step_status` envelope
-now also fires with `"running"` when a task begins execution, giving
-the frontend real-time visibility into in-progress work.
-
-## Scheduler
-
-`atelier scheduler` runs conduits on a wall-clock schedule. Each
-schedule is one YAML file under `.atelier/schedules/<slug>.yaml`
-(slug derived from `schedule.name`). The daemon
-(`atelier scheduler start` or, embedded, `atelier serve`) is a single
-foreground asyncio process that fires conduits identically on Linux,
-macOS, and Windows — put it under your preferred supervisor
-(`systemd --user`, `launchd`, NSSM, etc.).
-
-Schedules use the same shape that the HTTP API consumes:
-
-```json
-{
-  "conduit_name": "report",
-  "inputs": { "date": "today" },
-  "run_path": "/abs/path",
-  "schedule": {
-    "mode": "recurring",
-    "name": "weekday mornings",
-    "days": [1, 2, 3, 4, 5],
-    "times": ["06:00", "12:00"]
-  }
-}
-```
-
-`days` are ISO-8601 day-of-week ints (`1=Mon`..`7=Sun`); `times` are
-`"HH:mm"` 24h strings. One-shots use `mode: "once"` with a `run_at`
-ISO datetime instead of `days`/`times`.
-
-Behavior notes:
-
-- **Hot reload**: schedules added or removed via the CLI / HTTP API are
-  picked up on the next reload tick (`--reload-interval`, default 30s).
-  Creates and deletes via `POST`/`DELETE /schedules` trigger a sync
-  immediately.
-- **Delete is hard**: `DELETE /schedules/:id` and
-  `atelier schedule remove` unlink the YAML file. There is no
-  resurrect; recreating yields a fresh `SCH-…` id and resets
-  `runs_completed`.
-- **No update endpoint**: to change a schedule, delete and recreate.
-  That mints a new id and zeroes the run counter — by design, to keep
-  the store trivial.
-- **One-shot fires exactly once**, success or failure: after a `once`
-  schedule's executor returns (even when it raises), the daemon writes
-  its id into `.atelier/scheduler_state.json` so a restart never
-  re-runs it. Failures are logged with full traceback.
-- **Concurrency**: each schedule runs at most one instance at a time
-  (`max_instances=1`); missed fires are coalesced.
-- **`scheduler status` reads the store, not the daemon.** It shows the
-  next fire times for every persisted schedule whether or not a daemon
-  is alive. To confirm liveness, check the daemon process directly.
-- **Embedded mode broadcasts live.** When started under `atelier
-  serve`, scheduled fires fan out `scheduled_run_started`,
-  `scheduled_task_event`, and `scheduled_run_complete`/`_failed`
-  envelopes to every `/ws/run-conduit` client.
-- `atelier schedule run-now <id-or-name>` dispatches a schedule
-  immediately without going through the daemon and without touching
-  fired-state.
-
-## Conduit reference
+A six-step pipeline that combines shell commands, an AI review, a
+human approval gate, retry loops, conditional branches, and a nested
+sub-conduit. It illustrates what is possible — a chatbot, a daily
+report, or an agent loop would look entirely different.
 
 ```yaml
 name: deploy_pipeline           # must match the folder name
@@ -393,31 +260,59 @@ tasks:
         - code_review.output.not_match(VERDICT:\s*APPROVE)
 ```
 
+Step by step:
+
+- `clone_repo` runs first because nothing depends on it.
+- `run_tests` and `code_review` both wait on `clone_repo`, then run
+  in parallel.
+- `run_tests` retries up to 3 times, stopping as soon as the output
+  contains `PASS`.
+- `code_review` asks Claude Code to review the code and end with
+  either `VERDICT: APPROVE` or `VERDICT: REJECT`.
+- `approve` only runs if Claude approved (`...match(VERDICT:\s*APPROVE)`).
+  It asks the human two typed questions on the terminal.
+- `deploy` only runs after the human approves, and calls another
+  conduit (`deploy_to_env`) as a nested run.
+- `rollback` only runs if Claude rejected. The two branches are
+  mutually exclusive — the unmet branch is silently skipped, not
+  failed.
+
+## Conduit reference
+
+A conduit has a `name`, a short `description`, an optional `inputs`
+map, and a `tasks` list. Each task has a `name`, a `task` body, a
+`tool` value, and a `depends_on` list.
+
 ### Templating
 
-- `{{inputs.<name>}}` — conduit or HITL input, resolved at task start.
-- `{{<task_name>.output>}}` — the string output of an upstream task. The
-  referenced task must appear in `depends_on` so the engine has already
-  completed it by the time the template is rendered.
+- `{{inputs.<name>}}` — a conduit input or HITL answer.
+- `{{<task_name>.output}}` — the printed output of an earlier task.
+  The earlier task must appear in `depends_on`.
+- `{{loop.previous}}` — this task's output from its previous loop
+  iteration (empty before the first iteration completes). Only valid on
+  a looping task (`repeat > 1`).
+- `{{loop.history}}` — every prior iteration of this task, rendered as
+  numbered blocks. Only valid on a looping task (`repeat > 1`).
+
+A missing `{{inputs.x}}` fails the task immediately; a reference to a
+task that was skipped or hasn't completed skips the referencing task.
 
 ### Conditional dependencies
 
 ```
-<task>.output.match(<regex>)        # dependency met iff regex matches
-<task>.output.not_match(<regex>)    # dependency met iff regex does NOT match
+<task>.output.match(<regex>)        # dependency met if regex matches
+<task>.output.not_match(<regex>)    # dependency met if regex does NOT match
 ```
 
-The regex is everything between the leftmost `(` and the last `)` — no
-quoting required. Python's `re.search` is used.
+The regex is everything between the leftmost `(` and the last `)` —
+no quoting required. Python's `re.search` is used.
 
-If the condition is not met, the dependent task is **skipped** (not failed).
-A skip does not trigger fail-fast. Any task that references a skipped task's
-output — via `depends_on` or `{{task.output}}` — is also skipped.
+If a condition is not met, the task is **skipped**, not failed.
+Anything that depends on a skipped task is also skipped.
 
-### Loop predicates (`until` / `while`)
+### Loops (`repeat` + `until` / `while`)
 
-A task with `repeat > 1` can break out of its loop early via one of two
-predicates (mutually exclusive — set at most one):
+A task with `repeat > 1` can break out of its loop early:
 
 ```
 until: output.match(<regex>)       # break as soon as an output matches
@@ -426,19 +321,11 @@ while: output.match(<regex>)       # loop while an output matches; break otherwi
 while: output.not_match(<regex>)   # loop while no output matches; break otherwise
 ```
 
-Iteration 1 always runs before the predicate is evaluated. Both fields
-parse at conduit-load time — a malformed regex fails before the first
-task starts. The regex grammar is the same as the dependency DSL above:
-everything between the leftmost `(` and the final `)`, no quoting,
-matched with `re.search`.
+Set at most one of `until` / `while`. The first iteration always runs
+before the predicate is checked.
 
-**Predicate scope** depends on the task type:
-
-- Non-conduit tasks — the predicate sees the single iteration output.
-- `tool:conduit` tasks — the predicate sees **every nested sub-task
-  output of that iteration** and fires on any-match. This lets you wrap
-  a multi-step conduit, retry it, and break the moment any internal
-  step emits a signal — not just the conduit's aggregate output.
+For `tool:conduit` loops, the predicate sees **every nested sub-task
+output of that iteration** and fires on any match.
 
 ```yaml
 - retry_while_rate_limited:
@@ -454,95 +341,165 @@ matched with `re.search`.
     until: output.match("PASS")
 ```
 
-### HITL inputs
+### Retries and per-task timeout
 
-`tool:hitl` tasks define their own `inputs: {name: description}` map. At
-runtime the executor prints the task's prompt, then asks for each input by
-name with its description. The answers are:
+- `retries: <n>` — if a task *fails*, re-run it up to `n` more times
+  (default `0`). This is different from `repeat`, which loops a task
+  that is *succeeding*.
+- `timeout: <seconds>` — override the per-task time limit for one task.
+  When omitted, the conduit-level `timeout` applies.
 
-1. Appended to the flow's `input.yaml` as **top-level** keys (on collision
-   they overwrite existing values).
-2. Added to `context.inputs` so downstream tasks can use
-   `{{inputs.<name>}}` in addition to `{{<hitl_task>.output}}` (which is a
-   YAML dump of the collected map).
+### Asking a human (`tool:hitl`)
 
-### Harness interactive mode
+A `tool:hitl` task declares its own `inputs: {name: description}`
+map. At runtime flow-atelier prints the prompt, asks for each input
+by name on the terminal, and saves the answers so downstream tasks
+can use them as `{{inputs.<name>}}`.
 
-When a harness task sets `interactive: true`, flow-atelier appends the
-following instruction to every user message it sends to the agent:
+### Long AI conversations (`interactive: true`)
+
+When a harness task sets `interactive: true`, flow-atelier appends
+this line to every message it sends to the AI:
 
 > When — and only when — you are completely finished, output the exact
 > token `[ATELIER_DONE]` to signal completion.
 
-The executor keeps the ACP session open across turns:
+Then it keeps the conversation open: the AI replies, flow-atelier
+streams the reply to your terminal, and if the AI didn't write
+`[ATELIER_DONE]` yet, flow-atelier asks **you** for the next message
+to send back. The loop ends when `[ATELIER_DONE]` shows up.
 
-1. Sends the (resolved + suffixed) task prompt as a `session/prompt`.
-2. Streams the agent's response chunks to your terminal as they arrive.
-3. If the chunk buffer now contains the marker, the task completes.
-4. Otherwise it asks you for your next reply on the terminal and sends
-   that back as the next user message (marker suffix re-appended).
-5. Loop, bounded by an internal max-turns safety net.
+If the AI asks for permission to run a tool, you'll see a numbered
+menu on the terminal; your choice is sent back as the answer.
 
-Permission requests coming from the agent (e.g. "can I run this tool?")
-are presented to you as a numbered menu; your choice is returned to the
-agent as the permission outcome.
+Non-interactive tasks run one turn and stop.
 
-Non-interactive tasks run a single turn and return whatever the agent
-streamed before `stop_reason`.
+## Where conduits live
+
+Conduits can live in two places:
+
+- **Project**: `./.atelier/conduits/` — scaffolded by `atelier init`.
+- **Global**: `~/.atelier/conduits/` — shared across all projects.
+
+When you run a conduit, flow-atelier checks the project folder first,
+then the global folder. A project-level conduit silently overrides a
+global one with the same name.
+
+Flows are **always project-local** — every `atelier run` writes its
+flow folder under `.atelier/flows/` in the current working directory.
+
+## Commands
+
+```
+atelier init
+atelier check [<conduit>]                              # validate conduit(s) without running
+atelier run <conduit> [--input key=value ...] [--show-steps/--hide-steps]
+atelier run --resume <flow_id>                         # resume a failed/crashed flow
+atelier status <flow_id>
+atelier logs <flow_id> [--task <name>] [--follow] [--json]
+atelier list conduits
+atelier list flows [--conduit <name>]
+atelier rm <flow_id> [--force] [--yes]                 # delete one flow run
+atelier prune [--conduit <name>] [--older-than <days>] [--keep <n>]   # bulk-delete old flows
+
+# scheduling
+atelier schedule add <file.{json,yaml}>
+atelier schedule list [--json]
+atelier schedule remove <id-or-name>
+atelier schedule run-now <id-or-name>
+atelier scheduler start [--reload-interval 30] [--log-level INFO]
+atelier scheduler status [--json]
+
+# HTTP + WebSocket server
+atelier serve [--host 127.0.0.1] [--port 8000] \
+              [--reload-interval 30] [--cors-origin URL]* \
+              [--log-level INFO]
+```
+
+## Running on a schedule
+
+`atelier scheduler` runs conduits on a wall-clock schedule. Each
+schedule is one YAML file under `.atelier/schedules/<name>.yaml`. The
+daemon is one foreground process you can put under `systemd`,
+`launchd`, or any supervisor.
+
+To register a schedule, write a YAML file like the one below and run
+`atelier schedule add <file>`:
+
+```yaml
+conduit_name: report
+inputs:
+  date: today
+run_path: /abs/path
+schedule:
+  mode: recurring
+  name: weekday mornings
+  days: [1, 2, 3, 4, 5]
+  times: ["06:00", "12:00"]
+```
+
+`days` are `1=Mon` .. `7=Sun`; `times` are `"HH:mm"` 24-hour strings.
+One-shots use `mode: once` with a `run_at` ISO datetime instead of
+`days` / `times`. `atelier schedule add` also accepts the same shape
+in JSON if you prefer that format.
+
+- New or removed schedules are picked up on the next reload tick
+  (default 30s).
+- One-shot schedules remember they fired, so a daemon restart never
+  re-runs them.
+- Each schedule runs at most one instance at a time; missed fires
+  are coalesced.
+- `atelier schedule run-now <id-or-name>` fires a schedule
+  immediately, bypassing the daemon.
+
+## HTTP API (`atelier serve`)
+
+`atelier serve` boots a single process that hosts both the HTTP /
+WebSocket API and the scheduler daemon. It is the entry point the
+Flow Atelier visual frontend connects to.
+
+| Method   | Path                       | Notes |
+|----------|----------------------------|-------|
+| `GET`    | `/conduits`                | List conduits |
+| `GET`    | `/conduits/:name`          | Read one |
+| `POST`   | `/conduits`                | Create (201 on success, 409 on collision) |
+| `PATCH`  | `/conduits/:name`          | Partial update |
+| `DELETE` | `/conduits/:name`          | Delete |
+| `POST`   | `/conduits/open-path`      | Reveal flow run path in OS file explorer |
+| `POST`   | `/tasks/run`               | Run an ad-hoc one-task conduit |
+| `GET`    | `/schedules`               | List active schedules |
+| `POST`   | `/schedules`               | Create |
+| `DELETE` | `/schedules/:id`           | Soft-delete |
+| `GET`    | `/flows`                   | List prior flows |
+| `GET`    | `/flows/:id/logs`          | Per-flow log entries |
+| `WS`     | `/ws/run-conduit`          | Run flows + HITL gates over a socket |
+
+Binds to `127.0.0.1:8000` by default; pass `--host 0.0.0.0` to expose
+on the LAN. `--cors-origin` is repeatable.
 
 ## Folder layout
 
-The `.atelier` directory lives in the working directory where `atelier` is
-invoked.
+The `.atelier` directory lives in the working directory where
+`atelier` is invoked.
 
 ```
 .atelier/
 ├── conduits/
 │   └── <conduit_name>/conduit.yaml
 ├── schedules/
-│   ├── <schedule_name>.yaml             # one ScheduleDefinition per file
-│   └── .state.json                      # fired-once markers (managed by the daemon)
+│   └── <schedule_name>.yaml                # one YAML file per schedule
+├── scheduler_state.json                    # fired-once markers
 └── flows/
-    └── <flow_id>/                       # <conduit>_<uuid8>_<YYYYMMDDTHHMMSSZ>
-        ├── input.yaml
-        ├── logs.json                    # append-only task execution log
-        ├── progress.json                # live per-task status
+    └── <flow_id>/                          # <YYYYMMDD>_<uuid8>_<conduit>
+        ├── input.yaml                      # the inputs this run was given
+        ├── logs.jsonl                      # append-only log, one JSON object per line
+        ├── progress.json                   # live per-task status
+        ├── outputs.yaml                    # per-task outputs (written as tasks finish)
         └── flows/
-            └── <child_flow_id>/...      # nested tool:conduit runs
+            └── <child_flow_id>/...         # nested tool:conduit runs
 ```
 
-## Development
+## Contributing
 
-Run the test suite:
-
-```bash
-uv run pytest                                  # fast unit suite (live tests excluded)
-uv run pytest -m live tests/test_live_harness.py -v   # live ACP smoke tests
-```
-
-The live harness tests are gated behind the `live` pytest marker so a
-bare `pytest` never spends tokens by accident. They spawn the real Zed
-ACP adapters for Claude Code and Codex via `npx`, so they cost tokens
-and need network + valid auth. They're wrapped in a try/xfail so
-transient flakes don't break the suite.
-
-## Architecture
-
-```
-app/
-├── main.py                    # Typer CLI (thin)
-├── core/
-│   ├── atelier.py             # facade — wires everything
-│   └── settings.py            # pydantic-settings (ATELIER_* env)
-├── services/
-│   ├── executor/              # ExecutorBase + bash / hitl / conduit / harness
-│   └── store/                 # StoreBase + FilesystemStore
-├── modules/
-│   ├── engine.py              # async DAG engine
-│   ├── templating.py          # {{inputs.x}} / {{task.output}} resolver
-│   └── conditions.py          # depends_on parser + evaluator
-└── schemas/                   # pydantic models (Conduit, Flow, Progress, ...)
-```
-
-The engine only depends on base classes (`StoreBase`, `ExecutorBase`) so
-new tools or storage backends can be added without touching the engine.
+For test instructions, the project layout, and internal architecture
+notes, see [DEVELOPMENT.md](./DEVELOPMENT.md).

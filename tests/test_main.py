@@ -536,7 +536,7 @@ def test_schedule_add_and_list(workdir, tmp_path):
     result = runner.invoke(app, ["schedule", "add", str(src)])
     assert result.exit_code == 0, result.output
     assert "installed" in result.output
-    assert (workdir / ".atelier" / "schedules" / "nightly.yaml").exists()
+    assert list((workdir / ".atelier" / "schedules").glob("nightly-*.yaml"))
 
     listing = runner.invoke(app, ["schedule", "list"])
     assert listing.exit_code == 0, listing.output
@@ -1156,3 +1156,503 @@ def test_no_prompt_for_conduit_without_inputs(workdir, monkeypatch):
     result = runner.invoke(app, ["run", "hello", "-i", "name=world"])
     assert result.exit_code == 0, result.output
     assert len(prompted_keys) == 0
+
+
+# ---------------------------------------------------------------- check cmd
+
+
+def _write_conduit(workdir, name, yaml_text, *, folder=None):
+    """Write a conduit.yaml under the workdir's project conduits dir.
+
+    :param workdir: tmp_path returned by the ``workdir`` fixture.
+    :param name: conduit name used for the YAML and (default) folder.
+    :param yaml_text: full conduit.yaml contents to write.
+    :param folder: override folder name to provoke name/folder mismatch.
+    """
+    folder = folder or name
+    d = workdir / ".atelier" / "conduits" / folder
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "conduit.yaml").write_text(yaml_text)
+
+
+def test_check_clean_conduit_ok(workdir):
+    """A valid conduit reports OK and exits 0.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "hello"])
+    assert result.exit_code == 0, result.output
+    assert "hello" in result.output
+    assert "OK" in result.output
+
+
+def test_check_unknown_conduit(workdir):
+    """`check <missing>` prints a clear error and exits 1.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "nope"])
+    assert result.exit_code == 1
+    assert "unknown conduit" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_check_cycle(workdir):
+    """A circular dependency is reported as FAIL with exit 1.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "cyc",
+        """
+name: cyc
+description: cycle
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: ["b"]
+  - b:
+      description: b
+      task: "echo b"
+      tool: tool:bash
+      depends_on: ["a"]
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "cyc"])
+    assert result.exit_code == 1
+    assert "FAIL" in result.output
+    assert "circular" in result.output
+
+
+def test_check_unknown_dep(workdir):
+    """A dependency on a missing task is reported as FAIL.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "udep",
+        """
+name: udep
+description: unknown dep
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: ["ghost"]
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "udep"])
+    assert result.exit_code == 1
+    assert "unknown task 'ghost'" in result.output
+
+
+def test_check_dangling_template_ref(workdir):
+    """A {{ref.output}} outside the depends_on chain is reported as FAIL.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "dang",
+        """
+name: dang
+description: dangling ref
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: []
+  - b:
+      description: b
+      task: "use {{a.output}}"
+      tool: tool:bash
+      depends_on: []
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "dang"])
+    assert result.exit_code == 1
+    assert "references 'a'" in result.output
+    assert "depends_on" in result.output
+
+
+def test_check_bad_predicate_regex(workdir):
+    """A malformed loop predicate regex is reported as FAIL.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "badre",
+        """
+name: badre
+description: bad regex
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: []
+      repeat: 3
+      until: "output.match([unclosed)"
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "badre"])
+    assert result.exit_code == 1
+    assert "FAIL" in result.output
+
+
+def test_check_duplicate_task_names(workdir):
+    """Duplicate task names are reported as FAIL.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "dup",
+        """
+name: dup
+description: dup names
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: []
+  - a:
+      description: a2
+      task: "echo a2"
+      tool: tool:bash
+      depends_on: []
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "dup"])
+    assert result.exit_code == 1
+    assert "duplicate task names" in result.output
+
+
+def test_check_name_folder_mismatch(workdir):
+    """A conduit whose name differs from its folder is reported as FAIL.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "inner",
+        """
+name: inner
+description: mismatch
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: []
+""",
+        folder="outer",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "outer"])
+    assert result.exit_code == 1
+    assert "!=" in result.output
+
+
+def test_check_malformed_yaml(workdir):
+    """Broken YAML is reported as a one-line FAIL, not a traceback.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(workdir, "broke", "name: broke\ntasks: [unclosed\n")
+    runner = CliRunner()
+    result = runner.invoke(app, ["check", "broke"])
+    assert result.exit_code == 1
+    assert "invalid YAML" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_check_all_reports_good_and_bad(workdir):
+    """`check` (no arg) lists every conduit and exits 1 if any fails.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "cyc",
+        """
+name: cyc
+description: cycle
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:bash
+      depends_on: ["b"]
+  - b:
+      description: b
+      task: "echo b"
+      tool: tool:bash
+      depends_on: ["a"]
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["check"])
+    assert result.exit_code == 1
+    assert "hello" in result.output and "OK" in result.output
+    assert "cyc" in result.output and "FAIL" in result.output
+
+
+def test_list_conduits_invalid_shows_reason(workdir):
+    """A malformed conduit shows ``(invalid: …)`` instead of ``(unreadable)``.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "broke",
+        """
+name: broke
+description: bad tool
+tasks:
+  - a:
+      description: a
+      task: "echo a"
+      tool: tool:nope
+      depends_on: []
+""",
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["list", "conduits"])
+    assert result.exit_code == 0, result.output
+    # The good conduit still renders normally; the bad one shows a reason.
+    assert "hello" in result.output
+    assert "invalid" in result.output
+    assert "(unreadable)" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_list_conduits_json_includes_error(workdir):
+    """JSON output carries an ``error`` reason for unreadable conduits.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(workdir, "broke", "name: broke\ntasks: [unclosed\n")
+    runner = CliRunner()
+    result = runner.invoke(app, ["list", "conduits", "--json"])
+    assert result.exit_code == 0, result.output
+    by_name = {e["name"]: e for e in _json.loads(result.output)}
+    assert by_name["hello"]["error"] is None
+    assert by_name["broke"]["error"]
+    assert "invalid YAML" in by_name["broke"]["error"]
+
+
+def test_run_invalid_conduit(workdir):
+    """`run <malformed>` exits 1 with a readable message and a fix pointer.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(workdir, "broke", "name: broke\ntasks: [unclosed\n")
+    runner = CliRunner()
+    result = runner.invoke(app, ["run", "broke"])
+    assert result.exit_code == 1
+    assert "invalid conduit" in result.output
+    assert "fix conduits" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_run_resume_invalid_conduit(workdir):
+    """`run --resume` on a now-malformed conduit shows the friendly message.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_conduit(
+        workdir,
+        "willfail",
+        """
+name: willfail
+description: fails
+tasks:
+  - boom:
+      description: boom
+      task: "exit 1"
+      tool: tool:bash
+      depends_on: []
+""",
+    )
+    runner = CliRunner()
+    r1 = runner.invoke(app, ["run", "willfail"])
+    assert r1.exit_code == 1
+    from flow_atelier.core.atelier import Atelier
+
+    flows = Atelier().list_flows("willfail")
+    assert flows
+    fid = flows[0]
+    # Corrupt the conduit, then resume the failed flow.
+    (workdir / ".atelier" / "conduits" / "willfail" / "conduit.yaml").write_text(
+        "name: willfail\ntasks: [unclosed\n"
+    )
+    r2 = runner.invoke(app, ["run", "--resume", fid])
+    assert r2.exit_code == 1
+    assert "invalid conduit" in r2.output
+    assert "fix conduits" in r2.output
+    assert "Traceback" not in r2.output
+
+
+# --- liveness / crashed-flow detection -------------------------------------
+
+def _run_hello(runner, name="a"):
+    """Run the hello conduit and return its flow id.
+
+    :param runner: CliRunner instance.
+    :param name: value for the greet input.
+    :returns: the created flow id.
+    """
+    result = runner.invoke(app, ["run", "hello", "--input", f"name={name}"])
+    assert result.exit_code == 0, result.output
+    line = [l for l in result.output.splitlines() if "flow_id" in l][0]
+    return line.split()[-1]
+
+
+def _dead_local_pid():
+    """Return a pid that has provably exited on this host."""
+    import subprocess
+    import sys as _sys
+
+    proc = subprocess.Popen([_sys.executable, "-c", ""])
+    proc.wait()
+    return proc.pid
+
+
+def _force_running(flow_id, pid):
+    """Rewrite a flow's progress.json to status=running with the given pid.
+
+    :param flow_id: flow to mutate.
+    :param pid: runner_pid to record (dead pid simulates a crash).
+    """
+    import socket
+
+    from flow_atelier.core.atelier import Atelier
+    from flow_atelier.schemas.progress import FlowStatus
+
+    atelier = Atelier()
+    progress = atelier.store.read_progress(flow_id)
+    progress.status = FlowStatus.running
+    progress.runner_pid = pid
+    progress.runner_host = socket.gethostname()
+    atelier.store.write_progress(flow_id, progress)
+
+
+def test_run_records_runner_identity(workdir):
+    """A started flow persists this process's pid and a non-empty host.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    flow_id = _run_hello(runner)
+    from flow_atelier.core.atelier import Atelier
+
+    progress = Atelier().store.read_progress(flow_id)
+    # CliRunner runs in-process, so the runner pid is this test process.
+    assert progress.runner_pid == os.getpid()
+    assert progress.runner_host
+
+
+def test_status_reports_crashed_with_resume_hint(workdir):
+    """status on a dead-runner flow shows crashed + a resume hint.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    flow_id = _run_hello(runner)
+    _force_running(flow_id, _dead_local_pid())
+
+    result = runner.invoke(app, ["status", flow_id])
+    assert result.exit_code == 0, result.output
+    assert "crashed" in result.output
+    assert f"--resume {flow_id}" in result.output
+
+    jr = runner.invoke(app, ["status", flow_id, "--json"])
+    assert jr.exit_code == 0
+    import json as _json
+
+    payload = _json.loads(jr.output)
+    assert payload["crashed"] is True
+    # Persisted status field is untouched.
+    assert payload["status"] == "running"
+
+
+def test_status_live_running_not_crashed(workdir):
+    """status on a live-runner running flow shows running, no hint.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    flow_id = _run_hello(runner)
+    _force_running(flow_id, os.getpid())
+
+    result = runner.invoke(app, ["status", flow_id])
+    assert result.exit_code == 0
+    assert "crashed" not in result.output
+    assert "--resume" not in result.output
+
+    jr = runner.invoke(app, ["status", flow_id, "--json"])
+    payload = __import__("json").loads(jr.output)
+    assert payload["crashed"] is False
+
+
+def test_list_flows_marks_crashed(workdir):
+    """list flows renders a dead-runner flow as crashed, a live one running.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    dead_flow = _run_hello(runner, "dead")
+    live_flow = _run_hello(runner, "live")
+    _force_running(dead_flow, _dead_local_pid())
+    _force_running(live_flow, os.getpid())
+
+    result = runner.invoke(app, ["list", "flows"])
+    assert result.exit_code == 0, result.output
+    assert "crashed" in result.output
+    assert "running" in result.output
+
+    jr = runner.invoke(app, ["list", "flows", "--json"])
+    import json as _json
+
+    rows = {r["flow_id"]: r for r in _json.loads(jr.output)}
+    assert rows[dead_flow]["crashed"] is True
+    assert rows[live_flow]["crashed"] is False
+
+
+def test_follow_logs_exits_on_crash(workdir):
+    """logs --follow on a dead-runner flow terminates instead of hanging.
+
+    :param workdir: isolated working directory fixture.
+    """
+    import threading
+
+    runner = CliRunner()
+    flow_id = _run_hello(runner)
+    _force_running(flow_id, _dead_local_pid())
+
+    box = {}
+
+    def _go():
+        box["result"] = runner.invoke(app, ["logs", flow_id, "--follow"])
+
+    t = threading.Thread(target=_go)
+    t.start()
+    t.join(timeout=10)
+    assert not t.is_alive(), "logs --follow hung on a crashed flow"
+    assert "crashed" in box["result"].output

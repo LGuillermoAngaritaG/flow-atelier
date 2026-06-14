@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from collections import Counter
 
+import yaml
+from pydantic import ValidationError
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -247,6 +249,7 @@ _FLOW_STATUS_STYLE: dict[str, str] = {
     FlowStatus.completed.value: "green",
     FlowStatus.failed.value: "red",
     FlowStatus.running.value: "yellow",
+    "crashed": "magenta",
 }
 
 _TASK_STATUS_GLYPHS: list[tuple[TaskStatus, str, str]] = [
@@ -365,6 +368,51 @@ def _render_log_entry(entry, show: str, console: Console) -> None:
             padding=(0, 1),
         )
     )
+
+
+def _format_error_loc(loc: tuple[object, ...]) -> str:
+    """Render a pydantic error ``loc`` tuple as e.g. ``tasks[2].tool``.
+
+    Integer elements become ``[i]`` (list indices); string elements become
+    ``.key`` (field names). The leading dot is stripped.
+
+    :param loc: the ``loc`` tuple from a pydantic error dict.
+    """
+    out = ""
+    for part in loc:
+        out += f"[{part}]" if isinstance(part, int) else f".{part}"
+    return out.lstrip(".")
+
+
+def format_conduit_error(exc: Exception) -> str:
+    """Translate a conduit-load failure into one compact, plain-text line.
+
+    Covers the failure modes ``read_conduit`` surfaces: pydantic
+    ``ValidationError`` (rendered as ``field.path: message``, first error only),
+    ``yaml.YAMLError`` (with a line number when the mark is available), and any
+    other error — notably the ``ValueError`` raised for a wrapped YAML parse
+    error or a conduit-name/folder mismatch. Returns plain text with no Rich
+    markup; callers add color and escape it.
+
+    :param exc: the exception raised while loading a conduit.
+    """
+    if isinstance(exc, ValidationError):
+        errors = exc.errors()
+        if not errors:
+            return " ".join(str(exc).split())
+        first = errors[0]
+        path = _format_error_loc(tuple(first.get("loc", ())))
+        msg = first.get("msg", "")
+        text = f"{path}: {msg}" if path else msg
+        if len(errors) > 1:
+            text += f" (+{len(errors) - 1} more)"
+        return " ".join(text.split())
+    if isinstance(exc, yaml.YAMLError):
+        problem = getattr(exc, "problem", None)
+        mark = getattr(exc, "problem_mark", None)
+        if problem and mark is not None:
+            return f"invalid YAML: {problem} (line {mark.line + 1})"
+    return " ".join(str(exc).split())
 
 
 def _render_planned_table(planned: list[PlannedJob]) -> Table:

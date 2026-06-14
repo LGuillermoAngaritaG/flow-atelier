@@ -8,6 +8,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _TASK_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+# Conduit names become a single filesystem path component (conduits/<name>/),
+# so they must reject "/", ".", ".." to prevent path traversal on write/delete.
+# Hyphens are allowed because real conduits on disk use them (autonomous-projects).
+_CONDUIT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class ToolType(str, Enum):
@@ -54,6 +58,9 @@ class TaskDefinition(BaseModel):
     while_: str | None = Field(default=None, alias="while")
     on_exhaust: Literal["complete", "fail"] = "complete"
     stagnation_limit: int | None = None
+    retries: int = 0
+    retry_backoff: float = 0.0
+    timeout: int | None = None
     interactive: bool = False
     inputs: dict[str, Any] = Field(default_factory=dict)
 
@@ -82,6 +89,42 @@ class TaskDefinition(BaseModel):
         """
         if v < 1:
             raise ValueError("repeat must be >= 1")
+        return v
+
+    @field_validator("retries")
+    @classmethod
+    def _retries_non_negative(cls, v: int) -> int:
+        """Ensure ``retries`` is zero or positive.
+
+        :param v: the proposed ``retries`` value.
+        :returns: the validated ``retries`` value unchanged.
+        """
+        if v < 0:
+            raise ValueError("retries must be >= 0")
+        return v
+
+    @field_validator("retry_backoff")
+    @classmethod
+    def _retry_backoff_non_negative(cls, v: float) -> float:
+        """Ensure ``retry_backoff`` is zero or positive.
+
+        :param v: the proposed ``retry_backoff`` value in seconds.
+        :returns: the validated ``retry_backoff`` value unchanged.
+        """
+        if v < 0:
+            raise ValueError("retry_backoff must be >= 0")
+        return v
+
+    @field_validator("timeout")
+    @classmethod
+    def _timeout_positive(cls, v: int | None) -> int | None:
+        """Ensure an explicit per-task ``timeout`` is at least one second.
+
+        :param v: the proposed ``timeout`` value, or ``None`` to inherit.
+        :returns: the validated ``timeout`` value unchanged.
+        """
+        if v is not None and v < 1:
+            raise ValueError("timeout must be >= 1")
         return v
 
     @model_validator(mode="after")
@@ -132,6 +175,21 @@ class Conduit(BaseModel):
     max_concurrency: int = Field(default=3, ge=1)
     inputs: dict[str, InputSpec] = Field(default_factory=dict)
     tasks: list[TaskDefinition]
+
+    @field_validator("name")
+    @classmethod
+    def _name_valid(cls, v: str) -> str:
+        """Restrict conduit names to a safe single filesystem path component.
+
+        :param v: the proposed conduit name.
+        :returns: the validated name unchanged.
+        """
+        if not _CONDUIT_NAME_RE.match(v):
+            raise ValueError(
+                f"invalid conduit name {v!r}: only letters, digits, "
+                "underscores and hyphens are allowed"
+            )
+        return v
 
     @model_validator(mode="before")
     @classmethod

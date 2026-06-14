@@ -8,10 +8,35 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from flow_atelier.schemas.api import CreateScheduleInput, ScheduledJob
-from flow_atelier.services.scheduler.runner import _RELOAD_JOB_ID, SchedulerDaemon
+from flow_atelier.services.scheduler.runner import (
+    _RELOAD_JOB_ID,
+    SchedulerDaemon,
+    _resolve_run_path,
+    compute_planned_view,
+)
 from flow_atelier.services.scheduler.store import ScheduleStore
 
 UTC = ZoneInfo("UTC")
+
+
+@pytest.mark.parametrize(
+    "run_path",
+    ["", "relative/dir", "/abs/dir"],
+)
+def test_resolve_run_path_matches_between_daemon_and_view(run_path, tmp_path):
+    """The daemon's fire-path resolver and the planned-view preview must agree.
+
+    :param run_path: run_path variant (empty / relative / absolute).
+    :param tmp_path: pytest temp directory fixture.
+    """
+    base = tmp_path.resolve()
+    store = ScheduleStore(tmp_path / ".atelier")
+    store.create(_recurring(conduit="report", run_path=run_path))
+    daemon = SchedulerDaemon(store, default_working_dir=base)
+    job = store.list()[0]
+    view = compute_planned_view(store, default_zone=UTC, default_working_dir=base)
+    assert daemon._resolve_working_dir(job) == view[0].working_dir
+    assert daemon._resolve_working_dir(job) == _resolve_run_path(run_path, base)
 
 
 def _recurring(conduit: str = "report", run_path: str = "/tmp/run") -> CreateScheduleInput:
@@ -221,7 +246,7 @@ async def test_sync_replaces_when_config_changes(daemon, store):
     initial_hash = daemon._known[job.id]
     # Mutate the on-disk YAML through a round-trip so the new value stays
     # a string (PyYAML auto-quotes ambiguous scalars on safe_dump).
-    yaml_path = store.schedules_dir / "report.yaml"
+    (yaml_path,) = list(store.schedules_dir.glob("report-*.yaml"))
     payload = yaml.safe_load(yaml_path.read_text())
     payload["schedule"]["times"] = ["10:30"]
     yaml_path.write_text(yaml.safe_dump(payload, sort_keys=False))

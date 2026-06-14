@@ -79,6 +79,11 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
         """
         if websocket.application_state == WebSocketState.CONNECTED:
             await websocket.send_json(payload)
+        else:
+            logger.debug(
+                "dropping %s envelope: socket not connected",
+                payload.get("type", "?"),
+            )
 
     broker = WebSocketBroker(send=_send)
     scheduler_bus = getattr(base_atelier, "scheduler_bus", None)
@@ -121,6 +126,10 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
             elif isinstance(message, CancelMessage):
                 broker.cancel(message.flow_id)
     finally:
+        # A client going away must not leave its runs executing detached: cancel
+        # every tracked run task, which also unblocks any tool:hitl task waiting
+        # on an answer that can no longer be delivered over this dead socket.
+        broker.cancel_all()
         if scheduler_bus is not None:
             scheduler_bus.unsubscribe(_send)
         try:
@@ -155,6 +164,20 @@ def _wire_atelier(
         broker=broker, flow_id=flow_id
     )
 
+    # Hold strong references to fire-and-forget broadcast tasks: the event
+    # loop keeps only a weak reference to a bare create_task, so without this
+    # a send can be garbage-collected mid-flight and silently dropped.
+    pending: set[asyncio.Task] = set()
+
+    def _spawn(coro: Awaitable[None]) -> None:
+        """Schedule a broadcast coroutine while retaining a strong reference.
+
+        :param coro: the broadcast coroutine to run detached.
+        """
+        task = asyncio.create_task(coro)
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
     async def _on_task_event(event: TaskEvent) -> None:
         """Emit per-step and step-status envelopes for a task event.
 
@@ -188,7 +211,7 @@ def _wire_atelier(
 
         :param event: task event produced by the engine.
         """
-        asyncio.create_task(_on_task_event(event))
+        _spawn(_on_task_event(event))
 
     def on_task_starting(name: str, tool: str) -> None:
         """Emit a step_status=running envelope when a task starts.
@@ -200,7 +223,7 @@ def _wire_atelier(
         :param tool: tool kind string for the task.
         """
         fid = _current_flow_ctx.get(flow_id)
-        asyncio.create_task(
+        _spawn(
             broker.send(
                 {
                     "type": "step_status",
@@ -227,7 +250,7 @@ def _wire_atelier(
         except ValueError:
             pass
         parent_task = _current_task_ctx.get("") or None
-        asyncio.create_task(
+        _spawn(
             broker.send(
                 {
                     "type": "started",
@@ -344,6 +367,12 @@ async def _spawn_run(
     message: RunMessage,
 ) -> None:
     """Wire a per-flow Atelier and start the run task.
+
+    Trust model: ``message.run_path`` becomes the execution ``working_dir``
+    verbatim, so a caller who can post a ``RunMessage`` chooses where bash and
+    harness tasks run. This is the same boundary as ``tool:bash`` and
+    ``open-path`` — anyone who can reach this endpoint can already run shell —
+    so it grants no new privilege, but the cwd is intentionally unconstrained.
 
     :param base_atelier: connection-scoped :class:`Atelier` used as template.
     :param broker: :class:`WebSocketBroker` that fans envelopes out.

@@ -10,6 +10,7 @@ from flow_atelier.cli._shared import _resolve_flow_id, console
 from flow_atelier.cli.main import app
 from flow_atelier.cli.rendering.render import _render_log_entry
 from flow_atelier.core.atelier import Atelier
+from flow_atelier.modules.liveness import is_crashed
 from flow_atelier.schemas.progress import FlowStatus
 
 _LOG_SHOW_CHOICES = ("output", "stdout", "stderr", "steps", "all")
@@ -156,6 +157,14 @@ def _follow_logs(
                 # Final pass to capture any entries written between the last
                 # read and the terminal state transition.
                 _drain_and_render()
+                return
+            if is_crashed(progress):
+                # Runner is provably dead but progress.json is frozen at
+                # running; drain and stop rather than polling forever.
+                _drain_and_render()
+                console.print(
+                    "[dim]— flow runner is no longer alive (crashed) —[/dim]"
+                )
                 return
             time.sleep(poll_seconds)
     except KeyboardInterrupt:

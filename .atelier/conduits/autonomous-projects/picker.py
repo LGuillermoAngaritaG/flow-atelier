@@ -8,10 +8,13 @@ Filters, in order:
     1. Claude Code 5h-window usage gate
     2. PAUSED gate (skip if project name exists in projects/paused/)
     3. In-progress gate (resume project with a task in in-progress/)
-    4. Pending-Review gate (count files in tasks/<name>/pending-review/)
-    5. Idle time = max(latest git commit, latest mtime under `location`)
-    6. Sort survivors by frontmatter priority asc; ties broken by oldest
+    4. Idle time = max(latest git commit, latest mtime under `location`)
+    5. Sort survivors by frontmatter priority asc; ties broken by oldest
        project file mtime.
+
+The pending-review cap is NOT enforced here — it only throttles to-do
+execution, which the conduit gates separately. A project with a full
+pending-review/ stays eligible so idea/review generation keeps running.
 """
 
 from __future__ import annotations
@@ -67,8 +70,8 @@ def claude_usage_pct(token_limit: int) -> tuple[float | None, str | None]:
 
 # ---------- idle gate ----------
 
-_IGNORE_DIRS = {".git", "node_modules", "__pycache__", ".venv", ".mypy_cache",
-                ".pytest_cache", "dist", "build", ".next"}
+_IGNORE_DIRS = {".git", ".atelier", "node_modules", "__pycache__", ".venv",
+                ".mypy_cache", ".pytest_cache", "dist", "build", ".next"}
 
 
 def max_mtime_under(path: Path) -> float:
@@ -88,6 +91,12 @@ def max_mtime_under(path: Path) -> float:
             except OSError:
                 continue
     return newest
+
+
+def emit_ready(path: Path, fm: dict[str, str]) -> None:
+    print(f"READY: {path}")
+    print(f"NAME: {path.stem}")
+    print(f"LOCATION: {fm.get('location', '')}")
 
 
 def git_last_commit_ts(path: Path) -> float:
@@ -120,8 +129,6 @@ def main() -> int:
                         help="Skip if Claude usage >= this percent.")
     parser.add_argument("--idle-hours", type=float, required=True,
                         help="Project must be untouched for this many hours.")
-    parser.add_argument("--max-pending-review", type=int, required=True,
-                        help="Skip project if pending-review/ >= this many files.")
     parser.add_argument("--token-limit", type=int, required=True,
                         help="Token ceiling for usage computation.")
     args = parser.parse_args()
@@ -160,6 +167,7 @@ def main() -> int:
 
     # 3. Parse frontmatter + ensure task folders exist
     _KANBAN = ("to-do", "in-progress", "pending-review", "done")
+    _EXTRA_DIRS = ("ideas", "bad_ideas")
     total = len(files)
     parsed: list[tuple[Path, dict[str, str]]] = []
     for f in files:
@@ -171,34 +179,23 @@ def main() -> int:
             print(f"warn: skipping {f.name}: no frontmatter", file=sys.stderr)
             continue
         project_tasks = tasks_dir / f.stem
-        for sub in _KANBAN:
+        for sub in (*_KANBAN, *_EXTRA_DIRS):
             (project_tasks / sub).mkdir(parents=True, exist_ok=True)
         parsed.append((f, fm))
 
     # 4. In-progress gate — pick the project with an unfinished task
-    for f, _fm in parsed:
+    for f, fm in parsed:
         ip_dir = tasks_dir / f.stem / "in-progress"
         if ip_dir.is_dir() and any(ip_dir.glob("*.md")):
-            print(f"READY: {f}")
+            emit_ready(f, fm)
             return 0
 
-    # 5. Pending-Review gate
-    survivors_pr: list[tuple[Path, dict[str, str]]] = []
-    pr_filtered = 0
-    for f, fm in parsed:
-        pr_dir = tasks_dir / f.stem / "pending-review"
-        pr_count = len(list(pr_dir.glob("*.md"))) if pr_dir.is_dir() else 0
-        if pr_count >= args.max_pending_review:
-            pr_filtered += 1
-            continue
-        survivors_pr.append((f, fm))
-
-    # 6. Idle gate
+    # 5. Idle gate
     now = time.time()
     idle_cutoff_secs = args.idle_hours * 3600.0
     survivors_idle: list[tuple[Path, dict[str, str], float]] = []
     idle_filtered = 0
-    for f, fm in survivors_pr:
+    for f, fm in parsed:
         location = Path(fm.get("location", "")).expanduser()
         mtime = max_mtime_under(location)
         gtime = git_last_commit_ts(location) if fm.get("use_git", "").lower() == "true" else 0.0
@@ -211,8 +208,7 @@ def main() -> int:
     if not survivors_idle:
         print(
             f"SKIP: no eligible project "
-            f"({idle_filtered} idle, "
-            f"{pr_filtered} pending-review, {total} total)"
+            f"({idle_filtered} idle, {total} total)"
         )
         return 0
 
@@ -230,8 +226,8 @@ def main() -> int:
         return prio, proj_mtime
 
     survivors_idle.sort(key=sort_key)
-    winner = survivors_idle[0][0]
-    print(f"READY: {winner}")
+    winner, winner_fm, _lt = survivors_idle[0]
+    emit_ready(winner, winner_fm)
     return 0
 
 

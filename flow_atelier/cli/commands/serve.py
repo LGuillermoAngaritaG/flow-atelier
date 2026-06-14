@@ -75,17 +75,26 @@ def serve_cmd(
         }
         scheduled_atelier = Atelier(base_dir=settings.global_atelier_dir)
         captured: dict[str, str | None] = {"flow_id": None}
+        # Strong references for fire-and-forget broadcasts — the loop keeps
+        # only a weak reference to a bare create_task, which can be GC'd
+        # mid-flight and drop the envelope.
+        pending: set[asyncio.Task] = set()
+
+        def _spawn(coro) -> None:
+            task = asyncio.create_task(coro)
+            pending.add(task)
+            task.add_done_callback(pending.discard)
 
         def _on_started(flow_id: str) -> None:
             captured["flow_id"] = flow_id
-            asyncio.create_task(
+            _spawn(
                 bus.broadcast(
                     {"type": "scheduled_run_started", "flow_id": flow_id, **base}
                 )
             )
 
         def _on_task_event(event: TaskEvent) -> None:
-            asyncio.create_task(
+            _spawn(
                 bus.broadcast(
                     {
                         "type": "scheduled_task_event",

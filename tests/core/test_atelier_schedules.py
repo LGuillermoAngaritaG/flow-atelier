@@ -15,7 +15,22 @@ def atelier(tmp_path, monkeypatch):
     :param monkeypatch: pytest monkeypatch fixture.
     """
     monkeypatch.delenv("ATELIER_GLOBAL_ATELIER_DIR", raising=False)
-    return Atelier(base_dir=tmp_path / ".atelier")
+    atelier = Atelier(base_dir=tmp_path / ".atelier")
+    # create_schedule validates conduit_name against the store, so the
+    # conduit the fixtures schedule must exist on disk.
+    conduit_dir = tmp_path / ".atelier" / "conduits" / "report"
+    conduit_dir.mkdir(parents=True)
+    (conduit_dir / "conduit.yaml").write_text(
+        "name: report\n"
+        "description: test conduit\n"
+        "tasks:\n"
+        "  - greet:\n"
+        "      description: say hi\n"
+        '      task: "echo hi"\n'
+        "      tool: tool:bash\n"
+        "      depends_on: []\n"
+    )
+    return atelier
 
 
 def _payload(**overrides) -> CreateScheduleInput:
@@ -55,6 +70,16 @@ def test_create_schedule_returns_scheduled_job(atelier):
     assert isinstance(job, ScheduledJob)
     assert job.conduit_name == "report"
     assert job.id.startswith("SCH-")
+
+
+def test_create_schedule_rejects_unknown_conduit(atelier):
+    """Verify create_schedule rejects a conduit_name with no conduit on disk.
+
+    :param atelier: Atelier facade fixture.
+    """
+    with pytest.raises(ValueError, match="unknown conduit"):
+        atelier.create_schedule(_payload(conduit_name="does-not-exist"))
+    assert atelier.list_schedules() == []
 
 
 def test_list_schedules_includes_created(atelier):

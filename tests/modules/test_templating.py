@@ -4,7 +4,9 @@ import pytest
 from flow_atelier.modules.templating import (
     SkipSignal,
     TemplateError,
+    TemplateRef,
     extract_task_refs,
+    extract_template_refs,
     resolve,
 )
 
@@ -172,3 +174,34 @@ def test_extract_task_refs_ignores_inputs_and_loop():
 def test_extract_task_refs_empty_for_plain_text():
     """Verify extract_task_refs returns an empty set without templates."""
     assert extract_task_refs("echo plain") == set()
+
+
+def test_extract_template_refs_classifies_each_form():
+    """Verify each grammar form is classified with the right kind/value."""
+    refs = extract_template_refs(
+        "{{inputs.x}} {{loop.previous}} {{loop.history}} {{build.output}}"
+    )
+    assert refs == [
+        TemplateRef("input", "x", "inputs.x"),
+        TemplateRef("loop", "loop.previous", "loop.previous"),
+        TemplateRef("loop", "loop.history", "loop.history"),
+        TemplateRef("task", "build", "build.output"),
+    ]
+
+
+def test_extract_template_refs_flags_unrecognized():
+    """Verify malformed expressions are classified as 'unknown'."""
+    for expr in ("inputs", "job.outpt", "loop.histroy"):
+        refs = extract_template_refs(f"{{{{{expr}}}}}")
+        assert refs == [TemplateRef("unknown", expr, expr)]
+
+
+def test_extract_template_refs_empty_for_plain_text():
+    """Verify plain text yields no refs."""
+    assert extract_template_refs("echo plain") == []
+
+
+def test_extract_template_refs_preserves_source_order():
+    """Verify refs are returned in source-appearance order."""
+    refs = extract_template_refs("{{b.output}} {{inputs.a}}")
+    assert [r.value for r in refs] == ["b", "a"]

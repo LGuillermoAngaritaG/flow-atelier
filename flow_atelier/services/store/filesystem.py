@@ -76,12 +76,27 @@ class FilesystemStore(StoreBase):
 
     # ------------------------------------------------------------------ paths
 
+    @staticmethod
+    def _safe_conduit_name(name: str) -> str:
+        """Reject conduit names that aren't a single safe path component.
+
+        Defense-in-depth behind :class:`Conduit`'s name validator: guards any
+        caller that builds a conduit path without going through the schema.
+
+        :param name: conduit name to check.
+        :returns: the name unchanged when safe.
+        :raises ValueError: if the name contains a path separator or is ``.``/``..``.
+        """
+        if name in ("", ".", "..") or "/" in name or "\\" in name or os.sep in name:
+            raise ValueError(f"unsafe conduit name: {name!r}")
+        return name
+
     def _conduit_dir(self, name: str) -> Path:
         """Return the project-level directory for conduit ``name``.
 
         :param name: conduit name
         """
-        return self.base_dir / "conduits" / name
+        return self.base_dir / "conduits" / self._safe_conduit_name(name)
 
     def _conduit_yaml(self, name: str) -> Path:
         """Return the project-level ``conduit.yaml`` path for ``name``.
@@ -97,7 +112,7 @@ class FilesystemStore(StoreBase):
         """
         if self.global_dir is None:
             return None
-        return self.global_dir / "conduits" / name
+        return self.global_dir / "conduits" / self._safe_conduit_name(name)
 
     def _global_conduit_yaml(self, name: str) -> Path | None:
         """Return the global ``conduit.yaml`` path for ``name`` or ``None``.
@@ -142,7 +157,10 @@ class FilesystemStore(StoreBase):
             path = global_path
         else:
             raise FileNotFoundError(f"conduit not found: {name} ({project_path})")
-        data = yaml.safe_load(path.read_text())
+        try:
+            data = yaml.safe_load(path.read_text())
+        except yaml.YAMLError as e:
+            raise ValueError(f"{name}: invalid YAML — {e}") from e
         conduit = Conduit.model_validate(data)
         if conduit.name != name:
             raise ValueError(
@@ -336,6 +354,27 @@ class FilesystemStore(StoreBase):
             p.name for p in children_dir.iterdir() if p.is_dir()
         )
 
+    def delete_flow(self, flow_id: str) -> bool:
+        """Remove a flow directory and its nested child subtree.
+
+        :param flow_id: flow identifier
+        :returns: True if deleted, False if it didn't exist
+        """
+        try:
+            flow_dir = self._flow_dir(flow_id)
+        except FileNotFoundError:
+            return False
+        shutil.rmtree(flow_dir)
+        # Evict the flow itself and any cached children that lived under it,
+        # so no stale handles survive in the path/lock caches.
+        self._flow_paths.pop(flow_id, None)
+        self._log_locks.pop(flow_id, None)
+        for cached_id, cached_path in list(self._flow_paths.items()):
+            if cached_path.is_relative_to(flow_dir):
+                self._flow_paths.pop(cached_id, None)
+                self._log_locks.pop(cached_id, None)
+        return True
+
     # ------------------------------------------------------------------ logs
 
     def _lock_for(self, flow_id: str) -> asyncio.Lock:
@@ -409,7 +448,7 @@ class FilesystemStore(StoreBase):
         :param progress: progress snapshot to persist
         """
         path = self._flow_dir(flow_id) / "progress.json"
-        tmp = path.with_suffix(".json.tmp")
+        tmp = path.with_suffix(f".json.tmp.{uuid.uuid4().hex}")
         tmp.write_text(progress.model_dump_json(indent=2))
         _atomic_replace(tmp, path)
 
@@ -432,7 +471,8 @@ class FilesystemStore(StoreBase):
         path = self._flow_dir(flow_id) / "outputs.yaml"
         if not path.exists():
             return {}
-        return yaml.safe_load(path.read_text()) or {}
+        loaded = yaml.safe_load(path.read_text())
+        return loaded if isinstance(loaded, dict) else {}
 
     def write_outputs(self, flow_id: str, outputs: dict[str, Any]) -> None:
         """Atomically write ``outputs.yaml`` for ``flow_id``.

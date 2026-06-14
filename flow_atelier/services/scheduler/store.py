@@ -2,16 +2,19 @@
 
 Layout under ``<atelier>/``:
 
-- ``schedules/<slug(name)>.yaml``: one file per :class:`ScheduledJob`.
+- ``schedules/<slug(name)>-<hash>.yaml``: one file per :class:`ScheduledJob`.
   Deletes remove the file. The original ``schedule.name`` is preserved
-  inside the YAML; the filename is a filesystem-safe slug of that name.
+  inside the YAML; the filename is a filesystem-safe slug of that name plus a
+  short hash of the full name so distinct names that slug alike don't collide.
 - ``scheduler_state.json``: fired-once markers keyed by schedule ``id``.
 
 Atomic writes via ``os.replace``.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -23,6 +26,8 @@ from typing import Any
 import yaml
 
 from flow_atelier.schemas.api import CreateScheduleInput, ScheduledJob
+
+logger = logging.getLogger(__name__)
 
 _SLUG_RE = re.compile(r"[^a-z0-9._-]+")
 
@@ -37,6 +42,20 @@ def _slug(name: str) -> str:
     if not slug:
         raise ValueError(f"schedule name has no filesystem-safe characters: {name!r}")
     return slug
+
+
+def _filename_for_name(name: str) -> str:
+    """Return an injective ``*.yaml`` filename for ``name``.
+
+    The readable slug is kept as a prefix; a short hash of the *full* original
+    name disambiguates distinct names that slug identically (``"My Job"`` vs
+    ``"my-job"``), so they can no longer collide on one file.
+
+    :param name: human-readable schedule name
+    :raises ValueError: when the slug would be empty
+    """
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
+    return f"{_slug(name)}-{digest}.yaml"
 
 
 class ScheduleStore:
@@ -63,7 +82,23 @@ class ScheduleStore:
 
         :param name: schedule name
         """
-        return self.schedules_dir / f"{_slug(name)}.yaml"
+        return self.schedules_dir / _filename_for_name(name)
+
+    def _find_job_file(self, schedule_id: str) -> tuple[Path, ScheduledJob] | None:
+        """Locate the on-disk file backing ``schedule_id``.
+
+        Resolves by reading each file's ``id`` rather than recomputing the
+        filename, so pre-existing files written under an older slug scheme are
+        still found.
+
+        :param schedule_id: schedule identifier
+        :returns: ``(path, job)`` or ``None`` if no file matches
+        """
+        for path in self.schedules_dir.glob("*.yaml"):
+            job = self._load_file(path)
+            if job is not None and job.id == schedule_id:
+                return path, job
+        return None
 
     def _load_file(self, path: Path) -> ScheduledJob | None:
         """Load and validate one schedule YAML; return None on failure.
@@ -72,23 +107,29 @@ class ScheduleStore:
         """
         try:
             raw = yaml.safe_load(path.read_text())
-        except (yaml.YAMLError, OSError):
+        except (yaml.YAMLError, OSError) as e:
+            logger.warning("skipping unreadable schedule %s: %s", path.name, e)
             return None
         if not isinstance(raw, dict):
+            logger.warning("skipping malformed schedule %s: not a mapping", path.name)
             return None
         try:
             return ScheduledJob.model_validate(raw)
-        except Exception:  # noqa: BLE001 — skip malformed rows
+        except Exception as e:  # noqa: BLE001 — skip malformed rows
+            logger.warning("skipping invalid schedule %s: %s", path.name, e)
             return None
 
-    def _save_job(self, job: ScheduledJob) -> None:
+    def _save_job(self, job: ScheduledJob, path: Path | None = None) -> None:
         """Atomically write ``job`` to its YAML file.
 
         :param job: schedule to persist
+        :param path: explicit destination; defaults to the name-derived path.
+            Pass the file a job was loaded from to update it in place.
         """
-        path = self._path_for_name(job.schedule.name)
+        if path is None:
+            path = self._path_for_name(job.schedule.name)
         payload = job.model_dump(mode="json", exclude_none=True)
-        tmp = path.with_suffix(".yaml.tmp")
+        tmp = path.with_suffix(f".yaml.tmp.{uuid.uuid4().hex}")
         tmp.write_text(yaml.safe_dump(payload, sort_keys=False))
         os.replace(tmp, path)
 
@@ -166,14 +207,13 @@ class ScheduleStore:
         :raises KeyError: if no schedule exists for ``schedule_id``
         :returns: the job as it was on disk just before removal
         """
-        for job in self._iter_jobs():
-            if job.id == schedule_id:
-                path = self._path_for_name(job.schedule.name)
-                if path.exists():
-                    path.unlink()
-                self.clear_fired(schedule_id)
-                return job
-        raise KeyError(f"schedule not found: {schedule_id}")
+        hit = self._find_job_file(schedule_id)
+        if hit is None:
+            raise KeyError(f"schedule not found: {schedule_id}")
+        path, job = hit
+        path.unlink(missing_ok=True)
+        self.clear_fired(schedule_id)
+        return job
 
     def increment_runs(self, schedule_id: str) -> None:
         """Bump ``runs_completed`` for ``schedule_id`` if it still exists.
@@ -184,14 +224,14 @@ class ScheduleStore:
 
         :param schedule_id: schedule identifier
         """
-        for job in self._iter_jobs():
-            if job.id == schedule_id:
-                if not self._path_for_name(job.schedule.name).exists():
-                    return
-                self._save_job(
-                    job.model_copy(update={"runs_completed": job.runs_completed + 1})
-                )
-                return
+        hit = self._find_job_file(schedule_id)
+        if hit is None:
+            return
+        path, job = hit
+        self._save_job(
+            job.model_copy(update={"runs_completed": job.runs_completed + 1}),
+            path=path,
+        )
 
     # --------------------------------------------------------------- fired state
 

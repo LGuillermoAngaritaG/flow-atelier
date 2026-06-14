@@ -1,4 +1,7 @@
 """Unit tests for the conditions module."""
+import asyncio
+import time
+
 import pytest
 
 from flow_atelier.modules.conditions import (
@@ -60,49 +63,65 @@ def test_parse_empty():
         parse_dependency("")
 
 
-def test_evaluate_plain_completed():
+def test_parse_plain_rejects_unicode_name():
+    """Verify a plain dependency with a Unicode name is rejected.
+
+    ``str.isalnum()`` would accept ``café``, but no schema-valid task name
+    (ASCII ``[A-Za-z0-9_]+``) could ever match it, so it must be rejected.
+    """
+    with pytest.raises(DependencyParseError):
+        parse_dependency("café")
+
+
+def test_parse_conditional_rejects_unicode_task_name():
+    """Verify a conditional dependency with a Unicode task name is rejected."""
+    with pytest.raises(DependencyParseError):
+        parse_dependency("café.output.match(ok)")
+
+
+async def test_evaluate_plain_completed():
     """Verify evaluate() returns satisfied for a completed plain dep."""
     dep = parse_dependency("a")
     status = {"a": TaskStatus.completed}
-    assert evaluate(dep, status, {"a": "ok"}) == ("satisfied", None)
+    assert await evaluate(dep, status, {"a": "ok"}) == ("satisfied", None)
 
 
-def test_evaluate_plain_running():
+async def test_evaluate_plain_running():
     """Verify evaluate() returns wait for a running plain dep."""
     dep = parse_dependency("a")
-    assert evaluate(dep, {"a": TaskStatus.running}, {}) == ("wait", None)
+    assert await evaluate(dep, {"a": TaskStatus.running}, {}) == ("wait", None)
 
 
-def test_evaluate_plain_failed():
+async def test_evaluate_plain_failed():
     """Verify evaluate() returns skip with a 'failed' reason for failed dep."""
     dep = parse_dependency("a")
-    result, reason = evaluate(dep, {"a": TaskStatus.failed}, {})
+    result, reason = await evaluate(dep, {"a": TaskStatus.failed}, {})
     assert result == "skip"
     assert "failed" in reason
 
 
-def test_evaluate_plain_skipped():
+async def test_evaluate_plain_skipped():
     """Verify evaluate() returns skip with a 'skipped' reason for skipped dep."""
     dep = parse_dependency("a")
-    result, reason = evaluate(dep, {"a": TaskStatus.skipped}, {})
+    result, reason = await evaluate(dep, {"a": TaskStatus.skipped}, {})
     assert result == "skip"
     assert "skipped" in reason
 
 
-def test_evaluate_conditional_match_satisfied():
+async def test_evaluate_conditional_match_satisfied():
     """Verify evaluate() returns satisfied when the match pattern hits."""
     dep = parse_dependency("a.output.match(VERDICT:\\s*APPROVE)")
-    assert evaluate(
+    assert await evaluate(
         dep,
         {"a": TaskStatus.completed},
         {"a": "blah\nVERDICT: APPROVE\n"},
     ) == ("satisfied", None)
 
 
-def test_evaluate_conditional_match_not_met_skips():
+async def test_evaluate_conditional_match_not_met_skips():
     """Verify evaluate() skips when the match pattern is absent."""
     dep = parse_dependency("a.output.match(VERDICT:\\s*APPROVE)")
-    result, reason = evaluate(
+    result, reason = await evaluate(
         dep,
         {"a": TaskStatus.completed},
         {"a": "VERDICT: REJECT"},
@@ -111,20 +130,20 @@ def test_evaluate_conditional_match_not_met_skips():
     assert "condition not met" in reason
 
 
-def test_evaluate_not_match_satisfied():
+async def test_evaluate_not_match_satisfied():
     """Verify evaluate() returns satisfied when the not_match pattern is absent."""
     dep = parse_dependency("a.output.not_match(CRITICAL)")
-    assert evaluate(
+    assert await evaluate(
         dep,
         {"a": TaskStatus.completed},
         {"a": "all good"},
     ) == ("satisfied", None)
 
 
-def test_evaluate_not_match_triggers_skip():
+async def test_evaluate_not_match_triggers_skip():
     """Verify evaluate() skips when not_match pattern is present."""
     dep = parse_dependency("a.output.not_match(CRITICAL)")
-    result, _ = evaluate(
+    result, _ = await evaluate(
         dep,
         {"a": TaskStatus.completed},
         {"a": "CRITICAL vuln"},
@@ -132,10 +151,10 @@ def test_evaluate_not_match_triggers_skip():
     assert result == "skip"
 
 
-def test_evaluate_unknown_task_skips():
+async def test_evaluate_unknown_task_skips():
     """Verify evaluate() skips when the dependency target is unknown."""
     dep = parse_dependency("ghost")
-    result, reason = evaluate(dep, {"a": TaskStatus.completed}, {})
+    result, reason = await evaluate(dep, {"a": TaskStatus.completed}, {})
     assert result == "skip"
     assert "unknown" in reason
 
@@ -232,7 +251,7 @@ def _pred(expr: str):
         ("output.not_match(RETRY)", ["RETRY", "clean"], False),
     ],
 )
-def test_evaluate_loop_predicate_until(expr, outputs, expected):
+async def test_evaluate_loop_predicate_until(expr, outputs, expected):
     """Verify evaluate_loop_predicate() in until mode for parametrized cases.
 
     :param expr: predicate expression under test.
@@ -241,7 +260,7 @@ def test_evaluate_loop_predicate_until(expr, outputs, expected):
     """
     from flow_atelier.modules.conditions import evaluate_loop_predicate
 
-    assert evaluate_loop_predicate(_pred(expr), outputs, "until") is expected
+    assert await evaluate_loop_predicate(_pred(expr), outputs, "until") is expected
 
 
 @pytest.mark.parametrize(
@@ -260,7 +279,7 @@ def test_evaluate_loop_predicate_until(expr, outputs, expected):
         ("output.not_match(ready)", ["ready", "pending"], False),
     ],
 )
-def test_evaluate_loop_predicate_while(expr, outputs, expected):
+async def test_evaluate_loop_predicate_while(expr, outputs, expected):
     """Verify evaluate_loop_predicate() in while mode for parametrized cases.
 
     :param expr: predicate expression under test.
@@ -269,25 +288,103 @@ def test_evaluate_loop_predicate_while(expr, outputs, expected):
     """
     from flow_atelier.modules.conditions import evaluate_loop_predicate
 
-    assert evaluate_loop_predicate(_pred(expr), outputs, "while") is expected
+    assert await evaluate_loop_predicate(_pred(expr), outputs, "while") is expected
 
 
-def test_evaluate_loop_predicate_empty_outputs_does_not_break():
+async def test_evaluate_loop_predicate_empty_outputs_does_not_break():
     """Verify evaluate_loop_predicate() returns False on empty outputs."""
     from flow_atelier.modules.conditions import evaluate_loop_predicate
 
-    assert evaluate_loop_predicate(_pred("output.match(x)"), [], "until") is False
-    assert evaluate_loop_predicate(_pred("output.match(x)"), [], "while") is False
-    assert evaluate_loop_predicate(_pred("output.not_match(x)"), [], "until") is False
-    assert evaluate_loop_predicate(_pred("output.not_match(x)"), [], "while") is False
+    assert await evaluate_loop_predicate(_pred("output.match(x)"), [], "until") is False
+    assert await evaluate_loop_predicate(_pred("output.match(x)"), [], "while") is False
+    assert (
+        await evaluate_loop_predicate(_pred("output.not_match(x)"), [], "until") is False
+    )
+    assert (
+        await evaluate_loop_predicate(_pred("output.not_match(x)"), [], "while") is False
+    )
 
 
-def test_evaluate_loop_predicate_invalid_mode_raises():
+async def test_evaluate_loop_predicate_invalid_mode_raises():
     """Verify evaluate_loop_predicate() raises on an unknown mode."""
     from flow_atelier.modules.conditions import evaluate_loop_predicate
 
     with pytest.raises(ValueError):
-        evaluate_loop_predicate(_pred("output.match(x)"), ["x"], "forever")  # type: ignore[arg-type]
+        await evaluate_loop_predicate(_pred("output.match(x)"), ["x"], "forever")  # type: ignore[arg-type]
+
+
+async def test_evaluate_loop_predicate_truncates_oversized_output():
+    """Verify the matcher only sees the first MATCH_INPUT_CHAR_CAP chars.
+
+    A pattern anchored past the cap must not match, so an adversarial output
+    cannot force unbounded matching work on the shared event loop.
+    """
+    from flow_atelier.modules.conditions import (
+        MATCH_INPUT_CHAR_CAP,
+        evaluate_loop_predicate,
+    )
+
+    beyond_cap = "a" * MATCH_INPUT_CHAR_CAP + "DONE"
+    assert (
+        await evaluate_loop_predicate(
+            _pred("output.match(DONE)"), [beyond_cap], "until"
+        )
+        is False
+    )
+    within_cap = "DONE" + "a" * 10
+    assert (
+        await evaluate_loop_predicate(
+            _pred("output.match(DONE)"), [within_cap], "until"
+        )
+        is True
+    )
+
+
+async def test_evaluate_conditional_dep_truncates_oversized_output():
+    """Verify evaluate() bounds the candidate output before matching."""
+    from flow_atelier.modules.conditions import MATCH_INPUT_CHAR_CAP
+
+    dep = parse_dependency("a.output.match(DONE)")
+    statuses = {"a": TaskStatus.completed}
+    beyond_cap = "a" * MATCH_INPUT_CHAR_CAP + "DONE"
+    result, _ = await evaluate(dep, statuses, {"a": beyond_cap})
+    assert result == "skip"
+
+
+async def test_loop_predicate_match_runs_off_event_loop():
+    """A slow (CPU-bound) regex match must not block concurrent coroutines.
+
+    The matcher runs via ``asyncio.to_thread``, so a search that blocks its
+    worker thread leaves the event loop free: a concurrent ticker keeps
+    advancing. If the search ran inline on the loop, the ticker would be
+    frozen for the whole match and barely advance.
+    """
+    from flow_atelier.modules.conditions import evaluate_loop_predicate
+
+    class _BlockingPattern:
+        def search(self, _text: str):
+            # Stand-in for a catastrophic-backtracking match: blocks the
+            # calling thread (not the event loop) for a fixed duration.
+            time.sleep(0.2)
+            return None
+
+    ticks = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        for _ in range(40):
+            await asyncio.sleep(0.005)
+            ticks += 1
+
+    tick_task = asyncio.create_task(ticker())
+    try:
+        result = await evaluate_loop_predicate((_BlockingPattern(), False), ["x"], "until")
+    finally:
+        tick_task.cancel()
+
+    assert result is False
+    # ~0.2s of off-loop matching at one tick per 5ms -> well over 10 ticks.
+    assert ticks >= 10
 
 
 def test_sink_task_names_returns_undepended_tasks_in_order():

@@ -83,6 +83,17 @@ def test_read_outputs_overwrites(store):
     assert store.read_outputs(fid) == {"b": "2"}
 
 
+def test_read_outputs_non_mapping_yaml_returns_empty(store):
+    """Verify a non-mapping outputs.yaml (list/scalar) degrades to ``{}``
+    instead of raising downstream when callers do ``.get``/subscript.
+
+    :param store: FilesystemStore fixture.
+    """
+    fid = store.create_flow("hello", {})
+    (store._flow_dir(fid) / "outputs.yaml").write_text("- not\n- a\n- mapping\n")
+    assert store.read_outputs(fid) == {}
+
+
 # ---------------------------------------------------------------- create_flow(flow_id=...)
 
 

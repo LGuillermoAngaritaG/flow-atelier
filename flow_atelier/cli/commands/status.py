@@ -16,6 +16,7 @@ from flow_atelier.cli._shared import (
 from flow_atelier.cli.main import app
 from flow_atelier.cli.rendering.render import _FLOW_STATUS_STYLE, _task_status_summary
 from flow_atelier.core.atelier import Atelier
+from flow_atelier.modules.liveness import display_status, is_crashed
 
 
 @app.command("status")
@@ -42,18 +43,22 @@ def status_cmd(
         payload = progress.model_dump(mode="json")
         payload["flow_id"] = flow_id
         payload["duration_seconds"] = _flow_duration_seconds(progress)
+        payload["crashed"] = is_crashed(progress)
         typer.echo(json.dumps(payload, indent=2))
         return
 
-    flow_status_style = _FLOW_STATUS_STYLE.get(progress.status.value, "white")
+    effective = display_status(progress)
+    flow_status_style = _FLOW_STATUS_STYLE.get(effective, "white")
     duration = _flow_duration_seconds(progress)
     header = (
         f"[bold]flow[/bold] {flow_id}  "
-        f"status=[{flow_status_style}]{progress.status.value}[/{flow_status_style}]  "
+        f"status=[{flow_status_style}]{effective}[/{flow_status_style}]  "
         f"started={_format_clock(progress.started_at)}  "
         f"duration={_format_duration_seconds(duration)}"
     )
     console.print(header)
+    if is_crashed(progress):
+        console.print(f"[dim]→ atelier run --resume {flow_id}[/dim]")
 
     show_iteration = any(tp.of > 1 for tp in progress.tasks.values())
     columns = ["task", "status"]

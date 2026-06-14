@@ -65,6 +65,18 @@ def test_read_conduit(store):
     assert c.tasks[0].name == "greet"
 
 
+def test_read_conduit_malformed_yaml_raises_one_line(store):
+    """Verify broken YAML raises a one-line ValueError, not a raw traceback.
+
+    :param store: FilesystemStore fixture.
+    """
+    (store.base_dir / "conduits" / "hello" / "conduit.yaml").write_text(
+        "name: hello\ntasks: [unclosed\n"
+    )
+    with pytest.raises(ValueError, match="hello: invalid YAML"):
+        store.read_conduit("hello")
+
+
 def test_list_conduits(store):
     """Verify list_conduits returns the names of available conduits.
 
@@ -407,3 +419,49 @@ def test_delete_conduit_idempotent_returns_false(tmp_path):
     """
     s = FilesystemStore(tmp_path / ".atelier")
     assert s.delete_conduit("nope") is False
+
+
+# --------------------------------------------------------------- delete_flow
+
+
+def test_delete_flow_removes_dir_and_evicts_caches(store):
+    """delete_flow removes the directory and evicts both in-memory caches.
+
+    :param store: FilesystemStore fixture.
+    """
+    fid = store.create_flow("hello", {})
+    store._lock_for(fid)  # populate _log_locks for this id
+    flow_dir = store._flow_dir(fid)
+    assert flow_dir.exists()
+
+    assert store.delete_flow(fid) is True
+    assert not flow_dir.exists()
+    assert fid not in store._flow_paths
+    assert fid not in store._log_locks
+
+
+def test_delete_flow_unknown_returns_false(store):
+    """delete_flow returns False for an unknown flow id.
+
+    :param store: FilesystemStore fixture.
+    """
+    assert store.delete_flow("20260101_deadbeef_hello") is False
+
+
+def test_delete_flow_removes_nested_children(store):
+    """Deleting a parent removes its nested child subtree and evicts the
+    child's cached path/lock entries.
+
+    :param store: FilesystemStore fixture.
+    """
+    parent = store.create_flow("hello", {})
+    child = store.create_flow("hello", {}, parent_flow_id=parent)
+    store._lock_for(child)
+    child_dir = store._flow_dir(child)
+    assert child_dir.exists()
+
+    assert store.delete_flow(parent) is True
+    assert not child_dir.exists()
+    assert parent not in store._flow_paths
+    assert child not in store._flow_paths
+    assert child not in store._log_locks

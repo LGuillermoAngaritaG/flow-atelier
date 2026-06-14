@@ -400,7 +400,7 @@ class AcpHarnessExecutor(ExecutorBase):
     """Executor that drives an ACP agent subprocess.
 
     :param launch_cmd: argv to spawn the ACP agent (e.g.
-        ``["npx", "-y", "@zed-industries/claude-code-acp"]``)
+        ``["npx", "-y", "@agentclientprotocol/claude-agent-acp"]``)
     :param sink: :class:`PromptSink` for user I/O and permission requests
     :param done_marker: substring that terminates an interactive loop
     """
@@ -424,6 +424,21 @@ class AcpHarnessExecutor(ExecutorBase):
         self.launch_cmd = list(launch_cmd)
         self.sink = sink if sink is not None else TerminalPromptSink()
         self.done_marker = done_marker or DEFAULT_DONE_MARKER
+
+    def is_available(self) -> tuple[bool, str]:
+        """Probe whether the harness's launch binary is on PATH.
+
+        Checks ``launch_cmd[0]`` (the ``npx``/``opencode``/``copilot`` binary
+        the subprocess will spawn) with :func:`shutil.which`, the
+        cross-platform PATH lookup. Presence only — no auth/version checks.
+
+        :returns: ``(True, "")`` when found, else ``(False, reason)`` naming
+            the missing binary.
+        """
+        binary = self.launch_cmd[0]
+        if shutil.which(binary) is None:
+            return (False, f"`{binary}` not found on PATH")
+        return (True, "")
 
     async def execute(
         self,
@@ -566,39 +581,47 @@ class AcpHarnessExecutor(ExecutorBase):
             prompt=[TextContentBlock(type="text", text=prompt_text)],
             session_id=session_id,
         )
-        await self._drain_pending_notifications(client)
+        await self._drain_pending_notifications(conn)
         await client.flush_pending()
         return self._result_for_turn(client, resp.stop_reason)
 
     @staticmethod
-    async def _drain_pending_notifications(client: _BufferingClient) -> None:
-        """Wait for supervised notification handlers to finish.
+    async def _drain_pending_notifications(conn) -> None:
+        """Deterministically wait for all session-update handlers to finish.
 
-        The ACP dispatcher runs each notification handler as a background
-        task, so session_update handlers for the last few chunks may still
-        be running when ``conn.prompt`` returns. We wait for the client's
-        buffer to stabilize (no growth for two consecutive short yields)
-        or until ``max_wait`` seconds have passed.
+        The agent streams ``session/update`` notifications and then the
+        ``prompt`` response. The response resolves ``conn.prompt`` directly,
+        bypassing the notification queue, while each notification is consumed
+        from that queue and run as a background task by the ACP dispatcher. So
+        when ``conn.prompt`` returns, the handlers for the final chunks may
+        still be queued or in flight, and a buffer-stability poll can sample
+        the buffer before they land and drop the last chunk.
 
-        :param client: buffering client whose ``buffer`` is polled for growth.
+        Instead of guessing with a timing window we drain deterministically:
+        ``queue.join()`` blocks until every notification received before the
+        response has had its handler task spawned, then we await those handler
+        tasks so their buffer writes are guaranteed complete.
+
+        Reaches into the low-level :class:`acp.Connection` (``conn._conn``) and
+        its dispatcher's queue/supervisor because the library exposes no public
+        drain hook. Degrades to a no-op if that internal shape ever changes.
+
+        :param conn: the active ACP client-side connection.
         """
-        max_wait = 0.5
-        stable_yields_required = 2
-        deadline = asyncio.get_running_loop().time() + max_wait
-        last_len = -1
-        stable = 0
-        while True:
-            await asyncio.sleep(0.01)
-            cur_len = len(client.buffer)
-            if cur_len == last_len:
-                stable += 1
-                if stable >= stable_yields_required:
-                    return
-            else:
-                stable = 0
-                last_len = cur_len
-            if asyncio.get_running_loop().time() >= deadline:
-                return
+        connection = getattr(conn, "_conn", None)
+        queue = getattr(connection, "_queue", None)
+        supervisor = getattr(connection, "_tasks", None)
+        if queue is None or supervisor is None:
+            logger.debug("ACP connection lacks queue/supervisor; skipping drain")
+            return
+        await queue.join()
+        pending = [
+            task
+            for task in list(getattr(supervisor, "_tasks", ()))
+            if task.get_name() == "acp.Dispatcher.notification" and not task.done()
+        ]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def _run_interactive(
         self,
@@ -629,7 +652,7 @@ class AcpHarnessExecutor(ExecutorBase):
                 prompt=[TextContentBlock(type="text", text=next_prompt)],
                 session_id=session_id,
             )
-            await self._drain_pending_notifications(client)
+            await self._drain_pending_notifications(conn)
             await client.flush_pending()
             last_stop = resp.stop_reason
             buffer_text = "".join(client.buffer)
@@ -712,7 +735,7 @@ class AcpHarnessExecutor(ExecutorBase):
 
 
 class ClaudeHarness(AcpHarnessExecutor):
-    """`harness:claude-code` — drives ``@zed-industries/claude-code-acp``."""
+    """`harness:claude-code` — drives ``@agentclientprotocol/claude-agent-acp``."""
 
     def __init__(
         self,

@@ -33,7 +33,10 @@ async def create_schedule(
     :param atelier: injected :class:`Atelier` facade.
     :returns: the created :class:`ScheduledJob`.
     """
-    job = atelier.create_schedule(payload)
+    try:
+        job = atelier.create_schedule(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     # Hot-register with the embedded daemon if one is attached.
     daemon = getattr(atelier, "scheduler_daemon", None)
     if daemon is not None:

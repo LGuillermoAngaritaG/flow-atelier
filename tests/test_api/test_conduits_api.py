@@ -113,6 +113,36 @@ async def test_create_conduit_invalid_returns_400(client):
     assert resp.status_code in (400, 422)
 
 
+async def test_create_conduit_traversal_name_rejected(client, tmp_path):
+    """Verify a path-traversal conduit name is rejected and writes nothing outside.
+
+    :param client: httpx client fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    outside = tmp_path / "evil"
+    resp = await client.post(
+        "/conduits", json=_payload(name=f"../../../../{outside}")
+    )
+    assert resp.status_code in (400, 422)
+    assert not outside.exists()
+
+
+async def test_update_conduit_traversal_rename_rejected(client, tmp_path):
+    """Verify renaming a conduit to a traversal name is rejected.
+
+    :param client: httpx client fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    await client.post("/conduits", json=_payload())
+    outside = tmp_path / "evil"
+    resp = await client.patch(
+        "/conduits/release_notes",
+        json={"name": f"../../../../{outside}"},
+    )
+    assert resp.status_code in (400, 422)
+    assert not outside.exists()
+
+
 # ---------------------------------------------------------------- update
 
 
@@ -167,13 +197,19 @@ async def test_delete_unknown_returns_404(client):
 # ---------------------------------------------------------------- open-path
 
 
-async def test_open_path_invokes_opener(client, monkeypatch):
-    """Verify POST /conduits/open-path invokes the subprocess opener.
+async def test_open_path_invokes_opener(client, monkeypatch, tmp_path):
+    """Verify POST /conduits/open-path opens a recorded flow run path.
 
     :param client: httpx client fixture.
     :param monkeypatch: pytest monkeypatch fixture.
+    :param tmp_path: pytest temp directory fixture.
     """
     await client.post("/conduits", json=_payload())
+    # Register the path as a known flow run_path so the opener accepts it.
+    atelier = client._transport.app.state.atelier
+    run_path = tmp_path / "runs"
+    run_path.mkdir()
+    atelier.store.create_flow("release_notes", {"run_path": str(run_path)})
     calls = []
 
     class _FakeProc:
@@ -194,8 +230,26 @@ async def test_open_path_invokes_opener(client, monkeypatch):
     monkeypatch.setattr("subprocess.Popen", fake_popen)
     resp = await client.post(
         "/conduits/open-path",
-        json={"conduit_name": "release_notes", "run_path": "/tmp"},
+        json={"conduit_name": "release_notes", "run_path": str(run_path)},
     )
     assert resp.status_code == 200
     assert resp.json() == {"opened": True}
     assert calls
+
+
+async def test_open_path_refuses_unknown_path(client, monkeypatch):
+    """Verify POST /conduits/open-path refuses a path with no recorded flow.
+
+    :param client: httpx client fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    await client.post("/conduits", json=_payload())
+    calls = []
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **k: calls.append(a))
+    resp = await client.post(
+        "/conduits/open-path",
+        json={"conduit_name": "release_notes", "run_path": "/tmp/not-a-flow"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"opened": False}
+    assert not calls

@@ -5,6 +5,9 @@ import asyncio
 import sys
 
 import typer
+import yaml
+from pydantic import ValidationError
+from rich.markup import escape
 
 from flow_atelier.cli._shared import _parse_inputs, _resolve_flow_id, console
 from flow_atelier.cli.main import app
@@ -12,8 +15,10 @@ from flow_atelier.cli.rendering.render import (
     _render_orchestration_msg,
     _render_run_footer,
     _render_task_event,
+    format_conduit_error,
 )
 from flow_atelier.core.atelier import Atelier
+from flow_atelier.schemas.flow import parse_flow_id
 from flow_atelier.schemas.log import TaskEvent
 
 
@@ -58,6 +63,22 @@ def run_cmd(
     # --resume path: resolve the old flow, skip input prompts
     if resume_from is not None:
         flow_id = _resolve_flow_id(atelier, resume_from)
+        # Surface a malformed conduit with a readable message before resuming,
+        # so a YAML/schema/name error doesn't reach the generic `flow failed:`
+        # handler as a raw exception. read_conduit is the only conduit-load
+        # surface; resume_flow's own ValueError (e.g. "can only resume failed
+        # or crashed flows") is unrelated and must keep its generic handling.
+        resume_conduit = parse_flow_id(flow_id)[0]
+        try:
+            atelier.store.read_conduit(resume_conduit)
+        except FileNotFoundError:
+            pass
+        except (yaml.YAMLError, ValidationError, ValueError) as exc:
+            console.print(
+                f"[red]invalid conduit:[/red] {escape(format_conduit_error(exc))}"
+            )
+            console.print(f"[dim]→ fix conduits/{resume_conduit}/conduit.yaml[/dim]")
+            raise typer.Exit(code=1)
         collected_events: list[TaskEvent] = []
         captured_flow_id: dict[str, str | None] = {"id": flow_id}
 
@@ -105,6 +126,21 @@ def run_cmd(
             f"[red]unknown conduit:[/red] {conduit_name} "
             f"— try 'atelier list conduits'"
         )
+        raise typer.Exit(code=1)
+    except (yaml.YAMLError, ValidationError, ValueError) as exc:
+        console.print(
+            f"[red]invalid conduit:[/red] {escape(format_conduit_error(exc))}"
+        )
+        console.print(f"[dim]→ fix conduits/{conduit_name}/conduit.yaml[/dim]")
+        raise typer.Exit(code=1)
+
+    # Readiness gate: refuse to start an unrunnable conduit (unregistered tool
+    # or a harness CLI missing from PATH) before prompting for inputs or
+    # spending any wall-clock/tokens.
+    problems = atelier.tool_readiness(conduit)
+    if problems:
+        for problem in problems:
+            console.print(f"[red]cannot run:[/red] {escape(problem)}")
         raise typer.Exit(code=1)
 
     # Prompt for missing inputs when running interactively.

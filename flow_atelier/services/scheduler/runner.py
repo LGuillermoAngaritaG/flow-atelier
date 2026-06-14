@@ -30,6 +30,22 @@ _RELOAD_JOB_ID = "__atelier_sync__"
 ScheduleExecutor = Callable[[ScheduledJob, Path], Awaitable[None]]
 
 
+def _resolve_run_path(run_path: str, base: Path) -> Path:
+    """Resolve a schedule's ``run_path`` against ``base``.
+
+    Empty → ``base``; absolute → used verbatim; relative → resolved under
+    ``base``. Shared by the daemon's fire path and the planned-view preview so
+    "where it will fire" can never disagree with where it actually fires.
+
+    :param run_path: the schedule's ``run_path`` (possibly empty)
+    :param base: default working directory (already resolved)
+    """
+    if not run_path:
+        return base
+    wd = Path(run_path)
+    return wd if wd.is_absolute() else (base / wd).resolve()
+
+
 async def _default_executor(job: ScheduledJob, working_dir: Path) -> None:
     """Default fire action: instantiate ``Atelier(base_dir=working_dir/.atelier)``
     and ``await run_conduit(...)``. Imported lazily to avoid a circular import.
@@ -235,12 +251,7 @@ class SchedulerDaemon:
 
         :param job: schedule whose working directory should be resolved
         """
-        if not job.run_path:
-            return self.default_working_dir
-        wd = Path(job.run_path)
-        if not wd.is_absolute():
-            wd = (self.default_working_dir / wd).resolve()
-        return wd
+        return _resolve_run_path(job.run_path, self.default_working_dir)
 
     # ------------------------------------------------------------------ fire
 
@@ -320,12 +331,7 @@ def compute_planned_view(
     base = default_working_dir.resolve()
     planned: list[PlannedJob] = []
     for job in store.list():
-        run_path = job.run_path
-        if run_path:
-            wd = Path(run_path)
-            working_dir = wd if wd.is_absolute() else (base / wd).resolve()
-        else:
-            working_dir = base
+        working_dir = _resolve_run_path(job.run_path, base)
         if job.schedule.mode == "once" and store.fired_at(job.id):
             planned.append(
                 PlannedJob(
