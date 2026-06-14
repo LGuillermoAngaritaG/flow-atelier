@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import difflib
 import sys
 
 import typer
@@ -215,20 +214,6 @@ def run_cmd(
             f"[red]invalid conduit:[/red] {escape(format_conduit_error(exc))}"
         )
         console.print(f"[dim]→ fix conduits/{conduit_name}/conduit.yaml[/dim]")
-        raise typer.Exit(code=1)
-
-    # Reject undeclared input keys before anything else: a mistyped --input key
-    # would otherwise be silently swallowed (it's never read, and only *missing
-    # required* inputs are ever flagged). Fail loudly while the user can still
-    # fix it for free, suggesting the intended key on an obvious near-miss.
-    unknown = [k for k in inputs if k not in conduit.inputs]
-    if unknown:
-        for key in unknown:
-            msg = f"[red]unknown input:[/red] {escape(key)}"
-            match = difflib.get_close_matches(key, list(conduit.inputs), n=1)
-            if match:
-                msg += f" — did you mean '{escape(match[0])}'?"
-            console.print(msg)
         raise typer.Exit(code=1)
 
     # Readiness gate: refuse to start an unrunnable conduit (unregistered tool
