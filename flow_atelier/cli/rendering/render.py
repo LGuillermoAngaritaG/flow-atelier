@@ -249,6 +249,7 @@ _FLOW_STATUS_STYLE: dict[str, str] = {
     FlowStatus.completed.value: "green",
     FlowStatus.failed.value: "red",
     FlowStatus.running.value: "yellow",
+    FlowStatus.stopped.value: "blue",
     "crashed": "magenta",
 }
 

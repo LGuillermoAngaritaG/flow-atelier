@@ -101,8 +101,17 @@ def run_cmd(
                     on_flow_started=_on_started,
                     on_task_starting=_on_task_starting,
                     show_steps=show_steps,
+                    stoppable=True,
                 )
             )
+        except asyncio.CancelledError:
+            # SIGTERM via `atelier stop`: engine has marked the flow stopped.
+            _render_run_footer(collected_events, console)
+            console.print("[yellow]flow stopped[/yellow]")
+            stopped_id = captured_flow_id["id"]
+            if stopped_id:
+                console.print(f"[yellow]flow_id:[/yellow] {stopped_id}")
+            raise typer.Exit(code=0)
         except Exception as e:  # noqa: BLE001
             _render_run_footer(collected_events, console)
             console.print(f"[red]flow failed:[/red] {e}")
@@ -201,8 +210,17 @@ def run_cmd(
                 on_flow_started=_on_started,
                 on_task_starting=_on_task_starting,
                 show_steps=show_steps,
+                stoppable=True,
             )
         )
+    except asyncio.CancelledError:
+        # SIGTERM via `atelier stop`: engine has marked the flow stopped.
+        _render_run_footer(collected_events, console)
+        console.print("[yellow]flow stopped[/yellow]")
+        stopped_id = captured_flow_id["id"]
+        if stopped_id:
+            console.print(f"[yellow]flow_id:[/yellow] {stopped_id}")
+        raise typer.Exit(code=0)
     except Exception as e:  # noqa: BLE001
         _render_run_footer(collected_events, console)
         console.print(f"[red]flow failed:[/red] {e}")

@@ -166,6 +166,7 @@ class Atelier:
         on_task_starting: TaskStartingCallback | None = None,
         show_steps: bool = True,
         working_dir: Path | str | None = None,
+        stoppable: bool = False,
     ) -> str:
         """Start a new flow for the named conduit.
 
@@ -186,6 +187,8 @@ class Atelier:
             ``--hide-steps`` to opt out.
         :param working_dir: working directory for task execution. When
             ``None``, executors use the process cwd.
+        :param stoppable: install a SIGTERM stop handler for this run (the
+            ``atelier stop`` path); only the foreground CLI sets this.
         :returns: the newly created flow id
         """
         wd = Path(working_dir) if working_dir is not None else None
@@ -198,6 +201,7 @@ class Atelier:
             on_task_starting=on_task_starting,
             show_steps=show_steps,
             working_dir=wd,
+            stoppable=stoppable,
         )
 
     async def resume_flow(
@@ -208,6 +212,7 @@ class Atelier:
         on_task_starting: TaskStartingCallback | None = None,
         show_steps: bool = True,
         working_dir: Path | str | None = None,
+        stoppable: bool = False,
     ) -> str:
         """Resume a failed or crashed flow, skipping already-completed tasks.
 
@@ -222,6 +227,8 @@ class Atelier:
         :param on_task_starting: optional task-starting callback
         :param show_steps: stream intermediate harness steps
         :param working_dir: working directory for task execution
+        :param stoppable: install a SIGTERM stop handler for this run (the
+            ``atelier stop`` path); only the foreground CLI sets this.
         :returns: the flow id (same as input)
         :raises ValueError: if the flow is not in failed or running status
         """
@@ -247,6 +254,7 @@ class Atelier:
             show_steps=show_steps,
             working_dir=wd,
             resume_from=flow_id,
+            stoppable=stoppable,
         )
 
     def get_status(self, flow_id: str) -> Progress:

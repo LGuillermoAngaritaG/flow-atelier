@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import signal
 import socket
 import sys
 import traceback
@@ -241,6 +242,7 @@ class Engine:
         flow_id: str | None = None,
         resume_from: str | None = None,
         ancestor_conduits: tuple[str, ...] = (),
+        stoppable: bool = False,
     ) -> str:
         """Execute a conduit to completion, returning the flow id.
 
@@ -265,6 +267,10 @@ class Engine:
         :param ancestor_conduits: names of the conduits already on the nested
             ``tool:conduit`` call stack above this run; used to detect cycles
             and bound recursion depth. Empty for a top-level run.
+        :param stoppable: when True and this is a top-level run, install a
+            ``SIGTERM`` handler that gracefully cancels the run and finalizes
+            it as ``stopped`` (the ``atelier stop`` path). Off by default so
+            nested runs and the shared scheduler daemon never hijack SIGTERM.
         :returns: the new flow id on success
         :raises ConduitValidationError: DAG is invalid (cycle, unknown dep, bad regex)
         :raises ConduitCycleError: nested conduits form a cycle or exceed depth
@@ -785,6 +791,28 @@ class Engine:
                 raise
 
         # ------------------------------------------------------------------ loop
+        # Install a SIGTERM handler for a stoppable top-level run so
+        # ``atelier stop`` can trigger the same graceful cancel path that
+        # Ctrl-C does, but finalize the flow as ``stopped`` rather than
+        # ``failed``. Only the outermost run arms it: nested runs and the
+        # shared scheduler daemon must keep their own SIGTERM semantics.
+        stop_requested = False
+        sigterm_installed = False
+        active_run_task = asyncio.current_task()
+        if stoppable and not ancestor_conduits:
+            loop = asyncio.get_running_loop()
+
+            def _request_stop() -> None:
+                nonlocal stop_requested
+                stop_requested = True
+                if active_run_task is not None:
+                    active_run_task.cancel()
+
+            try:
+                loop.add_signal_handler(signal.SIGTERM, _request_stop)
+                sigterm_installed = True
+            except (NotImplementedError, RuntimeError):
+                sigterm_installed = False
         try:
             while True:
                 # Evaluate all pending tasks; launch satisfied, skip unsatisfiable.
@@ -884,13 +912,21 @@ class Engine:
                 for rt in running.values():
                     rt.cancel()
                 await asyncio.gather(*running.values(), return_exceptions=True)
-            # Ensure progress reflects failure on unexpected errors
+            # Ensure progress reflects a terminal state. A deliberate stop
+            # (SIGTERM via ``atelier stop``) finalizes as ``stopped``; every
+            # other interruption (crash, Ctrl-C, task error) stays ``failed``.
             progress.current_tasks = []
             progress.finished_at = _now()
             if progress.status == FlowStatus.running:
-                progress.status = FlowStatus.failed
+                progress.status = (
+                    FlowStatus.stopped if stop_requested else FlowStatus.failed
+                )
             self.store.write_progress(flow_id, progress)
             raise
+        finally:
+            if sigterm_installed:
+                with contextlib.suppress(NotImplementedError, RuntimeError):
+                    loop.remove_signal_handler(signal.SIGTERM)
 
     # ------------------------------------------------------------------ helpers
 

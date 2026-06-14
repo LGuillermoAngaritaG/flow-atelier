@@ -19,6 +19,7 @@ class FlowStatus(str, Enum):
     running = "running"
     completed = "completed"
     failed = "failed"
+    stopped = "stopped"
 
 
 class TaskProgress(BaseModel):
