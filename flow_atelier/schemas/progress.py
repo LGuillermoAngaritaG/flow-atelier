@@ -39,3 +39,4 @@ class Progress(BaseModel):
     runner_host: str | None = None
     run_path: str | None = None
     invoking_task: str | None = None
+    stoppable: bool = False

@@ -371,6 +371,11 @@ class Engine:
         if invoking_task is None and resume_from is not None:
             invoking_task = prior.invoking_task
 
+        # Only a top-level stoppable run installs a graceful-stop SIGTERM
+        # handler; record that on progress so ``atelier stop`` can refuse flows
+        # (daemon/serve/nested) that share or hijack the process's SIGTERM.
+        install_stop_handler = stoppable and not ancestor_conduits
+
         progress = Progress(
             status=FlowStatus.running,
             tasks={
@@ -382,6 +387,7 @@ class Engine:
             runner_host=socket.gethostname(),
             run_path=run_path,
             invoking_task=invoking_task,
+            stoppable=install_stop_handler,
         )
         self.store.write_progress(flow_id, progress)
 
@@ -859,7 +865,7 @@ class Engine:
         stop_requested = False
         sigterm_installed = False
         active_run_task = asyncio.current_task()
-        if stoppable and not ancestor_conduits:
+        if install_stop_handler:
             loop = asyncio.get_running_loop()
 
             def _request_stop() -> None:

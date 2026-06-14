@@ -96,10 +96,17 @@ def test_legacy_progress_json_without_runner_fields_loads():
     assert restored.runner_host is None
 
 
-def _running_here(pid: int) -> Progress:
-    """A running flow on this host with the given runner pid."""
+def _running_here(pid: int, stoppable: bool = True) -> Progress:
+    """A running flow on this host with the given runner pid.
+
+    Defaults to ``stoppable=True`` (a foreground ``atelier run`` that installed
+    a graceful-stop handler); pass ``stoppable=False`` for the daemon/serve case.
+    """
     return Progress(
-        status=FlowStatus.running, runner_pid=pid, runner_host=socket.gethostname()
+        status=FlowStatus.running,
+        runner_pid=pid,
+        runner_host=socket.gethostname(),
+        stoppable=stoppable,
     )
 
 
@@ -150,3 +157,20 @@ def test_stop_decision_other_flow_different_pid_is_stoppable():
     target = _running_here(os.getpid())
     other = _running_here(_dead_local_pid())
     assert stop_decision(target, [other]) is StopDecision.stoppable
+
+
+def test_stop_decision_not_stoppable_no_co_tenant():
+    """A live flow that installed no stop handler refuses even when alone.
+
+    This is the scheduler-daemon case: signalling its pid would tear down the
+    whole daemon, so it must refuse regardless of whether a co-tenant exists.
+    """
+    p = _running_here(os.getpid(), stoppable=False)
+    assert stop_decision(p, []) is StopDecision.not_stoppable
+
+
+def test_stop_decision_not_stoppable_with_co_tenant():
+    """A non-stoppable flow refuses even when a co-tenant shares its pid."""
+    target = _running_here(os.getpid(), stoppable=False)
+    sibling = _running_here(os.getpid(), stoppable=False)
+    assert stop_decision(target, [sibling]) is StopDecision.not_stoppable

@@ -66,7 +66,10 @@ async def _default_executor(
 
     atelier = Atelier(base_dir=working_dir / ".atelier")
     await atelier.run_conduit(
-        job.conduit_name, dict(job.inputs), on_flow_started=report
+        job.conduit_name,
+        dict(job.inputs),
+        on_flow_started=report,
+        working_dir=working_dir,
     )
 
 

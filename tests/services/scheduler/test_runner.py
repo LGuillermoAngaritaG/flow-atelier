@@ -11,12 +11,42 @@ from flow_atelier.schemas.api import CreateScheduleInput, ScheduledJob
 from flow_atelier.services.scheduler.runner import (
     _RELOAD_JOB_ID,
     SchedulerDaemon,
+    _default_executor,
     _resolve_run_path,
     compute_planned_view,
 )
 from flow_atelier.services.scheduler.store import ScheduleStore
 
 UTC = ZoneInfo("UTC")
+
+
+def test_default_executor_threads_working_dir(tmp_path, monkeypatch):
+    """The default fire action must run the conduit under the resolved dir.
+
+    Without this, scheduled tasks execute in the daemon's launch dir, ignoring
+    the schedule's ``run_path``.
+    """
+    captured: dict = {}
+
+    class _FakeAtelier:
+        def __init__(self, base_dir):
+            captured["base_dir"] = base_dir
+
+        async def run_conduit(self, name, inputs, **kwargs):
+            captured["name"] = name
+            captured["working_dir"] = kwargs.get("working_dir")
+            return "flow-1"
+
+    monkeypatch.setattr("flow_atelier.core.atelier.Atelier", _FakeAtelier)
+    working_dir = tmp_path.resolve()
+    store = ScheduleStore(tmp_path / ".atelier")
+    store.create(_recurring(conduit="report"))
+    job = store.list()[0]
+
+    asyncio.run(_default_executor(job, working_dir, lambda _fid: None))
+
+    assert captured["working_dir"] == working_dir
+    assert captured["base_dir"] == working_dir / ".atelier"
 
 
 @pytest.mark.parametrize(

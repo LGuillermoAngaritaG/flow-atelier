@@ -89,6 +89,7 @@ class StopDecision(str, Enum):
     crashed = "crashed"
     foreign_host = "foreign_host"
     no_pid = "no_pid"
+    not_stoppable = "not_stoppable"
     shared_runner = "shared_runner"
 
 
@@ -122,6 +123,11 @@ def stop_decision(progress: Progress, others: list[Progress]) -> StopDecision:
         # Pid exists but we can't probe it cleanly — treat as foreign rather
         # than risk signalling a process we don't actually own.
         return StopDecision.foreign_host
+    if not progress.stoppable:
+        # The runner never installed a graceful-stop handler (daemon/serve/
+        # nested run), so its SIGTERM means "tear the whole process down".
+        # Refuse independent of whether a co-tenant flow happens to exist.
+        return StopDecision.not_stoppable
     for other in others:
         if other.status != FlowStatus.running:
             continue

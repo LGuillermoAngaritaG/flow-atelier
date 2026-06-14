@@ -74,6 +74,9 @@ def stop_cmd(
                 f"running on host {progress.runner_host}; cannot stop from here"
             ),
             StopDecision.no_pid: "no runner recorded; cannot stop",
+            StopDecision.not_stoppable: (
+                "runs inside a scheduler/server process; cannot stop individually"
+            ),
             StopDecision.shared_runner: (
                 "runs inside a shared scheduler process; cannot stop individually"
             ),
@@ -98,7 +101,10 @@ def stop_cmd(
         except (FileNotFoundError, ValueError):
             continue
         if current.status.value != "running":
-            console.print(f"[green]flow {flow_id} {current.status.value}[/green]")
+            colour = "green" if current.status.value == "stopped" else "yellow"
+            console.print(
+                f"[{colour}]flow {flow_id} {current.status.value}[/{colour}]"
+            )
             return
 
     console.print(
