@@ -268,7 +268,7 @@ class ScheduleStore:
 
         :param data: full state payload to persist
         """
-        tmp = self.state_path.with_suffix(".json.tmp")
+        tmp = self.state_path.with_suffix(f".json.tmp.{uuid.uuid4().hex}")
         tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
         os.replace(tmp, self.state_path)
 

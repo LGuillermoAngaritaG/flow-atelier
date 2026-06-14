@@ -730,7 +730,16 @@ class AcpHarnessExecutor(ExecutorBase):
                     steps=client.steps,
                     usage=_usage_from_client(client),
                 )
-            if resp.stop_reason not in ("end_turn", "max_tokens"):
+            if resp.stop_reason == "max_tokens":
+                # The reply was cut off mid-thought; nudge the agent to keep
+                # going instead of handing the truncated turn back to the human.
+                next_prompt = (
+                    "Your previous response was cut off before it finished. "
+                    "Continue from where you stopped."
+                    + build_interactive_suffix(self.done_marker)
+                )
+                continue
+            if resp.stop_reason != "end_turn":
                 break
             try:
                 user_reply = await self.sink.request_input(

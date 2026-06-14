@@ -69,10 +69,17 @@ class WsHitlExecutor(ExecutorBase):
             self.flow_id, timeout=self.request_timeout
         )
 
+        missing = [name for name in task.inputs if name not in answers]
+        if missing:
+            return ExecutionResult(
+                exit_code=1,
+                stdout=resolved_command.strip(),
+                stderr="missing HITL input(s): " + ", ".join(missing),
+                output="",
+            )
+
         collected: dict[str, Any] = {}
         for name in task.inputs:
-            if name not in answers:
-                continue
             value = answers[name]
             collected[name] = value
             context.store.append_input(context.flow_id, name, value)

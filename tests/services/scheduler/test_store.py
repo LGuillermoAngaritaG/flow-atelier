@@ -434,6 +434,51 @@ def test_run_history_skips_malformed_entries(store):
     assert history[0].flow_id == "FLOW-good"
 
 
+def test_write_state_uses_unique_tmp_and_survives_concurrency(store):
+    """Concurrent state writers must not corrupt scheduler_state.json.
+
+    Regression for the fixed-name temp collision: many threads firing and
+    clearing markers at once each used the same ``scheduler_state.json.tmp``
+    and could rename a half-written file into place, which the loader then
+    read as "nothing ever fired".
+
+    :param store: ScheduleStore fixture.
+    """
+    import threading
+
+    survivor = store.create(_once_payload(schedule={
+        "mode": "once",
+        "name": "survivor",
+        "run_at": "2099-05-01T09:00:00Z",
+    }))
+    store.mark_fired(survivor.id)
+
+    errors: list[Exception] = []
+
+    def churn(n: int) -> None:
+        try:
+            for i in range(20):
+                store.mark_fired(f"SCH-churn-{n}-{i}")
+                store.clear_fired(f"SCH-churn-{n}-{i}")
+                # Re-assert the survivor each pass; a clobbered write would
+                # drop it and the final assert below would catch the loss.
+                store.mark_fired(survivor.id)
+        except Exception as e:  # noqa: BLE001 — surface any thread failure
+            errors.append(e)
+
+    threads = [threading.Thread(target=churn, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    # The state file still parses and retains the marker we kept re-asserting.
+    assert store.fired_at(survivor.id) is not None
+    # No half-written temp files were left behind.
+    assert list(store.atelier_dir.glob("scheduler_state.json.tmp*")) == []
+
+
 def test_recreate_after_load_round_trips(store, tmp_path):
     """Verify a fresh ScheduleStore reloads previously persisted data.
 

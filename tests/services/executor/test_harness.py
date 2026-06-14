@@ -391,6 +391,51 @@ class TestInteractive:
         assert len(sink.input_prompts) == 1
         assert "done now" in result.last_turn_output
 
+    async def test_max_tokens_continues_without_asking_user(self) -> None:
+        """A truncated (max_tokens) interactive turn must re-prompt the agent to
+        continue rather than handing control back to the human as if done."""
+        from flow_atelier.services.executor.harness import _BufferingClient
+
+        sink = RecordingSink()  # no replies: a request_input would raise EOFError
+        executor = AcpHarnessExecutor(launch_cmd=["unused"], sink=sink)
+        client = _BufferingClient(sink)
+
+        turns = [
+            {"chunks": ["partial..."], "stop": "max_tokens"},
+            {"chunks": [f"...and the rest {DEFAULT_DONE_MARKER}"], "stop": "end_turn"},
+        ]
+
+        class FakeResp:
+            def __init__(self, stop: str) -> None:
+                self.stop_reason = stop
+                self.usage = None
+
+        class FakeConn:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.prompts: list[str] = []
+
+            async def prompt(self, prompt, session_id):
+                self.prompts.append(prompt[0].text)
+                turn = turns[self.calls]
+                self.calls += 1
+                for chunk in turn["chunks"]:
+                    client.buffer.append(chunk)
+                return FakeResp(turn["stop"])
+
+        conn = FakeConn()
+        result = await executor._run_interactive(conn, "s", "go", client)
+
+        assert result.exit_code == 0
+        # The truncated turn was NOT surfaced to the human.
+        assert sink.input_prompts == []
+        # Turn 2's prompt was a continuation nudge to the agent, not a user reply.
+        assert "cut off" in conn.prompts[1]
+        # Final output stitches both turns and drops the protocol sentinel.
+        assert "partial..." in result.output
+        assert "and the rest" in result.output
+        assert DEFAULT_DONE_MARKER not in result.output
+
     async def test_multi_turn_with_user_reply(self) -> None:
         """Verify a multi-turn interaction stitches replies into the output."""
         sink = RecordingSink(replies=["luis"])
