@@ -79,10 +79,20 @@ class ConduitExecutor(ExecutorBase):
 
         # Sub-task outputs feed the engine's loop-predicate evaluation for
         # `tool:conduit` tasks: the predicate fires if *any* sub-task output
-        # matches (an intermediate diagnostic step, not only the sink). Keep
-        # only exit-0 entries so a failed sub-task's partial/error text can't
-        # trip an `until` on the opposite of the intended terminal result.
-        sub_outputs = [e.output for e in logs if e.exit_code == 0 and e.output]
+        # matches (an intermediate diagnostic step, not only the sink).
+        # outputs.yaml holds each completed task's *final* output keyed by name
+        # (last-write-wins, prior-completed tasks seeded on resume), so it
+        # carries neither failed sub-tasks nor stale earlier-iteration /
+        # prior-attempt entries — unlike the raw log, which accumulates both
+        # across loop iterations and resumes. Non-sink tasks are still present
+        # (every completed task is keyed), so any-match-on-intermediate holds.
+        if child_outputs:
+            sub_outputs = [v for v in child_outputs.values() if v]
+        else:
+            # Fallback for old flows or children that failed before
+            # outputs.yaml was written: exit-0 entries only, so a failed
+            # sub-task's partial/error text can't trip an `until`.
+            sub_outputs = [e.output for e in logs if e.exit_code == 0 and e.output]
 
         status = child_progress.status.value
         exit_code = 0 if status == "completed" else 1

@@ -220,6 +220,40 @@ async def test_falls_back_to_logs_when_outputs_missing():
     assert result.output == "beta"
 
 
+async def test_sub_outputs_from_outputs_yaml_excludes_stale_resumed_logs():
+    """sub_outputs must carry each task's *final* output from outputs.yaml,
+    not stale exit-0 log entries left by an earlier loop iteration or a prior
+    resumed attempt of the same child flow.
+
+    The raw log accumulates every iteration/attempt; outputs.yaml is keyed by
+    task name (last-write-wins), so it is the only source free of stale
+    exit-0 entries. A `STALE` earlier-iteration log for `a` must not reach the
+    parent's loop-predicate scope.
+    """
+    conduit = _child_conduit([("a", []), ("b", ["a"])])
+    logs = [
+        _log("a", "STALE"),
+        _log("a", "final-a"),
+        _log("b", "final-b"),
+    ]
+    result = await _run_with_outputs(
+        {"a": "final-a", "b": "final-b"}, conduit, child_logs=logs
+    )
+    assert result.sub_outputs == ["final-a", "final-b"]
+    assert "STALE" not in result.sub_outputs
+
+
+async def test_sub_outputs_from_outputs_yaml_omits_skipped_none_tasks():
+    """A skipped task is written to outputs.yaml as ``None`` (engine writes
+    ``{name: outputs.get(name)}`` for every task on success); such entries
+    must be filtered out of the predicate scope rather than passed as None."""
+    conduit = _child_conduit([("a", []), ("b", ["a"])])
+    result = await _run_with_outputs(
+        {"a": "alpha", "b": None}, conduit  # type: ignore[dict-item]
+    )
+    assert result.sub_outputs == ["alpha"]
+
+
 async def test_inputs_resolve_loop_previous_from_context_history():
     """Verify nested-conduit inputs resolve {{loop.previous}} against the
     loop history threaded in via FlowContext."""
