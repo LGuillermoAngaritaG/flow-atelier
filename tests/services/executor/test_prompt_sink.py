@@ -205,6 +205,47 @@ class TestTerminalPromptSink:
         chosen = await sink.request_permission("ok?", options)
         assert chosen == "allow"
 
+    async def test_request_permission_renders_markup_bearing_text_literally(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Agent-controlled summary/label text containing Rich markup
+        brackets must render literally and never raise ``MarkupError``,
+        which would abort the interactive run at the approval prompt.
+
+        :param monkeypatch: pytest monkeypatch fixture.
+        """
+        stream = io.StringIO()
+        sink = TerminalPromptSink(out=stream)
+        options = [
+            PermissionOption(id="allow", label="Allow [/]"),
+            PermissionOption(id="deny", label="Deny"),
+        ]
+        monkeypatch.setattr(builtins, "input", lambda _prompt="": "1")
+        chosen = await sink.request_permission("delete [old]/path", options)
+        assert chosen == "allow"
+        rendered = stream.getvalue()
+        assert "delete [old]/path" in rendered
+        assert "Allow [/]" in rendered
+
+    async def test_request_input_renders_markup_bearing_reply_literally(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A piped reply containing markup brackets must echo literally
+        and not raise ``MarkupError``.
+
+        :param monkeypatch: pytest monkeypatch fixture.
+        """
+        import sys as _sys
+
+        stream = io.StringIO()
+        sink = TerminalPromptSink(out=stream)
+        monkeypatch.setattr(builtins, "input", lambda _prompt="": "answer [x]")
+        monkeypatch.setattr(_sys.stdin, "isatty", lambda: False)
+        await sink.request_input("pick [a] or [b]?")
+        rendered = stream.getvalue()
+        assert "answer [x]" in rendered
+        assert "pick [a] or [b]?" in rendered
+
 
 class TestPromptSinkProtocol:
     def test_terminal_sink_satisfies_protocol(self) -> None:

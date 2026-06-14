@@ -5,6 +5,7 @@ import json
 import time
 
 import typer
+from rich.markup import escape
 
 from flow_atelier.cli._shared import _resolve_flow_id, console
 from flow_atelier.cli.main import app
@@ -87,7 +88,7 @@ def logs_cmd(
         if json_mode:
             typer.echo("[]")
             raise typer.Exit(code=1)
-        console.print(f"[yellow]no log entries for {scope}[/yellow]")
+        console.print(f"[yellow]no log entries for {escape(scope)}[/yellow]")
         raise typer.Exit(code=1)
 
     if last is not None and last > 0:

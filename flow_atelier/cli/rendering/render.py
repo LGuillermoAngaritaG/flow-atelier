@@ -67,8 +67,7 @@ def _truncate_tail(text: str, max_lines: int = 20) -> tuple[str, int]:
 
     Keeps only the last ``max_lines`` lines of ``text``. If the input has
     ``max_lines`` or fewer lines, returns it unchanged with a dropped count
-    of zero. Preserves a trailing newline character only when meaningful
-    (i.e. never).
+    of zero.
 
     :param text: raw text to truncate from the top
     :param max_lines: maximum number of trailing lines to keep

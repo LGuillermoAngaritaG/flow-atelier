@@ -114,7 +114,7 @@ def run_cmd(
             raise typer.Exit(code=0)
         except Exception as e:  # noqa: BLE001
             _render_run_footer(collected_events, console)
-            console.print(f"[red]flow failed:[/red] {e}")
+            console.print(f"[red]flow failed:[/red] {escape(str(e))}")
             raise typer.Exit(code=1)
         _render_run_footer(collected_events, console)
         console.print(f"[green]flow_id:[/green] {result_id}")
