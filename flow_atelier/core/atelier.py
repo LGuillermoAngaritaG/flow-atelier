@@ -82,8 +82,6 @@ class Atelier:
         self.store = FilesystemStore(
             self.settings.atelier_dir,
             global_dir=self.settings.global_atelier_dir,
-            default_timeout=self.settings.default_timeout,
-            default_max_concurrency=self.settings.default_max_concurrency,
         )
         sink: PromptSink = prompt_sink if prompt_sink is not None else TerminalPromptSink()
         claude_launch = (
@@ -385,10 +383,6 @@ class Atelier:
         :raises FileExistsError: if the update renames to a name already taken
         """
         existing = self.store.read_conduit(name)
-        # Writes only ever touch the project store, so editing a global-only
-        # conduit forks it into the project rather than mutating the shared
-        # original. Detect that before the write to warn the user.
-        forked_from_global = self.store.conduit_source(name) == "global"
         merged = existing.model_dump()
         for key, value in payload.model_dump(exclude_none=True).items():
             merged[key] = value
@@ -405,12 +399,6 @@ class Atelier:
         if updated.name != name:
             # Rename: drop the old folder.
             self.store.delete_conduit(name)
-        if forked_from_global:
-            logger.warning(
-                "edited global conduit %r as a new project-local copy; "
-                "the global original is unchanged",
-                name,
-            )
         return updated
 
     def delete_conduit(self, name: str) -> bool:
@@ -418,20 +406,7 @@ class Atelier:
 
         :param name: conduit name
         :returns: True if it existed and was deleted, False otherwise
-        :raises ValueError: if ``name`` resolves only to a global conduit —
-            project delete can't remove it, and returning False would wrongly
-            report it as missing even though list/detail still show it.
         """
-        try:
-            source = self.store.conduit_source(name)
-        except FileNotFoundError:
-            return False
-        if source == "global":
-            raise ValueError(
-                f"conduit {name!r} lives in the global store; project delete "
-                "is not supported (it stays visible because reads fall back "
-                "to the global store)"
-            )
         return self.store.delete_conduit(name)
 
     def delete_flow(self, flow_id: str) -> bool:
