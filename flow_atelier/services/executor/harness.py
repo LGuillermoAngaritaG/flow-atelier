@@ -425,6 +425,21 @@ class AcpHarnessExecutor(ExecutorBase):
         self.sink = sink if sink is not None else TerminalPromptSink()
         self.done_marker = done_marker or DEFAULT_DONE_MARKER
 
+    def is_available(self) -> tuple[bool, str]:
+        """Probe whether the harness's launch binary is on PATH.
+
+        Checks ``launch_cmd[0]`` (the ``npx``/``opencode``/``copilot`` binary
+        the subprocess will spawn) with :func:`shutil.which`, the
+        cross-platform PATH lookup. Presence only — no auth/version checks.
+
+        :returns: ``(True, "")`` when found, else ``(False, reason)`` naming
+            the missing binary.
+        """
+        binary = self.launch_cmd[0]
+        if shutil.which(binary) is None:
+            return (False, f"`{binary}` not found on PATH")
+        return (True, "")
+
     async def execute(
         self,
         task: TaskDefinition,

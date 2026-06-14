@@ -66,3 +66,16 @@ class ExecutorBase(ABC):
         :param context: runtime :class:`FlowContext` for the execution.
         :returns: :class:`ExecutionResult` describing the outcome.
         """
+
+    def is_available(self) -> tuple[bool, str]:
+        """Report whether this executor can actually run right now.
+
+        A preflight probe used by readiness checks (``atelier check`` and the
+        top of ``atelier run``) to fail fast on an unrunnable conduit instead
+        of dying mid-DAG. The default is always-ready; executors backed by an
+        external CLI override this to confirm the binary is on PATH.
+
+        :returns: ``(ready, reason)`` — ``reason`` is empty when ready, else a
+            short human cause (e.g. ``"`npx` not found on PATH"``).
+        """
+        return (True, "")

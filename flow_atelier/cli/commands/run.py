@@ -134,6 +134,15 @@ def run_cmd(
         console.print(f"[dim]→ fix conduits/{conduit_name}/conduit.yaml[/dim]")
         raise typer.Exit(code=1)
 
+    # Readiness gate: refuse to start an unrunnable conduit (unregistered tool
+    # or a harness CLI missing from PATH) before prompting for inputs or
+    # spending any wall-clock/tokens.
+    problems = atelier.tool_readiness(conduit)
+    if problems:
+        for problem in problems:
+            console.print(f"[red]cannot run:[/red] {escape(problem)}")
+        raise typer.Exit(code=1)
+
     # Prompt for missing inputs when running interactively.
     missing = [
         k

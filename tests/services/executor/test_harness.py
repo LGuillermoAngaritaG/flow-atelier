@@ -834,3 +834,25 @@ class TestDrainPendingNotifications:
         rather than raising."""
         conn = types.SimpleNamespace()  # no _conn
         await AcpHarnessExecutor._drain_pending_notifications(conn)
+
+
+def test_is_available_true_when_binary_on_path(monkeypatch) -> None:
+    """is_available returns (True, "") when the launch binary resolves."""
+    monkeypatch.setattr(
+        "flow_atelier.services.executor.harness.shutil.which",
+        lambda _binary: "/usr/bin/npx",
+    )
+    executor = AcpHarnessExecutor(launch_cmd=["npx", "-y", "pkg"])
+    assert executor.is_available() == (True, "")
+
+
+def test_is_available_false_when_binary_missing(monkeypatch) -> None:
+    """is_available returns (False, reason) naming the missing binary."""
+    monkeypatch.setattr(
+        "flow_atelier.services.executor.harness.shutil.which",
+        lambda _binary: None,
+    )
+    executor = AcpHarnessExecutor(launch_cmd=["npx", "-y", "pkg"])
+    ok, reason = executor.is_available()
+    assert ok is False
+    assert "npx" in reason

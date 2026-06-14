@@ -128,6 +128,35 @@ class Atelier:
         )
         self.schedule_store = ScheduleStore(self.settings.atelier_dir)
 
+    def tool_readiness(self, conduit: Conduit) -> list[str]:
+        """Report why a conduit can't run, before any task executes.
+
+        Walks ``conduit.tasks`` and, for each, confirms its tool is registered
+        and its executor's :meth:`ExecutorBase.is_available` probe passes (e.g.
+        a harness CLI present on PATH). This is the preflight gate used by
+        ``atelier check`` and the top of ``atelier run`` so an unrunnable
+        conduit fails in second one rather than mid-DAG. Structural validation
+        stays in :func:`validate_conduit`; this layer owns runnability because
+        it is the only one holding both the conduit and the executor registry.
+
+        :param conduit: the loaded conduit to probe.
+        :returns: ordered, de-duplicated problem messages; ``[]`` when ready.
+        """
+        problems: list[str] = []
+        for task in conduit.tasks:
+            tool = task.tool.value
+            executor = self.executors.get(tool)
+            if executor is None:
+                msg = f"task {task.name!r}: no executor registered for tool {tool!r}"
+            else:
+                ok, reason = executor.is_available()
+                if ok:
+                    continue
+                msg = f"task {task.name!r} [{tool}]: {reason}"
+            if msg not in problems:
+                problems.append(msg)
+        return problems
+
     async def run_conduit(
         self,
         name: str,
