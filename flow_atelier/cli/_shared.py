@@ -11,6 +11,7 @@ from rich.console import Console
 
 from flow_atelier.core.atelier import Atelier
 from flow_atelier.core.settings import AtelierSettings
+from flow_atelier.schemas.log import LogEntry, TurnUsage
 from flow_atelier.schemas.progress import Progress
 from flow_atelier.services.scheduler import ScheduleStore
 
@@ -109,6 +110,62 @@ def _flow_duration_seconds(progress: Progress) -> float | None:
         # In-flight: don't try to compute against wall-clock here — just omit.
         return None
     return (end - start).total_seconds()
+
+
+def _format_usage(usage: TurnUsage | None) -> str | None:
+    """Format a :class:`TurnUsage` as a compact ``tokens=… cost=…`` line.
+
+    Returns ``None`` when ``usage`` is absent or carries no token count and
+    no cost, so callers omit the line entirely rather than printing zeros
+    the agent never reported.
+
+    :param usage: the captured usage record, or None.
+    :returns: a compact display string, or None when there is nothing to show.
+    """
+    if usage is None:
+        return None
+    total = usage.total_tokens
+    if total is None and (
+        usage.input_tokens is not None or usage.output_tokens is not None
+    ):
+        total = (usage.input_tokens or 0) + (usage.output_tokens or 0)
+    parts: list[str] = []
+    if total is not None:
+        parts.append(f"tokens={total:,}")
+    if usage.cost is not None:
+        parts.append(f"cost={usage.cost:g}")
+    return "  ".join(parts) if parts else None
+
+
+def _flow_usage_totals(logs: list[LogEntry]) -> TurnUsage | None:
+    """Sum per-step usage across a run's log entries.
+
+    Each harness task runs as its own ACP session and records that session's
+    total spend on its :class:`LogEntry`, so the run total is the sum across
+    entries (retried iterations are distinct sessions and count separately).
+    A token field stays ``None`` when no entry reported it; the whole result
+    is ``None`` when no entry carried usage at all.
+
+    :param logs: log entries for the flow (optionally including child flows).
+    :returns: a :class:`TurnUsage` of summed fields, or None when none present.
+    """
+    present = [e.usage for e in logs if e.usage is not None]
+    if not present:
+        return None
+    fields = (
+        "input_tokens",
+        "output_tokens",
+        "cached_read_tokens",
+        "cached_write_tokens",
+        "thought_tokens",
+        "total_tokens",
+        "cost",
+    )
+    summed: dict[str, float | int | None] = {}
+    for name in fields:
+        values = [getattr(u, name) for u in present if getattr(u, name) is not None]
+        summed[name] = sum(values) if values else None
+    return TurnUsage(**summed)
 
 
 def _format_clock(ts: str | None) -> str:

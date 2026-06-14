@@ -15,6 +15,7 @@ from flow_atelier.cli._shared import (
     _format_clock_short,
     _format_duration_seconds,
     _format_next_fire,
+    _format_usage,
 )
 from flow_atelier.modules.plan import ExecutionPlan, PlannedTask
 from flow_atelier.schemas.log import IntermediateStep, StepKind, TaskEvent
@@ -330,6 +331,9 @@ def _render_log_entry(entry, show: str, console: Console) -> None:
         f"{started}  ·  exit={entry.exit_code}  ·  "
         f"{entry.duration_seconds}s"
     )
+    usage_line = _format_usage(getattr(entry, "usage", None))
+    if usage_line:
+        subtitle += f"  ·  {usage_line}"
 
     if show == "steps":
         steps = getattr(entry, "steps", [])

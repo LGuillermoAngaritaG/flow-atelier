@@ -41,6 +41,24 @@ class IntermediateStep(BaseModel):
     locations: list[str] = Field(default_factory=list)
 
 
+class TurnUsage(BaseModel):
+    """Token counts and cost an AI harness reported for a task.
+
+    Every field is optional: usage is an UNSTABLE, optional ACP field that
+    many harnesses do not send. Absence is first-class — a ``None`` field
+    renders as "unknown", never as a fabricated zero. ``cost`` is the raw
+    agent-reported amount with no currency asserted.
+    """
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cached_read_tokens: int | None = None
+    cached_write_tokens: int | None = None
+    thought_tokens: int | None = None
+    total_tokens: int | None = None
+    cost: float | None = None
+
+
 class ExecutionResult(BaseModel):
     """Primary result of a single executor invocation."""
 
@@ -64,6 +82,7 @@ class ExecutionResult(BaseModel):
     engine falls back to ``output`` in that case.
     """
     steps: list[IntermediateStep] = Field(default_factory=list)
+    usage: TurnUsage | None = None
 
     @property
     def success(self) -> bool:
@@ -92,6 +111,7 @@ class LogEntry(BaseModel):
     duration_seconds: float = 0.0
     extra: dict[str, Any] = Field(default_factory=dict)
     steps: list[IntermediateStep] = Field(default_factory=list)
+    usage: TurnUsage | None = None
 
 
 class TaskEvent(BaseModel):

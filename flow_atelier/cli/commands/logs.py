@@ -7,7 +7,12 @@ import time
 import typer
 from rich.markup import escape
 
-from flow_atelier.cli._shared import _resolve_flow_id, console
+from flow_atelier.cli._shared import (
+    _flow_usage_totals,
+    _format_usage,
+    _resolve_flow_id,
+    console,
+)
 from flow_atelier.cli.main import app
 from flow_atelier.cli.rendering.render import _render_log_entry
 from flow_atelier.core.atelier import Atelier
@@ -102,6 +107,10 @@ def logs_cmd(
 
     for entry in entries:
         _render_log_entry(entry, show, console)
+
+    total_usage = _format_usage(_flow_usage_totals(entries))
+    if total_usage:
+        console.print(f"[dim]run total · {total_usage}[/dim]")
 
 
 def _follow_logs(

@@ -8,8 +8,10 @@ from rich.table import Table
 
 from flow_atelier.cli._shared import (
     _flow_duration_seconds,
+    _flow_usage_totals,
     _format_clock,
     _format_duration_seconds,
+    _format_usage,
     _resolve_flow_id,
     console,
 )
@@ -39,11 +41,16 @@ def status_cmd(
         console.print(f"[red]unknown flow:[/red] {flow_id}")
         raise typer.Exit(code=1)
 
+    usage_totals = _flow_usage_totals(atelier.get_flow_logs(flow_id))
+
     if json_mode:
         payload = progress.model_dump(mode="json")
         payload["flow_id"] = flow_id
         payload["duration_seconds"] = _flow_duration_seconds(progress)
         payload["crashed"] = is_crashed(progress)
+        payload["usage"] = (
+            usage_totals.model_dump(mode="json") if usage_totals else None
+        )
         typer.echo(json.dumps(payload, indent=2))
         return
 
@@ -56,6 +63,9 @@ def status_cmd(
         f"started={_format_clock(progress.started_at)}  "
         f"duration={_format_duration_seconds(duration)}"
     )
+    usage_line = _format_usage(usage_totals)
+    if usage_line:
+        header += f"  {usage_line}"
     console.print(header)
     if is_crashed(progress):
         console.print(f"[dim]→ atelier run --resume {flow_id}[/dim]")

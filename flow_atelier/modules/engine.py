@@ -700,6 +700,7 @@ class Engine:
                                     duration_seconds=round(duration, 3),
                                     extra=attempt_extra,
                                     steps=result.steps,
+                                    usage=result.usage,
                                 ),
                             )
                             emit_event(t, iteration, result, duration)

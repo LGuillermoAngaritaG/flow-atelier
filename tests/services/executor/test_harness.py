@@ -195,6 +195,51 @@ class TestNonInteractive:
         assert result.exit_code == 124
         assert "timeout" in result.stderr.lower()
 
+    async def test_usage_captured_from_prompt_and_usage_update(self) -> None:
+        """A single-turn run reflects both the per-turn token breakdown
+        (PromptResponse.usage) and the cumulative cost (UsageUpdate)."""
+        sink = RecordingSink()
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {
+                    "turns": [
+                        {
+                            "chunks": ["ok"],
+                            "stop": "end_turn",
+                            "cost": 0.0123,
+                            "usage": {
+                                "input_tokens": 1000,
+                                "output_tokens": 200,
+                                "total_tokens": 1200,
+                            },
+                        }
+                    ]
+                }
+            ),
+            sink=sink,
+        )
+        result = await executor.execute(_task("x"), "x", _ctx())
+        assert result.exit_code == 0
+        assert result.usage is not None
+        assert result.usage.input_tokens == 1000
+        assert result.usage.output_tokens == 200
+        assert result.usage.total_tokens == 1200
+        assert result.usage.cost == 0.0123
+
+    async def test_usage_none_when_agent_reports_nothing(self) -> None:
+        """A harness that emits neither usage nor cost yields usage=None,
+        not a fabricated all-zero record."""
+        sink = RecordingSink()
+        executor = AcpHarnessExecutor(
+            launch_cmd=_fake_cmd(
+                {"turns": [{"chunks": ["ok"], "stop": "end_turn"}]}
+            ),
+            sink=sink,
+        )
+        result = await executor.execute(_task("x"), "x", _ctx())
+        assert result.exit_code == 0
+        assert result.usage is None
+
     async def test_non_interactive_does_not_stream_to_sink(self) -> None:
         """Non-interactive harness tasks must not double-render: chunks
         are captured into the result but NOT mirrored to the sink (the
@@ -326,6 +371,7 @@ class TestInteractive:
         class FakeResp:
             def __init__(self, stop: str) -> None:
                 self.stop_reason = stop
+                self.usage = None
 
         class FakeConn:
             def __init__(self) -> None:
