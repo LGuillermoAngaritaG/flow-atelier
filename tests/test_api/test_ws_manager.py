@@ -129,6 +129,35 @@ async def test_cancel_all_unblocks_hung_hitl_await(broker):
         await task
 
 
+async def test_await_hitl_answer_times_out(broker):
+    """Verify await_hitl_answer raises TimeoutError when no answer arrives.
+
+    :param broker: broker fixture.
+    """
+    broker.register_flow("T-1")
+    with pytest.raises(asyncio.TimeoutError):
+        await broker.await_hitl_answer("T-1", timeout=0.01)
+
+
+async def test_late_answer_after_timeout_does_not_bleed_into_next_prompt(broker):
+    """Verify a late answer arriving after a timeout is drained, not reused.
+
+    If a human's answer lands on the queue just after the await times out, the
+    next prompt for that flow must wait for a fresh answer rather than consuming
+    the stale one.
+
+    :param broker: broker fixture.
+    """
+    broker.register_flow("T-1")
+    with pytest.raises(asyncio.TimeoutError):
+        await broker.await_hitl_answer("T-1", timeout=0.01)
+    # Late answer arrives after the timeout fired.
+    await broker.deliver_hitl_answer("T-1", {"stale": True})
+    # The next prompt must NOT see the stale answer; it should time out again.
+    with pytest.raises(asyncio.TimeoutError):
+        await broker.await_hitl_answer("T-1", timeout=0.01)
+
+
 async def test_cancel_unknown_flow_is_noop(broker):
     """Verify cancelling an unknown flow is a no-op.
 

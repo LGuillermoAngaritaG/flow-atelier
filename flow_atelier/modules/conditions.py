@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from flow_atelier.schemas.conduit import _TASK_NAME_RE
 from flow_atelier.schemas.progress import TaskStatus
 
 _MATCH_MARKER = ".output.match("
@@ -23,10 +24,10 @@ _NOT_MATCH_MARKER = ".output.not_match("
 _OUTPUT_MATCH_PREFIX = "output.match("
 _OUTPUT_NOT_MATCH_PREFIX = "output.not_match("
 
-# Task names share the schema grammar (see schemas.conduit._TASK_NAME_RE).
-# ``.isalnum()`` would also accept Unicode letters/digits, so a dependency
-# string could be accepted that no schema-valid task name could ever match.
-_TASK_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+# Task names share the schema grammar: ``_TASK_NAME_RE`` is imported from
+# schemas.conduit so the two validators can't drift apart. ``.isalnum()`` would
+# also accept Unicode letters/digits, so a dependency string could be accepted
+# that no schema-valid task name could ever match.
 
 # Author regexes are matched against task/agent output. Bounding the candidate
 # length caps the work an adversarial *output* (matched by an otherwise-benign

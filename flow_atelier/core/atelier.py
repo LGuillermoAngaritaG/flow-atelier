@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from flow_atelier.core.settings import AtelierSettings
 from flow_atelier.modules.engine import (
     Engine,
@@ -431,22 +433,28 @@ class Atelier:
 
         :param payload: validated :class:`RunTaskInput`
         :returns: :class:`RunTaskOutput` carrying the flow id and logs
+        :raises ValueError: if ``name`` or ``tool`` is well-formed JSON but
+            invalid as a task definition (e.g. a hyphenated name or an unknown
+            tool), so the route can map it to a 400 instead of a 500
         """
-        conduit = Conduit.model_validate(
-            {
-                "name": f"task__{payload.name}",
-                "description": payload.description or payload.name,
-                "tasks": [
-                    {
-                        "name": payload.name,
-                        "description": payload.description or payload.name,
-                        "task": payload.task,
-                        "tool": payload.tool,
-                        "depends_on": [],
-                    }
-                ],
-            }
-        )
+        try:
+            conduit = Conduit.model_validate(
+                {
+                    "name": f"task__{payload.name}",
+                    "description": payload.description or payload.name,
+                    "tasks": [
+                        {
+                            "name": payload.name,
+                            "description": payload.description or payload.name,
+                            "task": payload.task,
+                            "tool": payload.tool,
+                            "depends_on": [],
+                        }
+                    ],
+                }
+            )
+        except ValidationError as e:
+            raise ValueError(f"invalid task definition: {e}") from e
         captured: dict[str, str | None] = {"id": None}
 
         def _on_started(fid: str) -> None:
@@ -478,15 +486,28 @@ class Atelier:
         """Persist a new schedule and return it.
 
         Validates that ``conduit_name`` resolves to a known conduit (in the
-        same store the fire will use), so a typo fails loudly here instead of
-        silently at fire time via a swallowed exception.
+        same store the fire will use) and that the schedule supplies every
+        required (default-less) input the conduit declares, so a typo or a
+        missing input fails loudly here instead of silently at fire time via
+        a swallowed exception.
 
         :param payload: validated :class:`CreateScheduleInput`
         :returns: the new :class:`ScheduledJob`
-        :raises ValueError: if ``conduit_name`` is not a known conduit
+        :raises ValueError: if ``conduit_name`` is not a known conduit, or the
+            schedule omits a required (default-less) conduit input
         """
         if payload.conduit_name not in self.store.list_conduits():
             raise ValueError(f"unknown conduit: {payload.conduit_name!r}")
+        conduit = self.store.read_conduit(payload.conduit_name)
+        required = {
+            key for key, spec in conduit.inputs.items() if spec.default is None
+        }
+        missing = required - set(payload.inputs)
+        if missing:
+            raise ValueError(
+                f"schedule for {payload.conduit_name!r} is missing required "
+                f"inputs: {sorted(missing)}"
+            )
         return self.schedule_store.create(payload)
 
     def delete_schedule(self, schedule_id: str) -> ScheduledJob:
