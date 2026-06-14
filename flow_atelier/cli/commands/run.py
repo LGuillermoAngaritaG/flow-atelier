@@ -223,7 +223,7 @@ def run_cmd(
         raise typer.Exit(code=0)
     except Exception as e:  # noqa: BLE001
         _render_run_footer(collected_events, console)
-        console.print(f"[red]flow failed:[/red] {e}")
+        console.print(f"[red]flow failed:[/red] {escape(str(e))}")
         fid = captured_flow_id["id"]
         if fid:
             console.print(f"[red]flow_id:[/red] {fid}")

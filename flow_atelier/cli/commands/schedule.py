@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import typer
+from rich.markup import escape
 
 from flow_atelier.cli._shared import _schedule_store, console
 from flow_atelier.cli.main import schedule_app
@@ -198,7 +199,7 @@ def schedule_run_now_cmd(
         )
     except Exception as e:  # noqa: BLE001
         _render_run_footer(collected_events, console)
-        console.print(f"[red]flow failed:[/red] {e}")
+        console.print(f"[red]flow failed:[/red] {escape(str(e))}")
         if captured["id"]:
             console.print(f"[red]flow_id:[/red] {captured['id']}")
         raise typer.Exit(code=1)
