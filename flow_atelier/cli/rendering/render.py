@@ -16,6 +16,7 @@ from flow_atelier.cli._shared import (
     _format_duration_seconds,
     _format_next_fire,
 )
+from flow_atelier.modules.plan import ExecutionPlan, PlannedTask
 from flow_atelier.schemas.log import IntermediateStep, StepKind, TaskEvent
 from flow_atelier.schemas.progress import FlowStatus, Progress, TaskStatus
 from flow_atelier.services.scheduler import PlannedJob
@@ -414,6 +415,65 @@ def format_conduit_error(exc: Exception) -> str:
         if problem and mark is not None:
             return f"invalid YAML: {problem} (line {mark.line + 1})"
     return " ".join(str(exc).split())
+
+
+def _render_planned_task(task: PlannedTask, console: Console) -> None:
+    """Render one task line plus its edges, loop badge and gate note.
+
+    :param task: the planned task to render.
+    :param console: Rich console to write to.
+    """
+    head = Text("  ")
+    head.append(task.name, style="bold")
+    head.append(f"  [{task.tool}]", style="dim")
+    if task.is_loop and task.loop_text:
+        head.append(f"  ↻ {task.loop_text}", style="magenta")
+    if task.is_sink:
+        head.append("  ⊙ sink", style="cyan")
+    if task.is_gate:
+        head.append("  ⎇ gate", style="yellow")
+    console.print(head)
+
+    for e in task.plain_edges:
+        line = Text("      → ", style="dim")
+        line.append(e.task)
+        console.print(line)
+    for e in task.conditional_edges:
+        line = Text("      ⇢ ", style="yellow")
+        line.append(e.task)
+        marker = "not_match" if e.negate else "match"
+        line.append(f"  ?{marker}({e.pattern})", style="yellow")
+        console.print(line)
+
+    if task.is_gate and task.prunes:
+        note = Text("      ", style="dim")
+        note.append(
+            f"⚠ if this output misses, it prunes {len(task.prunes)} task(s): "
+            f"{', '.join(task.prunes)}",
+            style="dim yellow",
+        )
+        console.print(note)
+
+
+def render_plan(plan: ExecutionPlan, console: Console) -> None:
+    """Render a static :class:`ExecutionPlan` as grouped wave blocks.
+
+    :param plan: the execution plan to render.
+    :param console: Rich console to write to.
+    """
+    console.print(
+        f"[bold]{plan.conduit_name}[/bold]  "
+        f"[dim]max_concurrency={plan.max_concurrency}[/dim]"
+    )
+    console.print(
+        "[dim italic]static structural view — wave levels are longest-path "
+        "layering, not a runtime trace; real parallelism is also bounded by "
+        "max_concurrency and conditional skips.[/dim italic]"
+    )
+    for i, wave in enumerate(plan.waves):
+        console.print(f"\n[bold]Wave {i}[/bold]")
+        for task in wave:
+            _render_planned_task(task, console)
 
 
 def _render_planned_table(planned: list[PlannedJob]) -> Table:
