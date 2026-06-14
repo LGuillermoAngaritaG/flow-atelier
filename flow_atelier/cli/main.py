@@ -81,5 +81,6 @@ from flow_atelier.cli.commands import (  # noqa: E402, F401
     serve,
     status,
     stop,
+    timing,
 )
 from flow_atelier.cli.commands import list as _list  # noqa: E402, F401
