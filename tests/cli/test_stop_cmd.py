@@ -68,7 +68,7 @@ def _capture_console(monkeypatch) -> io.StringIO:
     buf = io.StringIO()
     monkeypatch.setattr(
         "flow_atelier.cli.commands.stop.console",
-        Console(force_terminal=True, file=buf, width=200),
+        Console(force_terminal=True, no_color=False, file=buf, width=200),
     )
     return buf
 
