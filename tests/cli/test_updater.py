@@ -8,6 +8,7 @@ import pytest
 from flow_atelier.cli.updater import (
     _do_swap,
     _download_and_verify,
+    _parse_version,
     _platform_asset_name,
     is_frozen_binary,
     start_background_update_check,
@@ -44,6 +45,32 @@ def test_platform_asset_name_known_platforms(sys_name, machine, expected):
         mock_plat.system.return_value = sys_name
         mock_plat.machine.return_value = machine
         assert _platform_asset_name() == expected
+
+
+def test_platform_asset_name_intel_mac_raises():
+    """Intel macOS (x86_64) is unsupported and must raise, not return arm64."""
+    with patch("flow_atelier.cli.updater.platform") as mock_plat:
+        mock_plat.system.return_value = "Darwin"
+        mock_plat.machine.return_value = "x86_64"
+        with pytest.raises(RuntimeError):
+            _platform_asset_name()
+
+
+# ---------------------------------------------------------------------------
+# 2b. _parse_version — numeric comparison
+# ---------------------------------------------------------------------------
+
+
+def test_parse_version_numeric_ordering():
+    """0.10.0 must compare as newer than 0.9.0 (not lexicographically)."""
+    assert _parse_version("0.10.0") > _parse_version("0.9.0")
+    assert _parse_version("v0.10.0") > _parse_version("0.9.0")
+    assert _parse_version("0.9.0") == _parse_version("0.9.0")
+
+
+def test_parse_version_garbage_fails_closed():
+    """An unparseable tag sorts below any real version (fails closed)."""
+    assert _parse_version("not-a-version") < _parse_version("0.0.1")
 
 
 # ---------------------------------------------------------------------------
@@ -118,3 +145,69 @@ def test_verify_hash_rejects_mismatch():
         )
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# 7. _do_swap preserves the executable bit
+# ---------------------------------------------------------------------------
+
+
+def _stage_pending(mod, binary, asset_name):
+    """Stage a pending update in module state."""
+    with mod._lock:
+        mod._pending_update = binary
+        mod._pending_asset_name = asset_name
+
+
+def test_do_swap_preserves_executable_bit(tmp_path, monkeypatch):
+    """A swapped-in binary must remain executable, not inherit 0600."""
+    import os
+    import stat
+
+    import flow_atelier.cli.updater as mod
+
+    target = tmp_path / "atelier"
+    target.write_bytes(b"old binary")
+    target.chmod(0o755)
+
+    monkeypatch.setattr(mod.sys, "executable", str(target))
+    _stage_pending(mod, b"new binary", "atelier-linux-x86_64")
+
+    _do_swap()
+
+    assert target.read_bytes() == b"new binary"
+    assert os.stat(target).st_mode & stat.S_IXUSR
+
+
+# ---------------------------------------------------------------------------
+# 8. _do_swap rolls back when the final replace fails
+# ---------------------------------------------------------------------------
+
+
+def test_do_swap_rolls_back_on_replace_failure(tmp_path, monkeypatch):
+    """If os.replace fails after the .old rename, the original is restored."""
+    import flow_atelier.cli.updater as mod
+
+    target = tmp_path / "atelier"
+    target.write_bytes(b"original binary")
+    target.chmod(0o755)
+
+    monkeypatch.setattr(mod.sys, "executable", str(target))
+    _stage_pending(mod, b"new binary", "atelier-linux-x86_64")
+
+    real_replace = mod.os.replace
+    calls = {"n": 0}
+
+    def flaky_replace(src, dst):
+        # First call = tmp -> live (force failure); later calls (rollback) work.
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("simulated replace failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(mod.os, "replace", flaky_replace)
+
+    _do_swap()  # must not raise
+
+    assert target.exists()
+    assert target.read_bytes() == b"original binary"

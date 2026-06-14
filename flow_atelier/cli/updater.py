@@ -8,6 +8,13 @@ exits (no ``.exe`` lock issues on Windows).
 For ``pip``/``uv`` installs (``sys.frozen`` is falsy), prints an upgrade
 hint to stderr instead.  Set ``ATELIER_NO_UPDATE_CHECK=1`` to disable
 all update behaviour (useful in CI/tests).
+
+Trust model: the downloaded binary is verified only against a
+``SHA256SUMS`` file fetched from the same GitHub release over HTTPS.
+That detects transport corruption but not a tampered release — there is
+no client-verifiable signature, so the integrity of an update rests
+entirely on GitHub release integrity plus TLS, not on a key the client
+holds. This is an accepted limitation for this project.
 """
 from __future__ import annotations
 
@@ -40,6 +47,20 @@ def is_frozen_binary() -> bool:
     return getattr(sys, "frozen", False)
 
 
+def _parse_version(v: str) -> tuple[int, ...]:
+    """Parse a dotted version string into a comparable tuple of ints.
+
+    Strips a leading ``v``. Non-numeric/garbage parts make the whole
+    version sort as ``(-1,)`` so the caller fails closed (treats it as
+    "not newer") instead of crashing on an unparseable release tag.
+    """
+    v = v.strip().lstrip("v")
+    try:
+        return tuple(int(part) for part in v.split("."))
+    except ValueError:
+        return (-1,)
+
+
 def _platform_asset_name() -> str:
     """Return the release asset name for the current platform."""
     system = platform.system().lower()
@@ -48,10 +69,11 @@ def _platform_asset_name() -> str:
     if system == "linux" and machine == "x86_64":
         return "atelier-linux-x86_64"
     if system == "darwin":
-        # GitHub macos-latest is arm64; Intel macs are rare now.
+        # Only an arm64 build is published; Intel macs cannot run it and
+        # there is no Rosetta fallback (consistent with install.sh).
         if machine == "arm64":
             return "atelier-macos-arm64"
-        return "atelier-macos-arm64"  # fall back to arm64 binary
+        raise RuntimeError(f"unsupported platform: {system}-{machine}")
     if system == "windows" and machine in ("amd64", "x86_64"):
         return "atelier-windows-x86_64.exe"
 
@@ -118,11 +140,9 @@ def _background_check() -> None:
         if not remote_tag:
             return
 
-        remote_version = remote_tag.lstrip("v")
-
         from flow_atelier import __version__
 
-        if remote_version <= __version__:
+        if _parse_version(remote_tag) <= _parse_version(__version__):
             return  # already up to date
 
         # Build asset download URLs from the release assets list.
@@ -177,17 +197,39 @@ def _do_swap() -> None:
             os.close(fd)
             fd = -1
 
+            # mkstemp creates the temp file 0600 (not executable); os.replace
+            # would carry that mode onto the live binary and brick the next
+            # run. Match the currently-running binary's mode (fall back to
+            # 0755) so the swapped-in file stays executable.
+            try:
+                os.chmod(tmp_path, os.stat(current).st_mode)
+            except OSError:
+                os.chmod(tmp_path, 0o755)
+
             # Rename old → .old (may fail on Windows if .old exists from a
             # previous update — that's fine, we just overwrite it).
+            renamed_backup = False
             try:
                 if os.path.exists(backup):
                     os.remove(backup)
                 os.rename(current, backup)
+                renamed_backup = True
             except OSError:
                 # If we can't rename the old file, try direct replace.
                 pass
 
-            os.replace(tmp_path, update_path)
+            try:
+                os.replace(tmp_path, update_path)
+            except Exception:
+                # The live path may now be empty (we already moved the
+                # original to .old). Roll the backup back into place so a
+                # botched swap leaves a runnable binary instead of a hole.
+                if renamed_backup:
+                    try:
+                        os.replace(backup, current)
+                    except Exception:
+                        pass
+                raise
             tmp_path = None  # prevent cleanup in finally
         finally:
             if fd >= 0:
