@@ -86,20 +86,6 @@ def test_run_again_with_override(workdir):
     assert Atelier().store.read_input(new_id).get("msg") == "two"
 
 
-def test_run_again_rejects_unknown_override(workdir):
-    """`--again` plus an undeclared `--input` key exits 1 with a suggestion."""
-    runner = CliRunner()
-    first = runner.invoke(app, ["run", "hello", "-i", "msg=one"])
-    src = _flow_id(first.stdout)
-
-    again = runner.invoke(app, ["run", "--again", src, "-i", "mgs=two"])
-    assert again.exit_code == 1, again.stdout
-    assert "unknown input" in again.stdout
-    assert "did you mean" in again.stdout
-    assert "msg" in again.stdout
-    assert "starting flow" not in again.stdout
-
-
 def test_run_again_conflicts_with_resume(workdir):
     """`--resume X --again Y` exits non-zero with the conflict error."""
     result = CliRunner().invoke(

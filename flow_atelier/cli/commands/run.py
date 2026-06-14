@@ -19,32 +19,8 @@ from flow_atelier.cli.rendering.render import (
     format_conduit_error,
 )
 from flow_atelier.core.atelier import Atelier
-from flow_atelier.schemas.conduit import InputSpec
 from flow_atelier.schemas.flow import parse_flow_id
 from flow_atelier.schemas.log import TaskEvent
-
-
-def _reject_unknown_inputs(supplied: dict[str, str], declared: dict[str, InputSpec]) -> None:
-    """Exit 1 if any supplied input key is not declared by the conduit.
-
-    A mistyped ``--input`` key would otherwise be silently swallowed (it is never
-    read, and only *missing required* inputs are ever flagged). Fail loudly while
-    the user can still fix it for free, suggesting the intended key on an obvious
-    near-miss.
-
-    :param supplied: parsed ``key=value`` inputs handed to the run.
-    :param declared: the conduit's declared input specs, keyed by input name.
-    """
-    unknown = [k for k in supplied if k not in declared]
-    if not unknown:
-        return
-    for key in unknown:
-        msg = f"[red]unknown input:[/red] {escape(key)}"
-        match = difflib.get_close_matches(key, list(declared), n=1)
-        if match:
-            msg += f" — did you mean '{escape(match[0])}'?"
-        console.print(msg)
-    raise typer.Exit(code=1)
 
 
 @app.command(
@@ -161,9 +137,8 @@ def run_cmd(
     if again_from is not None:
         flow_id = _resolve_flow_id(atelier, again_from)
         again_conduit = parse_flow_id(flow_id)[0]
-        again_conduit_obj = None
         try:
-            again_conduit_obj = atelier.store.read_conduit(again_conduit)
+            atelier.store.read_conduit(again_conduit)
         except FileNotFoundError:
             pass
         except (yaml.YAMLError, ValidationError, ValueError) as exc:
@@ -173,11 +148,6 @@ def run_cmd(
             console.print(f"[dim]→ fix conduits/{again_conduit}/conduit.yaml[/dim]")
             raise typer.Exit(code=1)
         overrides = _parse_inputs(inputs_raw)
-        # Reject typo'd override keys, same as the normal run path. Skip only when
-        # the conduit file is gone (read failed above) — then there is nothing to
-        # validate against and the saved inputs remain usable.
-        if again_conduit_obj is not None:
-            _reject_unknown_inputs(overrides, again_conduit_obj.inputs)
         collected_events = []
         captured_flow_id = {"id": None}
 
@@ -247,9 +217,19 @@ def run_cmd(
         console.print(f"[dim]→ fix conduits/{conduit_name}/conduit.yaml[/dim]")
         raise typer.Exit(code=1)
 
-    # Reject undeclared input keys before anything else, while the user can still
-    # fix the typo for free (before the readiness gate, prompting, or execution).
-    _reject_unknown_inputs(inputs, conduit.inputs)
+    # Reject undeclared input keys before anything else: a mistyped --input key
+    # would otherwise be silently swallowed (it's never read, and only *missing
+    # required* inputs are ever flagged). Fail loudly while the user can still
+    # fix it for free, suggesting the intended key on an obvious near-miss.
+    unknown = [k for k in inputs if k not in conduit.inputs]
+    if unknown:
+        for key in unknown:
+            msg = f"[red]unknown input:[/red] {escape(key)}"
+            match = difflib.get_close_matches(key, list(conduit.inputs), n=1)
+            if match:
+                msg += f" — did you mean '{escape(match[0])}'?"
+            console.print(msg)
+        raise typer.Exit(code=1)
 
     # Readiness gate: refuse to start an unrunnable conduit (unregistered tool
     # or a harness CLI missing from PATH) before prompting for inputs or
