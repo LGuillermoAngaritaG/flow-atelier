@@ -14,6 +14,7 @@ from flow_atelier.modules.engine import (
     TaskEventCallback,
     TaskStartingCallback,
 )
+from flow_atelier.modules.liveness import is_runner_alive
 from flow_atelier.schemas.api import (
     CreateConduitInput,
     CreateScheduleInput,
@@ -218,8 +219,11 @@ class Atelier:
 
         A flow whose process died (crash, kill, power loss) is left with
         status ``running``, so that status is resumable too — matching how
-        nested flows are recovered. There is no liveness check: resuming a
-        flow that is genuinely still running elsewhere double-runs it.
+        nested flows are recovered. As a guard against double-running, resume
+        refuses when the original runner pid is *provably* still alive on this
+        host (see :func:`is_runner_alive`). The honest limitation remains: a
+        runner on another host can't be probed, so a cross-machine
+        still-running flow could still be double-run.
 
         :param flow_id: flow id of the prior failed/crashed run to resume
         :param on_task_event: optional task-event callback forwarded to the engine
@@ -236,6 +240,11 @@ class Atelier:
         if prior.status not in (FlowStatus.failed, FlowStatus.running):
             raise ValueError(
                 f"can only resume failed or crashed flows, got {prior.status.value}"
+            )
+        if is_runner_alive(prior):
+            raise ValueError(
+                f"flow {flow_id} runner pid {prior.runner_pid} is still alive on "
+                "this host; refusing to resume to avoid a double-run"
             )
         conduit_name, _, _ = parse_flow_id(flow_id)
         conduit = self.store.read_conduit(conduit_name)

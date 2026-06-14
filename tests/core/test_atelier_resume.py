@@ -1,10 +1,14 @@
 """Tests for Atelier.resume_flow facade method and get_flow_logs child merging."""
 from __future__ import annotations
 
+import os
+import socket
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from flow_atelier.cli._shared import _resolve_flow_id
 from flow_atelier.core.atelier import Atelier
 from flow_atelier.core.settings import AtelierSettings
 from flow_atelier.schemas.api import RunTaskInput
@@ -85,14 +89,50 @@ async def test_resume_flow_accepts_running_status(atelier, tmp_path):
     )
     flow_id = await atelier.run_conduit("hello", {}, working_dir=tmp_path)
 
-    # Simulate a crash: progress left at `running`.
+    # Simulate a crash: progress left at `running` with a now-dead runner pid.
+    dead = subprocess.Popen(["true"])
+    dead.wait()
     progress = atelier.store.read_progress(flow_id)
     progress.status = FlowStatus.running
+    progress.runner_pid = dead.pid
+    progress.runner_host = socket.gethostname()
     atelier.store.write_progress(flow_id, progress)
 
     resumed = await atelier.resume_flow(flow_id, working_dir=tmp_path)
     assert resumed == flow_id
     assert atelier.store.read_progress(flow_id).status == FlowStatus.completed
+
+
+async def test_resume_flow_refuses_when_runner_alive(atelier, tmp_path):
+    """A `running` flow whose runner pid is alive on this host must not resume.
+
+    :param atelier: Atelier facade fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    conduit_dir = atelier.store.base_dir / "conduits" / "hello"
+    conduit_dir.mkdir(parents=True)
+    (conduit_dir / "conduit.yaml").write_text(
+        "name: hello\n"
+        "description: say hi\n"
+        "tasks:\n"
+        "  - greet:\n"
+        "      description: greet\n"
+        '      task: "echo hi"\n'
+        "      tool: tool:bash\n"
+        "      depends_on: []\n"
+    )
+    flow_id = await atelier.run_conduit("hello", {}, working_dir=tmp_path)
+
+    # Simulate a still-running flow: status running, runner pid is *this*
+    # live test process on this host.
+    progress = atelier.store.read_progress(flow_id)
+    progress.status = FlowStatus.running
+    progress.runner_pid = os.getpid()
+    progress.runner_host = socket.gethostname()
+    atelier.store.write_progress(flow_id, progress)
+
+    with pytest.raises(ValueError, match="still alive"):
+        await atelier.resume_flow(flow_id, working_dir=tmp_path)
 
 
 async def test_resume_flow_raises_for_unknown_flow(atelier):
@@ -123,6 +163,23 @@ async def test_resume_flow_reuses_stored_run_path(atelier, tmp_path):
     )
     inputs = atelier.store.read_input(result.flow_id)
     assert inputs.get("run_path") == str(tmp_path)
+
+
+# ---------------------------------------------------------------- _resolve_flow_id
+
+
+def test_resolve_flow_id_finds_nested_child(atelier):
+    """The CLI resolver must address a nested child flow by its exact id.
+
+    `list_flows` only enumerates top-level flows, so a child id has to be
+    resolved through the store's recursive lookup.
+
+    :param atelier: Atelier facade fixture.
+    """
+    parent = atelier.store.create_flow("hello", {})
+    child = atelier.store.create_flow("hello", {}, parent_flow_id=parent)
+    assert child not in atelier.list_flows()
+    assert _resolve_flow_id(atelier, child) == child
 
 
 # ---------------------------------------------------------------- get_flow_logs child merging

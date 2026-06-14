@@ -36,8 +36,11 @@ def _parse_inputs(pairs: list[str]) -> dict[str, str]:
 def _resolve_flow_id(atelier: Atelier, candidate: str) -> str:
     """Resolve ``candidate`` to a full flow id, supporting git-style prefixes.
 
-    - Exact id present on disk → returned as-is.
-    - Otherwise scans all known flows. Exactly one prefix match → that id.
+    - Exact top-level id → returned as-is.
+    - Exact id of a nested child flow → resolved via the store (``list_flows``
+      only enumerates top-level flows, but the store can address children by
+      their exact id). Child-id *prefix* matching stays out of scope.
+    - Otherwise scans top-level flows. Exactly one prefix match → that id.
     - Zero matches → exits with ``unknown flow`` (code 1).
     - More than one → exits with ``ambiguous flow id`` and lists candidates.
 
@@ -48,6 +51,11 @@ def _resolve_flow_id(atelier: Atelier, candidate: str) -> str:
     all_flows = atelier.list_flows()
     if candidate in all_flows:
         return candidate
+    try:
+        atelier.store.read_progress(candidate)
+        return candidate
+    except FileNotFoundError:
+        pass
     matches = [fid for fid in all_flows if fid.startswith(candidate)]
     if len(matches) == 1:
         return matches[0]

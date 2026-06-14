@@ -42,6 +42,32 @@ def is_crashed(progress: Progress) -> bool:
     return False
 
 
+def is_runner_alive(progress: Progress) -> bool:
+    """Return True only when a ``running`` flow's local runner is provably alive.
+
+    The precise inverse of :func:`is_crashed`: that proves the runner *dead*,
+    this proves it *alive*. The large "unknown" middle (foreign host, missing
+    pid, dead pid, permission error) returns False from both, so a genuinely
+    crashed-but-unprovable or cross-host flow stays resumable.
+
+    :param progress: the flow's progress snapshot.
+    :returns: True iff status is ``running``, the runner pid/host are recorded,
+        the host matches this machine, and ``os.kill(pid, 0)`` succeeds. Any
+        other case returns False.
+    """
+    if progress.status != FlowStatus.running:
+        return False
+    if progress.runner_pid is None:
+        return False
+    if progress.runner_host != socket.gethostname():
+        return False
+    try:
+        os.kill(progress.runner_pid, 0)
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+    return True
+
+
 def display_status(progress: Progress) -> str:
     """Return the display status string, mapping a dead runner to ``crashed``.
 

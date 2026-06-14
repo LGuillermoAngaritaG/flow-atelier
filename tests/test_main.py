@@ -308,6 +308,38 @@ def test_logs_unknown_task_filter(workdir):
     assert "no log entries" in result.output
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
+def test_logs_last_zero_shows_nothing(workdir):
+    """`logs --last 0` should render no entries (and `[]` in json), not all.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_multi(workdir)
+    runner = CliRunner()
+    flow_id = _run_and_id(runner, "multi")
+    result = runner.invoke(app, ["logs", flow_id, "--last", "0"])
+    assert result.exit_code == 0, result.output
+    assert "alpha-output" not in result.output
+    assert "beta-output" not in result.output
+    result_json = runner.invoke(app, ["logs", flow_id, "--last", "0", "--json"])
+    assert result_json.exit_code == 0, result_json.output
+    assert result_json.output.strip() == "[]"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
+def test_logs_last_negative_is_rejected(workdir):
+    """`logs --last -1` should fail with a parameter error, not show everything.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_multi(workdir)
+    runner = CliRunner()
+    flow_id = _run_and_id(runner, "multi")
+    result = runner.invoke(app, ["logs", flow_id, "--last", "-1"])
+    assert result.exit_code != 0
+    assert "alpha-output" not in result.output
+
+
 # ---------------------------------------------------------------- prefix match
 
 

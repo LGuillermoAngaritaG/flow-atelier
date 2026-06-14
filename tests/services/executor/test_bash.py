@@ -1,5 +1,7 @@
 """BashExecutor tests."""
+import os
 import sys
+import time
 
 import pytest
 
@@ -71,6 +73,31 @@ async def test_timeout_kills_process():
     )
     assert r.exit_code == 124
     assert "timeout" in r.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups only")
+async def test_timeout_kills_background_grandchild(tmp_path):
+    """A backgrounded grandchild must not survive the task timeout.
+
+    The shell backgrounds a long sleep and records its pid; on timeout the
+    executor kills the whole process group, so the grandchild dies too.
+    """
+    pidfile = tmp_path / "child.pid"
+    cmd = f"sleep 30 & echo $! > {pidfile}; wait"
+    r = await BashExecutor().execute(_task(cmd), cmd, _ctx(timeout=1))
+    assert r.exit_code == 124
+
+    # The pid file is written before `wait`, so it exists by the time we return.
+    grandchild_pid = int(pidfile.read_text().strip())
+    # Give the group kill a moment to land, then assert the grandchild is gone.
+    for _ in range(20):
+        try:
+            os.kill(grandchild_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail(f"grandchild pid {grandchild_pid} survived the timeout")
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax not supported in cmd.exe")

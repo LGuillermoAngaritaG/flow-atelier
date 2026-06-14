@@ -96,8 +96,11 @@ def logs_cmd(
         console.print(f"[yellow]no log entries for {escape(scope)}[/yellow]")
         raise typer.Exit(code=1)
 
-    if last is not None and last > 0:
-        entries = entries[-last:]
+    if last is not None:
+        if last < 0:
+            raise typer.BadParameter("--last must be zero or positive")
+        # entries[-0:] is the whole list, so handle 0 explicitly as "none".
+        entries = entries[-last:] if last > 0 else []
 
     if json_mode:
         typer.echo(

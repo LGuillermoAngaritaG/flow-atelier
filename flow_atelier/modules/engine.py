@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from flow_atelier.modules.conditions import (
+    Dependency,
     DependencyParseError,
     evaluate,
     evaluate_loop_predicate,
@@ -86,14 +87,19 @@ _current_task_ctx: ContextVar[str] = ContextVar("current_task_name", default="")
 _current_flow_ctx: ContextVar[str] = ContextVar("current_flow_id", default="")
 
 
-def validate_conduit(conduit: Conduit) -> dict[str, list]:
-    """Return {task_name: [parsed deps]}. Raises on cycle/unknown/invalid regex.
+def validate_conduit(conduit: Conduit) -> dict[str, list[Dependency]]:
+    """Validate the conduit DAG and return its parsed dependency map.
+
+    Two responsibilities, both load-bearing: it *validates* the DAG (unknown
+    dependencies, cycles, invalid regexes, stray template references) and it
+    *parses* each task's ``depends_on`` into :class:`Dependency` objects, which
+    the run loop later relies on. Raises on any validation failure.
 
     :param conduit: parsed conduit whose tasks/dependencies to validate.
     :returns: mapping of task name to its list of parsed dependencies.
     """
     task_names = {t.name for t in conduit.tasks}
-    parsed: dict[str, list] = {}
+    parsed: dict[str, list[Dependency]] = {}
     for t in conduit.tasks:
         try:
             parsed_deps = parse_dependencies(t.depends_on)
