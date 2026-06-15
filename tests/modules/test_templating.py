@@ -161,8 +161,9 @@ def test_resolve_loop_history_entry_chars_zero_unlimited():
 
 def test_resolve_conduit_dir_substitutes_absolute_path():
     """Verify {{conduit_dir}} resolves to the supplied dir's absolute string."""
-    out = resolve("{{conduit_dir}}/x", {}, {}, conduit_dir=Path("/a/b"))
-    assert out == "/a/b/x"
+    base = Path("/a/b")
+    out = resolve("{{conduit_dir}}/x", {}, {}, conduit_dir=base)
+    assert out == f"{base}/x"
 
 
 def test_resolve_conduit_dir_none_falls_through_to_unknown():

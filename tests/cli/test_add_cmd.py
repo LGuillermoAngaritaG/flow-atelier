@@ -47,7 +47,10 @@ def env(tmp_path, monkeypatch):
     for k in list(os.environ):
         if k.startswith("ATELIER_"):
             monkeypatch.delenv(k, raising=False)
+    # Redirect Path.home() on both POSIX (HOME) and Windows (USERPROFILE),
+    # else skills install to the real user profile and tests pollute each other.
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("ATELIER_GLOBAL_ATELIER_DIR", str(global_dir))
     monkeypatch.setenv("ATELIER_NO_UPDATE_CHECK", "1")
 
