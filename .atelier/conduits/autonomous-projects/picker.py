@@ -1,7 +1,12 @@
 """Pick the next autonomous project to work on, or emit a SKIP reason.
 
-Stdout contract (single line, always exit 0):
+Stdout contract (always exit 0):
     READY: <absolute path to chosen project .md file>
+    NAME: <project file stem>
+    LOCATION: <frontmatter location (codebase dir)>
+    MAX_IDEAS: <frontmatter max_ideas, default 20>
+    MAX_PENDING_REVIEW: <frontmatter max_pending_review, default 5>
+  or
     SKIP:  <human-readable reason>
 
 Filters, in order:
@@ -93,10 +98,20 @@ def max_mtime_under(path: Path) -> float:
     return newest
 
 
+def _int_field(fm: dict[str, str], key: str, default: int) -> int:
+    """Return the frontmatter int at `key`, or `default` if missing/non-numeric."""
+    try:
+        return int(str(fm.get(key, "")).strip())
+    except (ValueError, TypeError):
+        return default
+
+
 def emit_ready(path: Path, fm: dict[str, str]) -> None:
     print(f"READY: {path}")
     print(f"NAME: {path.stem}")
     print(f"LOCATION: {fm.get('location', '')}")
+    print(f"MAX_IDEAS: {_int_field(fm, 'max_ideas', 20)}")
+    print(f"MAX_PENDING_REVIEW: {_int_field(fm, 'max_pending_review', 5)}")
 
 
 def git_last_commit_ts(path: Path) -> float:
