@@ -28,7 +28,8 @@ class BashExecutor(ExecutorBase):
         its own group, so killing the group also kills the build/server/etc. it
         spawned — closing the orphaned-grandchild gap a bare ``proc.kill()``
         leaves. Falls back to killing just the shell if the group can't be
-        resolved (already reaped) or signalled (race/permission).
+        resolved (already reaped) or signalled (race/permission), or on Windows
+        where ``os.getpgid``/``os.killpg`` do not exist (AttributeError).
 
         :param proc: the shell subprocess to terminate together with its group.
         """
@@ -36,7 +37,7 @@ class BashExecutor(ExecutorBase):
             return
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
+        except (ProcessLookupError, PermissionError, AttributeError):
             try:
                 proc.kill()
             except ProcessLookupError:
