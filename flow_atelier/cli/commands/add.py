@@ -91,6 +91,26 @@ def _print_remove_report(report: RemoveReport) -> None:
     )
 
 
+@app.command("update", help="Re-fetch and re-install a package from its source.")
+def update_cmd(
+    name: str = typer.Argument(..., help="Installed package name."),
+    force: bool = typer.Option(
+        False, "--force", help="Overwrite existing conduits/skills on collision."
+    ),
+) -> None:
+    """Re-fetch and re-install a package from its recorded source.
+
+    :param name: installed package name (lockfile key).
+    :param force: overwrite colliding conduits/skills instead of skipping.
+    """
+    try:
+        report = Atelier().update_package(name, force=force)
+    except PackageError as exc:
+        console.print(f"[red]error:[/red] {escape(str(exc))}")
+        raise typer.Exit(code=1)
+    _print_report(report)
+
+
 @app.command("remove", help="Uninstall a package's conduits and skills.")
 def remove_cmd(
     name: str = typer.Argument(..., help="Installed package name."),

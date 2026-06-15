@@ -122,3 +122,35 @@ def test_remove_unknown_package_errors(env):
     assert result.exit_code == 1
     assert "not installed" in result.output
     assert "Traceback" not in result.output
+
+
+def test_update_force_propagates_source_change(env):
+    """`update --force` re-installs and propagates a changed source file."""
+    assert CliRunner().invoke(app, ["add", str(env["pkg"])]).exit_code == 0
+    # modify the source conduit
+    (env["pkg"] / ".atelier" / "conduits" / "demo" / "conduit.yaml").write_text(
+        CONDUIT_YAML.replace("echo hi", "echo CHANGED")
+    )
+    result = CliRunner().invoke(app, ["update", "demo-pkg", "--force"])
+    assert result.exit_code == 0, result.output
+    installed = (
+        env["global"] / "conduits" / "demo" / "conduit.yaml"
+    ).read_text()
+    assert "echo CHANGED" in installed
+
+
+def test_update_without_force_preserves_lockfile_ownership(env):
+    """`update` without --force keeps conduits/skills owned in the lockfile."""
+    assert CliRunner().invoke(app, ["add", str(env["pkg"])]).exit_code == 0
+    assert CliRunner().invoke(app, ["update", "demo-pkg"]).exit_code == 0
+    lock = json.loads((env["global"] / "installed.json").read_text())
+    assert lock["demo-pkg"]["conduits"] == ["demo"]
+    assert lock["demo-pkg"]["skills"] == ["idea"]
+
+
+def test_update_unknown_package_errors(env):
+    """Updating an unknown package exits 1 referencing `atelier add`."""
+    result = CliRunner().invoke(app, ["update", "nope"])
+    assert result.exit_code == 1
+    assert "not installed" in result.output
+    assert "atelier add" in result.output

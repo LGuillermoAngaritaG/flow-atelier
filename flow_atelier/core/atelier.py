@@ -508,6 +508,45 @@ class Atelier:
         )
         return report
 
+    def update_package(self, name: str, *, force: bool = False) -> InstallReport:
+        """Re-fetch and re-install a package from its recorded source.
+
+        Reuses the recorded source/ref/scope/skill dirs so a user's hand-made
+        schedule survives (D7). Without ``--force``, items already present
+        skip-and-warn but stay package-owned (their lockfile ownership is
+        preserved across the update).
+
+        :param name: installed package name (lockfile key).
+        :param force: overwrite existing conduits/skills.
+        :raises PackageError: if no package by that name is installed.
+        """
+        entry = read_lockfile(self._lockfile_path()).get(name)
+        if entry is None:
+            raise PackageError(
+                f"package not installed: {name} (install it with `atelier add`)"
+            )
+        recorded_roots = [Path(r) for r in entry.get("skill_dirs", [])]
+        report = self.install_package(
+            entry["source"],
+            ref=entry.get("ref") or None,
+            project=entry.get("scope") == "project",
+            force=force,
+            skill_roots=recorded_roots or None,
+        )
+        # install_package wrote the lockfile with only what it (re)installed;
+        # union with prior ownership so skipped-but-owned items aren't dropped.
+        merged_conduits = sorted(
+            set(entry.get("conduits", [])) | set(report.conduits_installed)
+        )
+        merged_skills = sorted(
+            set(entry.get("skills", [])) | set(report.skills_installed)
+        )
+        new_entry = read_lockfile(self._lockfile_path()).get(name, {})
+        new_entry["conduits"] = merged_conduits
+        new_entry["skills"] = merged_skills
+        write_lockfile(self._lockfile_path(), name, new_entry)
+        return report
+
     def remove_package(self, name: str) -> RemoveReport:
         """Delete exactly the conduit and skill dirs a package installed.
 
