@@ -44,6 +44,10 @@ class FlowContext:
     loop_history_entry_chars: int = 0
     """Max characters per rendered ``{{loop.history}}`` entry; <= 0 means
     unlimited. Mirrors the engine's configured limit."""
+    conduit_dir: Path | None = None
+    """Absolute install dir of the running conduit, backing ``{{conduit_dir}}``
+    when an executor resolves its own templates (e.g. nested-conduit inputs).
+    ``None`` when the conduit is not registered in the store."""
 
 
 class ExecutorBase(ABC):

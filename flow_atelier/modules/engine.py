@@ -324,10 +324,24 @@ class Engine:
                 f"nested conduit depth exceeded {MAX_NESTED_CONDUIT_DEPTH}: {chain}"
             )
 
+        # Absolute dir the conduit loaded from, backing {{conduit_dir}}.
+        # None when the conduit isn't registered in the store (e.g. ad-hoc run).
+        try:
+            conduit_dir = self.store.conduit_dir(conduit.name)
+        except FileNotFoundError:
+            conduit_dir = None
+
         # Apply declared defaults, then require inputs that have none.
+        # Defaults bypass resolve(), which is single-pass, so a substituted
+        # default value is never re-scanned — resolve {{conduit_dir}} here (D5).
+        def _apply_default(value: Any) -> Any:
+            if conduit_dir is not None and isinstance(value, str):
+                return value.replace("{{conduit_dir}}", str(conduit_dir))
+            return value
+
         inputs = {
             **{
-                k: spec.default
+                k: _apply_default(spec.default)
                 for k, spec in conduit.inputs.items()
                 if spec.default is not None
             },
@@ -603,6 +617,7 @@ class Engine:
                         unavailable_tasks=unavailable, loop_history=loop_history,
                         loop_history_limit=self.loop_history_limit,
                         loop_history_entry_chars=self.loop_history_entry_chars,
+                        conduit_dir=conduit_dir,
                     )
 
                 try:
@@ -653,6 +668,7 @@ class Engine:
                     loop_history=loop_history,
                     loop_history_limit=self.loop_history_limit,
                     loop_history_entry_chars=self.loop_history_entry_chars,
+                    conduit_dir=conduit_dir,
                 )
 
                 # Pre-parse the loop predicate once per task. Schema enforces
