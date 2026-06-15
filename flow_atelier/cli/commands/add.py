@@ -7,7 +7,7 @@ from rich.markup import escape
 from flow_atelier.cli._shared import console
 from flow_atelier.cli.main import app
 from flow_atelier.core.atelier import Atelier
-from flow_atelier.services.package import InstallReport, PackageError
+from flow_atelier.services.package import InstallReport, PackageError, RemoveReport
 
 
 def _print_report(report: InstallReport) -> None:
@@ -74,3 +74,34 @@ def add_cmd(
         console.print(f"[red]error:[/red] {escape(str(exc))}")
         raise typer.Exit(code=1)
     _print_report(report)
+
+
+def _print_remove_report(report: RemoveReport) -> None:
+    """Render a remove report.
+
+    :param report: the :class:`RemoveReport` to render.
+    """
+    for name in report.conduits_removed:
+        console.print(f"  [red]-[/red] {escape(name)}")
+    for name in report.skills_removed:
+        console.print(f"  [red]-[/red] {escape(name)}")
+    console.print(
+        f"[green]removed {len(report.conduits_removed)} conduits, "
+        f"{len(report.skills_removed)} skills[/green]"
+    )
+
+
+@app.command("remove", help="Uninstall a package's conduits and skills.")
+def remove_cmd(
+    name: str = typer.Argument(..., help="Installed package name."),
+) -> None:
+    """Delete exactly the conduit and skill dirs a package installed.
+
+    :param name: installed package name (lockfile key).
+    """
+    try:
+        report = Atelier().remove_package(name)
+    except PackageError as exc:
+        console.print(f"[red]error:[/red] {escape(str(exc))}")
+        raise typer.Exit(code=1)
+    _print_remove_report(report)

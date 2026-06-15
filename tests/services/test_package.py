@@ -4,6 +4,7 @@ import pytest
 from flow_atelier.schemas.package import PackageManifest
 from flow_atelier.services.package import (
     PackageError,
+    delete_lockfile_entry,
     fetch_source,
     install_package,
     read_lockfile,
@@ -211,3 +212,14 @@ def test_lockfile_roundtrips(tmp_path):
     data = read_lockfile(path)
     assert data["demo-pkg"]["conduits"] == ["demo"]
     assert data["other"]["source"] == "y"
+
+
+def test_delete_lockfile_entry_removes_and_returns(tmp_path):
+    """delete_lockfile_entry returns the entry and drops it from the file."""
+    path = tmp_path / "installed.json"
+    write_lockfile(path, "demo-pkg", {"source": "x"})
+    write_lockfile(path, "other", {"source": "y"})
+    entry = delete_lockfile_entry(path, "demo-pkg")
+    assert entry == {"source": "x"}
+    assert read_lockfile(path) == {"other": {"source": "y"}}
+    assert delete_lockfile_entry(path, "missing") is None

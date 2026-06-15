@@ -285,6 +285,15 @@ def install_package(
     return report
 
 
+@dataclass
+class RemoveReport:
+    """What an uninstall actually deleted."""
+
+    name: str
+    conduits_removed: list[str] = field(default_factory=list)
+    skills_removed: list[str] = field(default_factory=list)
+
+
 def read_lockfile(path: Path) -> dict:
     """Return the parsed install lockfile, or an empty dict if absent.
 
@@ -310,3 +319,16 @@ def write_lockfile(path: Path, name: str, entry: dict) -> None:
     data[name] = entry
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2))
+
+
+def delete_lockfile_entry(path: Path, name: str) -> dict | None:
+    """Remove and return ``name``'s lockfile entry, or None if absent.
+
+    :param path: path to ``installed.json``.
+    :param name: package name (lockfile key).
+    """
+    data = read_lockfile(path)
+    entry = data.pop(name, None)
+    if entry is not None:
+        path.write_text(json.dumps(data, indent=2))
+    return entry

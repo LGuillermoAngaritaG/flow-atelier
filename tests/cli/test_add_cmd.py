@@ -93,3 +93,32 @@ def test_add_force_overwrites(env):
     result = CliRunner().invoke(app, ["add", str(env["pkg"]), "--force"])
     assert result.exit_code == 0, result.output
     assert user_skill.read_text() == "# idea\n"
+
+
+def test_remove_deletes_recorded_dirs(env):
+    """`remove` deletes exactly the recorded conduit and skill dirs."""
+    assert CliRunner().invoke(app, ["add", str(env["pkg"])]).exit_code == 0
+    result = CliRunner().invoke(app, ["remove", "demo-pkg"])
+    assert result.exit_code == 0, result.output
+    assert not (env["global"] / "conduits" / "demo").exists()
+    assert not (env["home"] / ".claude" / "skills" / "idea").exists()
+    assert not (env["home"] / ".agents" / "skills" / "idea").exists()
+    assert json.loads((env["global"] / "installed.json").read_text()) == {}
+
+
+def test_remove_preserves_collision_skipped_skill(env):
+    """A skill skipped on collision is the user's, so `remove` leaves it."""
+    user_skill = env["home"] / ".claude" / "skills" / "idea"
+    user_skill.mkdir(parents=True)
+    (user_skill / "SKILL.md").write_text("# user's own\n")
+    assert CliRunner().invoke(app, ["add", str(env["pkg"])]).exit_code == 0
+    assert CliRunner().invoke(app, ["remove", "demo-pkg"]).exit_code == 0
+    assert (user_skill / "SKILL.md").read_text() == "# user's own\n"
+
+
+def test_remove_unknown_package_errors(env):
+    """Removing an unknown package exits 1 with a clear message."""
+    result = CliRunner().invoke(app, ["remove", "nope"])
+    assert result.exit_code == 1
+    assert "not installed" in result.output
+    assert "Traceback" not in result.output

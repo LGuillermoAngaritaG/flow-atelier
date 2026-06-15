@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -43,8 +44,12 @@ from flow_atelier.services.executor.hitl import HitlExecutor
 from flow_atelier.services.executor.prompt_sink import PromptSink, TerminalPromptSink
 from flow_atelier.services.package import (
     InstallReport,
+    PackageError,
+    RemoveReport,
+    delete_lockfile_entry,
     fetch_source,
     install_package,
+    read_lockfile,
     read_package,
     resolve_source,
     write_lockfile,
@@ -501,6 +506,40 @@ class Atelier:
                 "scope": report.scope,
             },
         )
+        return report
+
+    def remove_package(self, name: str) -> RemoveReport:
+        """Delete exactly the conduit and skill dirs a package installed.
+
+        Only lockfile-owned items are removed: collision-skipped skills, user
+        data, and user schedules are left intact (D6, D7).
+
+        :param name: installed package name (lockfile key).
+        :raises PackageError: if no package by that name is installed.
+        """
+        entry = read_lockfile(self._lockfile_path()).get(name)
+        if entry is None:
+            raise PackageError(
+                f"package not installed: {name} (see installed packages with `atelier add`)"
+            )
+        report = RemoveReport(name=name)
+        global_scope = entry.get("scope", "global") == "global"
+        for conduit in entry.get("conduits", []):
+            removed = (
+                self.store.delete_conduit_global(conduit)
+                if global_scope
+                else self.store.delete_conduit(conduit)
+            )
+            if removed:
+                report.conduits_removed.append(conduit)
+        for root in entry.get("skill_dirs", []):
+            for skill in entry.get("skills", []):
+                dest = Path(root) / skill
+                if dest.exists():
+                    shutil.rmtree(dest)
+                    if skill not in report.skills_removed:
+                        report.skills_removed.append(skill)
+        delete_lockfile_entry(self._lockfile_path(), name)
         return report
 
     async def run_single_task(self, payload: RunTaskInput) -> RunTaskOutput:
