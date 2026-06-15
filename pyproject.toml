@@ -3,6 +3,8 @@ name = "flow-atelier"
 version = "0.1.2"
 description = "CLI tool and async workflow engine for running reproducible DAG workflows (conduits)."
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.13"
 dependencies = [
     "typer>=0.12",

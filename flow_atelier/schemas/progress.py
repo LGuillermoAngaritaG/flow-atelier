@@ -19,6 +19,7 @@ class FlowStatus(str, Enum):
     running = "running"
     completed = "completed"
     failed = "failed"
+    stopped = "stopped"
 
 
 class TaskProgress(BaseModel):
@@ -36,3 +37,6 @@ class Progress(BaseModel):
     finished_at: str | None = None
     runner_pid: int | None = None
     runner_host: str | None = None
+    run_path: str | None = None
+    invoking_task: str | None = None
+    stoppable: bool = False

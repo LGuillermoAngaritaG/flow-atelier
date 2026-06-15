@@ -28,6 +28,11 @@ class WebSocketBroker:
         self.send_callable = send
         self._hitl_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
+        # Flows whose last answer-await timed out. An answer for the abandoned
+        # prompt can still arrive afterwards; we drain it at the start of the
+        # next await so it can't satisfy a different question (see
+        # ``await_hitl_answer``).
+        self._timed_out: set[str] = set()
 
     # ------------------------------------------------------------------ outbound
 
@@ -54,6 +59,7 @@ class WebSocketBroker:
         """
         self._hitl_queues.pop(flow_id, None)
         self._tasks.pop(flow_id, None)
+        self._timed_out.discard(flow_id)
 
     # ------------------------------------------------------------------ HITL
 
@@ -82,9 +88,22 @@ class WebSocketBroker:
         if flow_id not in self._hitl_queues:
             self.register_flow(flow_id)
         queue = self._hitl_queues[flow_id]
+        if flow_id in self._timed_out:
+            # The previous await for this flow timed out; a stale answer for
+            # that abandoned prompt may have arrived since. Discard it so this
+            # fresh prompt waits for its own answer rather than consuming the
+            # old one. The executor always sends a new request before awaiting,
+            # so anything queued here cannot be a reply to the current prompt.
+            self._timed_out.discard(flow_id)
+            while not queue.empty():
+                queue.get_nowait()
         if timeout is None:
             return await queue.get()
-        return await asyncio.wait_for(queue.get(), timeout=timeout)
+        try:
+            return await asyncio.wait_for(queue.get(), timeout=timeout)
+        except TimeoutError:
+            self._timed_out.add(flow_id)
+            raise
 
     # ------------------------------------------------------------------ cancel
 

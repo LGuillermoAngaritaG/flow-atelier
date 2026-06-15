@@ -136,3 +136,39 @@ def test_default_local_zone_returns_zoneinfo():
     """Verify default_local_zone() returns a ZoneInfo instance."""
     z = default_local_zone()
     assert isinstance(z, ZoneInfo)
+
+
+# -------------------------------------------------------------- pinned timezone
+
+
+def test_recurring_honors_schedule_timezone_over_default():
+    """A schedule's own timezone wins over the daemon's default zone."""
+    job = _job(
+        {
+            "mode": "recurring",
+            "name": "x",
+            "days": [1],  # Monday
+            "times": ["09:00"],
+            "timezone": "America/New_York",
+        }
+    )
+    trig = to_trigger(job, default_zone=UTC)
+    fire = trig.get_next_fire_time(None, datetime(2026, 4, 25, tzinfo=UTC))
+    # 09:00 in New York (EDT, UTC-4 on 2026-04-27) is 13:00 UTC, not 09:00 UTC.
+    assert fire == datetime(2026, 4, 27, 13, 0, tzinfo=UTC)
+
+
+def test_once_naive_run_at_honors_schedule_timezone():
+    """A naive once-mode run_at is interpreted in the schedule's pinned zone."""
+    job = _job(
+        {
+            "mode": "once",
+            "name": "x",
+            "run_at": "2026-05-01T09:00:00",
+            "timezone": "America/New_York",
+        }
+    )
+    trig = to_trigger(job, default_zone=UTC)
+    fire = trig.get_next_fire_time(None, datetime(2026, 4, 1, tzinfo=UTC))
+    # 09:00 EDT == 13:00 UTC.
+    assert fire == datetime(2026, 5, 1, 13, 0, tzinfo=UTC)

@@ -69,13 +69,18 @@ app.add_typer(scheduler_app, name="scheduler")
 # decoration order in app/main.py so --help layout stays byte-identical.
 from flow_atelier.cli.commands import (  # noqa: E402, F401
     check,
+    create,
     init,
     logs,
+    outputs,
+    plan,
     rm,
     run,
     schedule,
     scheduler,
     serve,
     status,
+    stop,
+    timing,
 )
 from flow_atelier.cli.commands import list as _list  # noqa: E402, F401

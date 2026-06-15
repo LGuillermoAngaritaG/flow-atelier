@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import signal
 import socket
 import sys
 import traceback
@@ -27,12 +28,14 @@ from pathlib import Path
 from typing import Any
 
 from flow_atelier.modules.conditions import (
+    Dependency,
     DependencyParseError,
     evaluate,
     evaluate_loop_predicate,
     parse_dependencies,
     parse_output_predicate,
 )
+from flow_atelier.modules.liveness import is_crashed
 from flow_atelier.modules.templating import (
     SkipSignal,
     TemplateError,
@@ -40,7 +43,7 @@ from flow_atelier.modules.templating import (
     resolve,
 )
 from flow_atelier.schemas.conduit import (
-    _CONDUIT_NAME_RE,
+    CONDUIT_NAME_RE,
     Conduit,
     TaskDefinition,
     ToolType,
@@ -85,14 +88,42 @@ _current_task_ctx: ContextVar[str] = ContextVar("current_task_name", default="")
 _current_flow_ctx: ContextVar[str] = ContextVar("current_flow_id", default="")
 
 
-def validate_conduit(conduit: Conduit) -> dict[str, list]:
-    """Return {task_name: [parsed deps]}. Raises on cycle/unknown/invalid regex.
+def current_flow_id(default: str = "") -> str:
+    """Return the flow id of the run executing on this task (child-aware).
+
+    Public accessor over the internal ``_current_flow_ctx`` ContextVar so
+    callers outside this module don't depend on the private name.
+
+    :param default: value to return when no flow context is set.
+    :returns: the current flow id, or ``default``.
+    """
+    return _current_flow_ctx.get(default)
+
+
+def current_task(default: str = "") -> str:
+    """Return the name of the task currently executing on this run.
+
+    Public accessor over the internal ``_current_task_ctx`` ContextVar.
+
+    :param default: value to return when no task context is set.
+    :returns: the current task name, or ``default``.
+    """
+    return _current_task_ctx.get(default)
+
+
+def validate_conduit(conduit: Conduit) -> dict[str, list[Dependency]]:
+    """Validate the conduit DAG and return its parsed dependency map.
+
+    Two responsibilities, both load-bearing: it *validates* the DAG (unknown
+    dependencies, cycles, invalid regexes, stray template references) and it
+    *parses* each task's ``depends_on`` into :class:`Dependency` objects, which
+    the run loop later relies on. Raises on any validation failure.
 
     :param conduit: parsed conduit whose tasks/dependencies to validate.
     :returns: mapping of task name to its list of parsed dependencies.
     """
     task_names = {t.name for t in conduit.tasks}
-    parsed: dict[str, list] = {}
+    parsed: dict[str, list[Dependency]] = {}
     for t in conduit.tasks:
         try:
             parsed_deps = parse_dependencies(t.depends_on)
@@ -156,7 +187,7 @@ def validate_conduit(conduit: Conduit) -> dict[str, list]:
         if (
             t.tool == ToolType.conduit
             and "{{" not in t.task
-            and not _CONDUIT_NAME_RE.match(t.task.strip())
+            and not CONDUIT_NAME_RE.match(t.task.strip())
         ):
             raise ConduitValidationError(
                 f"task {t.name!r}: tool:conduit target {t.task!r} is not a valid "
@@ -241,6 +272,8 @@ class Engine:
         flow_id: str | None = None,
         resume_from: str | None = None,
         ancestor_conduits: tuple[str, ...] = (),
+        stoppable: bool = False,
+        invoking_task: str | None = None,
     ) -> str:
         """Execute a conduit to completion, returning the flow id.
 
@@ -265,6 +298,14 @@ class Engine:
         :param ancestor_conduits: names of the conduits already on the nested
             ``tool:conduit`` call stack above this run; used to detect cycles
             and bound recursion depth. Empty for a top-level run.
+        :param stoppable: when True and this is a top-level run, install a
+            ``SIGTERM`` handler that gracefully cancels the run and finalizes
+            it as ``stopped`` (the ``atelier stop`` path). Off by default so
+            nested runs and the shared scheduler daemon never hijack SIGTERM.
+        :param invoking_task: for nested ``tool:conduit`` runs, the name of the
+            parent step that spawned this child; recorded on the child's
+            progress so resume can match the right child when a parent has two
+            steps invoking the same sub-conduit. ``None`` for top-level runs.
         :returns: the new flow id on success
         :raises ConduitValidationError: DAG is invalid (cycle, unknown dep, bad regex)
         :raises ConduitCycleError: nested conduits form a cycle or exceed depth
@@ -305,8 +346,6 @@ class Engine:
         else:
             flow_id = self.store.create_flow(conduit.name, inputs, parent_flow_id, flow_id=flow_id)
         _current_flow_ctx.set(flow_id)
-        if working_dir:
-            self.store.append_input(flow_id, "run_path", str(working_dir))
         if on_flow_started is not None and resume_from is None:
             try:
                 on_flow_started(flow_id)
@@ -319,6 +358,24 @@ class Engine:
                 )
                 traceback.print_exc(file=sys.stderr)
 
+        # Engine bookkeeping (run dir, invoking step) lives on progress, NOT in
+        # input.yaml, so it can never collide with a user-declared input or leak
+        # into the {{inputs.*}} namespace on resume. On resume, recover the prior
+        # values when this run doesn't supply fresh ones.
+        if working_dir:
+            run_path = str(working_dir)
+        elif resume_from is not None:
+            run_path = prior.run_path
+        else:
+            run_path = None
+        if invoking_task is None and resume_from is not None:
+            invoking_task = prior.invoking_task
+
+        # Only a top-level stoppable run installs a graceful-stop SIGTERM
+        # handler; record that on progress so ``atelier stop`` can refuse flows
+        # (daemon/serve/nested) that share or hijack the process's SIGTERM.
+        install_stop_handler = stoppable and not ancestor_conduits
+
         progress = Progress(
             status=FlowStatus.running,
             tasks={
@@ -328,6 +385,9 @@ class Engine:
             started_at=_now(),
             runner_pid=os.getpid(),
             runner_host=socket.gethostname(),
+            run_path=run_path,
+            invoking_task=invoking_task,
+            stoppable=install_stop_handler,
         )
         self.store.write_progress(flow_id, progress)
 
@@ -505,15 +565,18 @@ class Engine:
             ]
             self.store.write_progress(flow_id, progress)
 
-        def mark_failed(name: str) -> None:
+        def mark_failed(name: str, reason: str = "") -> None:
             """Mark a task as failed and persist progress.
 
             :param name: task name that has failed.
+            :param reason: human-readable explanation for the failure,
+                surfaced in the status ``reason`` column (empty -> None).
             """
             statuses[name] = TaskStatus.failed
             progress.tasks[name] = TaskProgress(
                 status=TaskStatus.failed,
                 of=task_map[name].repeat,
+                reason=reason or None,
             )
             self.store.write_progress(flow_id, progress)
 
@@ -548,20 +611,20 @@ class Engine:
                     mark_skipped(t.name, str(e))
                     return
                 except TemplateError as e:
-                    mark_failed(t.name)
+                    reason = str(e)
+                    mark_failed(t.name, reason)
                     if not failed:
                         failed = True
-                        failure_error = ValueError(f"task {t.name!r}: {e}")
+                        failure_error = ValueError(f"task {t.name!r}: {reason}")
                     return
 
                 executor = self.executors.get(t.tool.value)
                 if executor is None:
-                    mark_failed(t.name)
+                    reason = f"no executor registered for tool {t.tool.value!r}"
+                    mark_failed(t.name, reason)
                     if not failed:
                         failed = True
-                        failure_error = ValueError(
-                            f"no executor registered for tool {t.tool.value!r}"
-                        )
+                        failure_error = ValueError(reason)
                     return
 
                 # An explicit per-task timeout supersedes the conduit-wide
@@ -585,6 +648,7 @@ class Engine:
                         show_steps=show_steps,
                         working_dir=working_dir,
                         ancestor_conduits=(*ancestor_conduits, conduit.name),
+                        invoking_task=t.name,
                     ),
                     loop_history=loop_history,
                     loop_history_limit=self.loop_history_limit,
@@ -623,12 +687,12 @@ class Engine:
                             except (SkipSignal, TemplateError) as e:
                                 # Mid-loop the task has already produced
                                 # output, so a silent skip would lie: fail.
-                                mark_failed(t.name)
+                                reason = f"iteration {iteration}: {e}"
+                                mark_failed(t.name, reason)
                                 if not failed:
                                     failed = True
                                     failure_error = ValueError(
-                                        f"task {t.name!r} iteration "
-                                        f"{iteration}: {e}"
+                                        f"task {t.name!r} {reason}"
                                     )
                                 return
                         mark_running(t.name, iteration, start_iteration)
@@ -694,6 +758,7 @@ class Engine:
                                     duration_seconds=round(duration, 3),
                                     extra=attempt_extra,
                                     steps=result.steps,
+                                    usage=result.usage,
                                 ),
                             )
                             emit_event(t, iteration, result, duration)
@@ -702,12 +767,15 @@ class Engine:
                             if attempt < max_attempts:
                                 await asyncio.sleep(t.retry_backoff)
                                 continue
-                            mark_failed(t.name)
+                            reason = (
+                                f"exit={result.exit_code} "
+                                f"stderr={result.stderr.strip()[:200]}"
+                            )
+                            mark_failed(t.name, reason)
                             if not failed:
                                 failed = True
                                 failure_error = RuntimeError(
-                                    f"task {t.name!r} failed: exit={result.exit_code} "
-                                    f"stderr={result.stderr.strip()[:200]}"
+                                    f"task {t.name!r} failed: {reason}"
                                 )
                             return
                         previous_output = last_output
@@ -726,13 +794,15 @@ class Engine:
                             else:
                                 stagnant_streak = 1
                             if stagnant_streak >= t.stagnation_limit:
-                                mark_failed(t.name)
+                                reason = (
+                                    f"stagnated: {stagnant_streak} identical "
+                                    "consecutive outputs"
+                                )
+                                mark_failed(t.name, reason)
                                 if not failed:
                                     failed = True
                                     failure_error = RuntimeError(
-                                        f"task {t.name!r} stagnated: "
-                                        f"{stagnant_streak} identical "
-                                        "consecutive outputs"
+                                        f"task {t.name!r} {reason}"
                                     )
                                 return
                         if loop_predicate is not None:
@@ -755,13 +825,15 @@ class Engine:
                     completion_reason = ""
                     if loop_predicate is not None and not predicate_matched:
                         if t.on_exhaust == "fail":
-                            mark_failed(t.name)
+                            reason = (
+                                f"exhausted {t.repeat} iterations without "
+                                "matching its loop predicate"
+                            )
+                            mark_failed(t.name, reason)
                             if not failed:
                                 failed = True
                                 failure_error = RuntimeError(
-                                    f"task {t.name!r} exhausted {t.repeat} "
-                                    "iterations without matching its loop "
-                                    "predicate"
+                                    f"task {t.name!r} {reason}"
                                 )
                             return
                         completion_reason = (
@@ -785,6 +857,28 @@ class Engine:
                 raise
 
         # ------------------------------------------------------------------ loop
+        # Install a SIGTERM handler for a stoppable top-level run so
+        # ``atelier stop`` can trigger the same graceful cancel path that
+        # Ctrl-C does, but finalize the flow as ``stopped`` rather than
+        # ``failed``. Only the outermost run arms it: nested runs and the
+        # shared scheduler daemon must keep their own SIGTERM semantics.
+        stop_requested = False
+        sigterm_installed = False
+        active_run_task = asyncio.current_task()
+        if install_stop_handler:
+            loop = asyncio.get_running_loop()
+
+            def _request_stop() -> None:
+                nonlocal stop_requested
+                stop_requested = True
+                if active_run_task is not None:
+                    active_run_task.cancel()
+
+            try:
+                loop.add_signal_handler(signal.SIGTERM, _request_stop)
+                sigterm_installed = True
+            except (NotImplementedError, RuntimeError):
+                sigterm_installed = False
         try:
             while True:
                 # Evaluate all pending tasks; launch satisfied, skip unsatisfiable.
@@ -884,27 +978,42 @@ class Engine:
                 for rt in running.values():
                     rt.cancel()
                 await asyncio.gather(*running.values(), return_exceptions=True)
-            # Ensure progress reflects failure on unexpected errors
+            # Ensure progress reflects a terminal state. A deliberate stop
+            # (SIGTERM via ``atelier stop``) finalizes as ``stopped``; every
+            # other interruption (crash, Ctrl-C, task error) stays ``failed``.
             progress.current_tasks = []
             progress.finished_at = _now()
             if progress.status == FlowStatus.running:
-                progress.status = FlowStatus.failed
+                progress.status = (
+                    FlowStatus.stopped if stop_requested else FlowStatus.failed
+                )
             self.store.write_progress(flow_id, progress)
             raise
+        finally:
+            if sigterm_installed:
+                with contextlib.suppress(NotImplementedError, RuntimeError):
+                    loop.remove_signal_handler(signal.SIGTERM)
 
     # ------------------------------------------------------------------ helpers
 
     def _find_child_to_resume(
-        self, parent_flow_id: str, conduit_name: str
+        self, parent_flow_id: str, conduit_name: str, invoking_task: str | None
     ) -> str | None:
         """Find the most recent resumable child flow for a conduit.
 
-        Matches children whose status is not ``completed`` — i.e. ``failed``,
-        ``running`` (orphaned by a prior cancel), or any other non-terminal
-        state.
+        Matches a ``failed`` child unconditionally, and a ``running`` child only
+        when its runner is *provably* dead (:func:`is_crashed`) — a child left
+        ``running`` is either an orphan from a crashed parent (resumable) or a
+        flow still in flight, and picking up a live one would drive the same
+        child directory from two engines at once. A child is considered only
+        when it was spawned by the same parent step (``invoking_task``), so a
+        parent with two distinct steps invoking the same sub-conduit resumes the
+        child belonging to the step being re-run rather than the most recent
+        child of that name.
 
         :param parent_flow_id: parent flow to search under
         :param conduit_name: child conduit name to match
+        :param invoking_task: name of the parent step whose child to match
         :returns: child flow id to resume, or None
         """
         for fid in reversed(self.store.list_child_flows(parent_flow_id)):
@@ -918,9 +1027,15 @@ class Engine:
                 p = self.store.read_progress(fid)
             except (FileNotFoundError, ValueError):
                 continue
-            if p.status in (FlowStatus.failed, FlowStatus.running):
+            if p.invoking_task != invoking_task:
+                continue
+            if p.status == FlowStatus.failed:
                 return fid
-            return None  # most recent child for this conduit already completed
+            if p.status == FlowStatus.running:
+                # A still-live child must not be double-driven; only resume one
+                # whose runner is provably dead.
+                return fid if is_crashed(p) else None
+            return None  # most recent child for this step already completed
         return None
 
     def _make_nested_runner(
@@ -931,6 +1046,7 @@ class Engine:
         show_steps: bool = True,
         working_dir: Path | None = None,
         ancestor_conduits: tuple[str, ...] = (),
+        invoking_task: str | None = None,
     ):
         """Build the nested-conduit runner passed to executors via FlowContext.
 
@@ -941,6 +1057,10 @@ class Engine:
         :param working_dir: working directory forwarded to nested runs.
         :param ancestor_conduits: conduit names already on the nested-run stack,
             forwarded to each child run so cycles/depth are caught.
+        :param invoking_task: name of the parent step this runner belongs to;
+            bound per-task so the executor-facing callback signature stays
+            ``(conduit_name, child_inputs, parent_flow_id)``. Used to record and
+            match the child against the right parent step on resume.
         :returns: an async callable ``(conduit_name, child_inputs, parent_flow_id)``
             that loads and runs the named child conduit.
         """
@@ -954,7 +1074,9 @@ class Engine:
             child_conduit = self.store.read_conduit(conduit_name)
 
             # Resume an existing failed child if one exists
-            resume_id = self._find_child_to_resume(parent_flow_id, conduit_name)
+            resume_id = self._find_child_to_resume(
+                parent_flow_id, conduit_name, invoking_task
+            )
             if resume_id is not None:
                 prior_inputs = self.store.read_input(resume_id)
                 return await self.run(
@@ -968,6 +1090,7 @@ class Engine:
                     show_steps=show_steps,
                     working_dir=working_dir,
                     ancestor_conduits=ancestor_conduits,
+                    invoking_task=invoking_task,
                 )
 
             return await self.run(
@@ -980,6 +1103,7 @@ class Engine:
                 show_steps=show_steps,
                 working_dir=working_dir,
                 ancestor_conduits=ancestor_conduits,
+                invoking_task=invoking_task,
             )
 
         return _run_nested

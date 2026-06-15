@@ -7,7 +7,13 @@ import pytest
 
 from flow_atelier.modules.engine import Engine
 from flow_atelier.schemas.conduit import Conduit
-from flow_atelier.schemas.log import ExecutionResult, IntermediateStep, StepKind, TaskEvent
+from flow_atelier.schemas.log import (
+    ExecutionResult,
+    IntermediateStep,
+    StepKind,
+    TaskEvent,
+    TurnUsage,
+)
 from flow_atelier.services.executor.base import ExecutorBase
 from flow_atelier.services.store.filesystem import FilesystemStore
 
@@ -118,6 +124,75 @@ async def test_steps_passed_to_task_event(store) -> None:
     assert len(completed) == 1
     assert len(completed[0].steps) == 1
     assert completed[0].steps[0].tool_status == "completed"
+
+
+class UsageExecutor(ExecutorBase):
+    """Executor that returns an ExecutionResult carrying a fixed TurnUsage."""
+
+    def __init__(self, usage: TurnUsage | None) -> None:
+        """Initialize the executor with the usage to emit.
+
+        :param usage: usage record returned with every execution (or None).
+        """
+        self._usage = usage
+
+    async def execute(self, task, resolved_command, context):
+        """Return a successful ExecutionResult carrying the configured usage.
+
+        :param task: task definition being executed.
+        :param resolved_command: command string after template resolution.
+        :param context: flow context provided by the engine.
+        """
+        return ExecutionResult(
+            exit_code=0, output="done", stdout="done", usage=self._usage
+        )
+
+
+async def test_usage_passed_to_log_entry(store) -> None:
+    """result.usage must appear in the persisted LogEntry.
+
+    :param store: FilesystemStore fixture.
+    """
+    usage = TurnUsage(input_tokens=1000, output_tokens=200, total_tokens=1200, cost=0.05)
+    conduit = _conduit(
+        [
+            {
+                "name": "a",
+                "description": "d",
+                "task": "x",
+                "tool": "tool:bash",
+                "depends_on": [],
+            }
+        ]
+    )
+    engine = Engine({"tool:bash": UsageExecutor(usage)}, store)
+    flow_id = await engine.run(conduit, {})
+    logs = store.read_logs(flow_id)
+    assert logs[0].usage is not None
+    assert logs[0].usage.total_tokens == 1200
+    assert logs[0].usage.cost == 0.05
+
+
+async def test_usage_none_persists_as_none(store) -> None:
+    """usage defaults to None when the executor doesn't report it.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [
+            {
+                "name": "a",
+                "description": "d",
+                "task": "x",
+                "tool": "tool:bash",
+                "depends_on": [],
+            }
+        ]
+    )
+    engine = Engine({"tool:bash": UsageExecutor(None)}, store)
+    flow_id = await engine.run(conduit, {})
+    logs = store.read_logs(flow_id)
+    assert logs[0].usage is None
 
 
 async def test_empty_steps_when_executor_returns_none(store) -> None:

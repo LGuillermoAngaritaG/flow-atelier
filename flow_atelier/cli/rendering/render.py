@@ -6,6 +6,7 @@ from collections import Counter
 import yaml
 from pydantic import ValidationError
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -15,7 +16,9 @@ from flow_atelier.cli._shared import (
     _format_clock_short,
     _format_duration_seconds,
     _format_next_fire,
+    _format_usage,
 )
+from flow_atelier.modules.plan import ExecutionPlan, PlannedTask
 from flow_atelier.schemas.log import IntermediateStep, StepKind, TaskEvent
 from flow_atelier.schemas.progress import FlowStatus, Progress, TaskStatus
 from flow_atelier.services.scheduler import PlannedJob
@@ -66,8 +69,7 @@ def _truncate_tail(text: str, max_lines: int = 20) -> tuple[str, int]:
 
     Keeps only the last ``max_lines`` lines of ``text``. If the input has
     ``max_lines`` or fewer lines, returns it unchanged with a dropped count
-    of zero. Preserves a trailing newline character only when meaningful
-    (i.e. never).
+    of zero.
 
     :param text: raw text to truncate from the top
     :param max_lines: maximum number of trailing lines to keep
@@ -160,7 +162,7 @@ def _render_steps_timeline(steps: list[IntermediateStep]) -> Text:
     return body
 
 
-def _render_task_event(event: TaskEvent, console: Console) -> None:
+def render_task_event(event: TaskEvent, console: Console) -> None:
     """Pretty-print a :class:`TaskEvent` to ``console``.
 
     Success with non-empty output → green-bordered :class:`Panel`.
@@ -249,6 +251,7 @@ _FLOW_STATUS_STYLE: dict[str, str] = {
     FlowStatus.completed.value: "green",
     FlowStatus.failed.value: "red",
     FlowStatus.running.value: "yellow",
+    FlowStatus.stopped.value: "blue",
     "crashed": "magenta",
 }
 
@@ -285,7 +288,7 @@ def _task_status_summary(progress: Progress) -> Text:
     return text
 
 
-def _render_run_footer(events: list[TaskEvent], console: Console) -> None:
+def render_run_footer(events: list[TaskEvent], console: Console) -> None:
     """One-line aggregate summary printed at the end of `atelier run`.
 
     :param events: task events collected during the run.
@@ -329,6 +332,9 @@ def _render_log_entry(entry, show: str, console: Console) -> None:
         f"{started}  ·  exit={entry.exit_code}  ·  "
         f"{entry.duration_seconds}s"
     )
+    usage_line = _format_usage(getattr(entry, "usage", None))
+    if usage_line:
+        subtitle += f"  ·  {usage_line}"
 
     if show == "steps":
         steps = getattr(entry, "steps", [])
@@ -415,23 +421,104 @@ def format_conduit_error(exc: Exception) -> str:
     return " ".join(str(exc).split())
 
 
-def _render_planned_table(planned: list[PlannedJob]) -> Table:
+def _render_planned_task(task: PlannedTask, console: Console) -> None:
+    """Render one task line plus its edges, loop badge and gate note.
+
+    :param task: the planned task to render.
+    :param console: Rich console to write to.
+    """
+    head = Text("  ")
+    head.append(task.name, style="bold")
+    head.append(f"  [{task.tool}]", style="dim")
+    if task.is_loop and task.loop_text:
+        head.append(f"  ↻ {task.loop_text}", style="magenta")
+    if task.is_sink:
+        head.append("  ⊙ sink", style="cyan")
+    if task.is_gate:
+        head.append("  ⎇ gate", style="yellow")
+    console.print(head)
+
+    for e in task.plain_edges:
+        line = Text("      → ", style="dim")
+        line.append(e.task)
+        console.print(line)
+    for e in task.conditional_edges:
+        line = Text("      ⇢ ", style="yellow")
+        line.append(e.task)
+        marker = "not_match" if e.negate else "match"
+        line.append(f"  ?{marker}({e.pattern})", style="yellow")
+        console.print(line)
+
+    if task.is_gate and task.prunes:
+        note = Text("      ", style="dim")
+        note.append(
+            f"⚠ if this output misses, it prunes {len(task.prunes)} task(s): "
+            f"{', '.join(task.prunes)}",
+            style="dim yellow",
+        )
+        console.print(note)
+
+
+def render_plan(plan: ExecutionPlan, console: Console) -> None:
+    """Render a static :class:`ExecutionPlan` as grouped wave blocks.
+
+    :param plan: the execution plan to render.
+    :param console: Rich console to write to.
+    """
+    console.print(
+        f"[bold]{plan.conduit_name}[/bold]  "
+        f"[dim]max_concurrency={plan.max_concurrency}[/dim]"
+    )
+    console.print(
+        "[dim italic]static structural view — wave levels are longest-path "
+        "layering, not a runtime trace; real parallelism is also bounded by "
+        "max_concurrency and conditional skips.[/dim italic]"
+    )
+    for i, wave in enumerate(plan.waves):
+        console.print(f"\n[bold]Wave {i}[/bold]")
+        for task in wave:
+            _render_planned_task(task, console)
+
+
+def _format_last_run(record) -> str:
+    """Render a schedule's most recent fire outcome for the planned table.
+
+    :param record: the last :class:`ScheduleRunRecord`, or ``None`` when the
+        schedule has no recorded fires yet.
+    :returns: a colored ``ok``/``FAILED`` marker plus the flow id, or ``—``.
+    """
+    if record is None:
+        return "[dim]—[/dim]"
+    marker = (
+        "[green]ok[/green]"
+        if record.status == "succeeded"
+        else "[red]FAILED[/red]"
+    )
+    if record.flow_id:
+        return f"{marker} [dim]{record.flow_id}[/dim]"
+    return marker
+
+
+def render_planned_table(planned: list[PlannedJob]) -> Table:
     """Render planned scheduler jobs as a Rich table.
 
     :param planned: planned jobs with computed next-fire times.
     """
-    table = Table("id", "name", "conduit", "kind", "next fire", "working_dir")
+    table = Table(
+        "id", "name", "conduit", "kind", "next fire", "last run", "working_dir"
+    )
     for p in planned:
         kind_style = "cyan" if p.schedule_kind == "recurring" else "magenta"
         next_cell = _format_next_fire(p.next_fire_time)
         if p.next_fire_time is None and p.schedule_kind == "once":
             next_cell = "[dim](already fired)[/dim]"
         table.add_row(
-            p.id,
-            p.name,
-            p.conduit_name,
+            escape(p.id),
+            escape(p.name),
+            escape(p.conduit_name),
             f"[{kind_style}]{p.schedule_kind}[/{kind_style}]",
             next_cell,
-            str(p.working_dir),
+            _format_last_run(p.last_run),
+            escape(str(p.working_dir)),
         )
     return table

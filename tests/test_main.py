@@ -9,7 +9,7 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from flow_atelier.cli import app
-from flow_atelier.cli.rendering.render import _render_task_event, _truncate_tail
+from flow_atelier.cli.rendering.render import _truncate_tail, render_task_event
 from flow_atelier.schemas.log import TaskEvent
 
 CONDUIT_YAML = """
@@ -125,6 +125,50 @@ def test_run_and_status(workdir):
     assert result2.exit_code == 0
     assert "greet" in result2.output
     assert "completed" in result2.output
+
+
+GATED_BRACKET_YAML = """
+name: gated
+description: d
+tasks:
+  - gate:
+      description: d
+      task: "echo lowercase"
+      tool: tool:bash
+      depends_on: []
+  - work:
+      description: d
+      task: "echo work"
+      tool: tool:bash
+      depends_on:
+        - "gate.output.match([A-Z]+)"
+"""
+
+
+def test_status_escapes_bracketed_skip_reason(workdir, monkeypatch):
+    """`status` renders a bracketed conditional skip reason literally, not markup.
+
+    A conditional dependency whose regex contains a character class like
+    ``[A-Z]`` makes the engine record a skip reason carrying those brackets.
+    Rich would read ``[A-Z]`` as a style tag and crash the table render unless
+    the cell is escaped.
+
+    :param workdir: isolated working directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    monkeypatch.setenv("COLUMNS", "200")
+    d = workdir / ".atelier" / "conduits" / "gated"
+    d.mkdir(parents=True)
+    (d / "conduit.yaml").write_text(GATED_BRACKET_YAML)
+    runner = CliRunner()
+    run_result = runner.invoke(app, ["run", "gated"])
+    assert run_result.exit_code == 0, run_result.output
+    line = [l for l in run_result.output.splitlines() if "flow_id" in l][0]
+    flow_id = line.split()[-1]
+    result = runner.invoke(app, ["status", flow_id])
+    assert result.exit_code == 0, result.output
+    assert result.exception is None
+    assert "[A-Z]" in result.output
 
 
 def test_version_flag():
@@ -308,6 +352,38 @@ def test_logs_unknown_task_filter(workdir):
     assert "no log entries" in result.output
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
+def test_logs_last_zero_shows_nothing(workdir):
+    """`logs --last 0` should render no entries (and `[]` in json), not all.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_multi(workdir)
+    runner = CliRunner()
+    flow_id = _run_and_id(runner, "multi")
+    result = runner.invoke(app, ["logs", flow_id, "--last", "0"])
+    assert result.exit_code == 0, result.output
+    assert "alpha-output" not in result.output
+    assert "beta-output" not in result.output
+    result_json = runner.invoke(app, ["logs", flow_id, "--last", "0", "--json"])
+    assert result_json.exit_code == 0, result_json.output
+    assert result_json.output.strip() == "[]"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
+def test_logs_last_negative_is_rejected(workdir):
+    """`logs --last -1` should fail with a parameter error, not show everything.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_multi(workdir)
+    runner = CliRunner()
+    flow_id = _run_and_id(runner, "multi")
+    result = runner.invoke(app, ["logs", flow_id, "--last", "-1"])
+    assert result.exit_code != 0
+    assert "alpha-output" not in result.output
+
+
 # ---------------------------------------------------------------- prefix match
 
 
@@ -443,6 +519,80 @@ def test_logs_json(workdir):
     assert "alpha-output" in alpha["output"]
 
 
+# ---------------------------------------------------------------- outputs cmd
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
+def test_outputs_human(workdir):
+    """Verify `outputs` prints each task's saved result.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    flow_id = _run_and_id(runner, "hello", "--input", "name=a")
+    result = runner.invoke(app, ["outputs", flow_id])
+    assert result.exit_code == 0, result.output
+    assert "greet" in result.output
+    assert "hello a" in result.output
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
+def test_outputs_json(workdir):
+    """Verify `outputs --json` returns the per-task result map.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_multi(workdir)
+    runner = CliRunner()
+    flow_id = _run_and_id(runner, "multi")
+    result = runner.invoke(app, ["outputs", flow_id, "--json"])
+    assert result.exit_code == 0, result.output
+    data = _json.loads(result.output)
+    assert isinstance(data, dict)
+    assert "alpha-output" in data["alpha"]
+    assert "beta-output" in data["beta"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
+def test_outputs_single_task(workdir):
+    """Verify `outputs --task` prints only the named task's raw output.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_multi(workdir)
+    runner = CliRunner()
+    flow_id = _run_and_id(runner, "multi")
+    result = runner.invoke(app, ["outputs", flow_id, "--task", "alpha"])
+    assert result.exit_code == 0, result.output
+    assert "alpha-output" in result.output
+    assert "beta-output" not in result.output
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
+def test_outputs_unknown_task(workdir):
+    """Verify `outputs --task` errors on an unknown task name.
+
+    :param workdir: isolated working directory fixture.
+    """
+    _write_multi(workdir)
+    runner = CliRunner()
+    flow_id = _run_and_id(runner, "multi")
+    result = runner.invoke(app, ["outputs", flow_id, "--task", "nope"])
+    assert result.exit_code != 0
+    assert "unknown task" in result.output
+
+
+def test_outputs_unknown_flow(workdir):
+    """Verify `outputs` errors on an unknown flow id.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    result = runner.invoke(app, ["outputs", "no_such_flow"])
+    assert result.exit_code != 0
+    assert "unknown flow" in result.output
+
+
 # ---------------------------------------------------------------- --follow
 
 
@@ -543,6 +693,41 @@ def test_schedule_add_and_list(workdir, tmp_path):
     assert "nightly" in listing.output
     assert "hello" in listing.output
     assert "recurring" in listing.output
+
+
+SCHEDULE_BRACKET_NAME_JSON = """{
+  "conduit_name": "hello",
+  "inputs": {"name": "world"},
+  "run_path": ".",
+  "schedule": {
+    "mode": "recurring",
+    "name": "gate[A-Z]run",
+    "days": [1, 5],
+    "times": ["09:00"]
+  }
+}"""
+
+
+def test_schedule_list_escapes_bracketed_name(workdir, tmp_path, monkeypatch):
+    """`schedule list` renders a bracketed schedule name literally, not markup.
+
+    A schedule name is free text; brackets in it would otherwise be read by
+    Rich as a style tag and crash the listing table.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    monkeypatch.setenv("COLUMNS", "200")
+    src = tmp_path / "bracket.json"
+    src.write_text(SCHEDULE_BRACKET_NAME_JSON)
+    runner = CliRunner()
+    add = runner.invoke(app, ["schedule", "add", str(src)])
+    assert add.exit_code == 0, add.output
+    listing = runner.invoke(app, ["schedule", "list"])
+    assert listing.exit_code == 0, listing.output
+    assert listing.exception is None
+    assert "[A-Z]" in listing.output
 
 
 def test_schedule_add_rejects_invalid(workdir, tmp_path):
@@ -667,6 +852,118 @@ def test_scheduler_status_alias(workdir, tmp_path):
     assert "nightly" in result.output
 
 
+def _add_schedule_and_record(tmp_path, status, flow_id):
+    """Install the recurring schedule and inject one history record.
+
+    Run history is normally written by the daemon's fire path; CLI tests
+    bypass the daemon, so we seed a record directly into the same store the
+    CLI reads from.
+
+    :param tmp_path: isolated working directory (== cwd in workdir fixture).
+    :param status: ``"succeeded"`` or ``"failed"``.
+    :param flow_id: flow id to attach to the record.
+    :returns: the installed schedule's id.
+    """
+    from flow_atelier.services.scheduler.store import ScheduleStore
+
+    src = tmp_path / "nightly.json"
+    src.write_text(SCHEDULE_RECURRING_JSON)
+    runner = CliRunner()
+    runner.invoke(app, ["schedule", "add", str(src)])
+    store = ScheduleStore(tmp_path / ".atelier")
+    job = store.get_by_name("nightly")
+    store.append_run_record(job.id, status, flow_id)
+    return job.id
+
+
+def test_schedule_history_empty(workdir, tmp_path):
+    """`schedule history` reports a friendly message when there is no history.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    src = tmp_path / "nightly.json"
+    src.write_text(SCHEDULE_RECURRING_JSON)
+    runner = CliRunner()
+    runner.invoke(app, ["schedule", "add", str(src)])
+    result = runner.invoke(app, ["schedule", "history", "nightly"])
+    assert result.exit_code == 0, result.output
+    assert "no recorded runs" in result.output
+
+
+def test_schedule_history_lists_records(workdir, tmp_path):
+    """`schedule history` shows the flow id and status of recorded fires.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    _add_schedule_and_record(tmp_path, "failed", "FLOW-overnight")
+    runner = CliRunner()
+    result = runner.invoke(app, ["schedule", "history", "nightly"])
+    assert result.exit_code == 0, result.output
+    assert "FLOW-overnight" in result.output
+    assert "FAILED" in result.output
+
+
+def test_schedule_history_json(workdir, tmp_path):
+    """`schedule history --json` emits the records as structured data.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    _add_schedule_and_record(tmp_path, "succeeded", "FLOW-good")
+    runner = CliRunner()
+    result = runner.invoke(app, ["schedule", "history", "nightly", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.output)
+    assert payload["name"] == "nightly"
+    assert payload["runs"][0]["flow_id"] == "FLOW-good"
+    assert payload["runs"][0]["status"] == "succeeded"
+
+
+def test_schedule_history_unknown(workdir):
+    """`schedule history` errors when the schedule is unknown.
+
+    :param workdir: isolated working directory fixture.
+    """
+    runner = CliRunner()
+    result = runner.invoke(app, ["schedule", "history", "ghost"])
+    assert result.exit_code != 0
+    assert "schedule not found" in result.output
+
+
+def test_schedule_list_includes_last_run(workdir, tmp_path):
+    """`schedule list` surfaces the most recent run at a glance.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    _add_schedule_and_record(tmp_path, "succeeded", "FLOW-glance")
+    runner = CliRunner()
+    result = runner.invoke(app, ["schedule", "list"])
+    assert result.exit_code == 0, result.output
+    # The "last run" column is present; the flow id may be width-truncated in
+    # the table, so the full-id round-trip is asserted via --json elsewhere.
+    assert "last run" in result.output
+    assert "FLOW-gla" in result.output
+
+
+def test_schedule_list_json_includes_last_run(workdir, tmp_path):
+    """`schedule list --json` includes a last_run object per schedule.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    _add_schedule_and_record(tmp_path, "failed", "FLOW-json")
+    runner = CliRunner()
+    result = runner.invoke(app, ["schedule", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.output)
+    entry = payload["schedules"][0]
+    assert entry["last_run"]["flow_id"] == "FLOW-json"
+    assert entry["last_run"]["status"] == "failed"
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="bash ; syntax in conduit YAML")
 def test_run_failure_prints_flow_id_and_status_hint(tmp_path, monkeypatch):
     """Failure output must include the flow_id and a next-step hint so
@@ -711,7 +1008,7 @@ def _capture(event: TaskEvent) -> str:
     console = Console(
         file=buf, force_terminal=False, color_system=None, width=120
     )
-    _render_task_event(event, console)
+    render_task_event(event, console)
     return buf.getvalue()
 
 

@@ -13,9 +13,9 @@ from flow_atelier.cli._shared import _parse_inputs, _resolve_flow_id, console
 from flow_atelier.cli.main import app
 from flow_atelier.cli.rendering.render import (
     _render_orchestration_msg,
-    _render_run_footer,
-    _render_task_event,
     format_conduit_error,
+    render_run_footer,
+    render_task_event,
 )
 from flow_atelier.core.atelier import Atelier
 from flow_atelier.schemas.flow import parse_flow_id
@@ -27,7 +27,8 @@ from flow_atelier.schemas.log import TaskEvent
     help=(
         "Start a new flow for the named conduit. "
         "Use --input key=value to pass inputs. "
-        "Use --resume <flow_id> to pick up a failed or crashed run."
+        "Use --resume <flow_id> to pick up a failed or crashed run. "
+        "Use --again <flow_id> to start a fresh run reusing a past flow's inputs."
     ),
 )
 def run_cmd(
@@ -50,15 +51,26 @@ def run_cmd(
         "--resume",
         help="Resume a failed or crashed flow by its id (supports prefix matching).",
     ),
+    again_from: str | None = typer.Option(
+        None,
+        "--again",
+        help="Start a fresh run of a past flow by id (prefix ok), reusing its saved inputs.",
+    ),
 ) -> None:
-    """Start a new flow or resume a failed one.
+    """Start a new flow, resume a failed one, or re-run a past one.
 
     :param conduit_name: name of the conduit to execute.
     :param inputs_raw: list of ``key=value`` input strings collected from ``--input``.
     :param show_steps: when true, stream intermediate thinking and tool activity live.
     :param resume_from: flow id (or unique prefix) of a failed run to resume.
+    :param again_from: flow id (or unique prefix) of a past run to re-run from
+        scratch, reusing its saved inputs (overridable via ``--input``).
     """
     atelier = Atelier()
+
+    if resume_from is not None and again_from is not None:
+        console.print("[red]error:[/red] --resume and --again are mutually exclusive")
+        raise typer.Exit(code=1)
 
     # --resume path: resolve the old flow, skip input prompts
     if resume_from is not None:
@@ -84,7 +96,7 @@ def run_cmd(
 
         def _on_event(event: TaskEvent) -> None:
             collected_events.append(event)
-            _render_task_event(event, console)
+            render_task_event(event, console)
 
         def _on_started(fid: str) -> None:
             captured_flow_id["id"] = fid
@@ -101,13 +113,83 @@ def run_cmd(
                     on_flow_started=_on_started,
                     on_task_starting=_on_task_starting,
                     show_steps=show_steps,
+                    stoppable=True,
                 )
             )
+        except asyncio.CancelledError:
+            # SIGTERM via `atelier stop`: engine has marked the flow stopped.
+            render_run_footer(collected_events, console)
+            console.print("[yellow]flow stopped[/yellow]")
+            stopped_id = captured_flow_id["id"]
+            if stopped_id:
+                console.print(f"[yellow]flow_id:[/yellow] {stopped_id}")
+            raise typer.Exit(code=0)
         except Exception as e:  # noqa: BLE001
-            _render_run_footer(collected_events, console)
-            console.print(f"[red]flow failed:[/red] {e}")
+            render_run_footer(collected_events, console)
+            console.print(f"[red]flow failed:[/red] {escape(str(e))}")
             raise typer.Exit(code=1)
-        _render_run_footer(collected_events, console)
+        render_run_footer(collected_events, console)
+        console.print(f"[green]flow_id:[/green] {result_id}")
+        return
+
+    # --again path: start a fresh run reusing a past flow's saved inputs
+    if again_from is not None:
+        flow_id = _resolve_flow_id(atelier, again_from)
+        again_conduit = parse_flow_id(flow_id)[0]
+        try:
+            atelier.store.read_conduit(again_conduit)
+        except FileNotFoundError:
+            pass
+        except (yaml.YAMLError, ValidationError, ValueError) as exc:
+            console.print(
+                f"[red]invalid conduit:[/red] {escape(format_conduit_error(exc))}"
+            )
+            console.print(f"[dim]→ fix conduits/{again_conduit}/conduit.yaml[/dim]")
+            raise typer.Exit(code=1)
+        overrides = _parse_inputs(inputs_raw)
+        collected_events = []
+        captured_flow_id = {"id": None}
+
+        def _on_event(event: TaskEvent) -> None:
+            collected_events.append(event)
+            render_task_event(event, console)
+
+        def _on_started(fid: str) -> None:
+            captured_flow_id["id"] = fid
+            console.print(_render_orchestration_msg(f'starting flow {fid}'))
+
+        def _on_task_starting(task_name: str, tool: str) -> None:
+            console.print(_render_orchestration_msg(f'running task "{task_name}" [{tool}]'))
+
+        console.print(_render_orchestration_msg(f're-running flow {flow_id}'))
+        try:
+            result_id = asyncio.run(
+                atelier.rerun_flow(
+                    flow_id,
+                    overrides=overrides,
+                    on_task_event=_on_event,
+                    on_flow_started=_on_started,
+                    on_task_starting=_on_task_starting,
+                    show_steps=show_steps,
+                    stoppable=True,
+                )
+            )
+        except asyncio.CancelledError:
+            render_run_footer(collected_events, console)
+            console.print("[yellow]flow stopped[/yellow]")
+            stopped_id = captured_flow_id["id"]
+            if stopped_id:
+                console.print(f"[yellow]flow_id:[/yellow] {stopped_id}")
+            raise typer.Exit(code=0)
+        except Exception as e:  # noqa: BLE001
+            render_run_footer(collected_events, console)
+            console.print(f"[red]flow failed:[/red] {escape(str(e))}")
+            fid = captured_flow_id["id"]
+            if fid:
+                console.print(f"[red]flow_id:[/red] {fid}")
+                console.print(f"[dim]→ atelier run --resume {fid}[/dim]")
+            raise typer.Exit(code=1)
+        render_run_footer(collected_events, console)
         console.print(f"[green]flow_id:[/green] {result_id}")
         return
 
@@ -172,7 +254,7 @@ def run_cmd(
         :param event: the emitted task event to record and display.
         """
         collected_events.append(event)
-        _render_task_event(event, console)
+        render_task_event(event, console)
 
     def _on_started(fid: str) -> None:
         """Capture the flow id and print a start banner.
@@ -201,15 +283,24 @@ def run_cmd(
                 on_flow_started=_on_started,
                 on_task_starting=_on_task_starting,
                 show_steps=show_steps,
+                stoppable=True,
             )
         )
+    except asyncio.CancelledError:
+        # SIGTERM via `atelier stop`: engine has marked the flow stopped.
+        render_run_footer(collected_events, console)
+        console.print("[yellow]flow stopped[/yellow]")
+        stopped_id = captured_flow_id["id"]
+        if stopped_id:
+            console.print(f"[yellow]flow_id:[/yellow] {stopped_id}")
+        raise typer.Exit(code=0)
     except Exception as e:  # noqa: BLE001
-        _render_run_footer(collected_events, console)
-        console.print(f"[red]flow failed:[/red] {e}")
+        render_run_footer(collected_events, console)
+        console.print(f"[red]flow failed:[/red] {escape(str(e))}")
         fid = captured_flow_id["id"]
         if fid:
             console.print(f"[red]flow_id:[/red] {fid}")
             console.print(f"[dim]→ atelier run --resume {fid}[/dim]")
         raise typer.Exit(code=1)
-    _render_run_footer(collected_events, console)
+    render_run_footer(collected_events, console)
     console.print(f"[green]flow_id:[/green] {flow_id}")

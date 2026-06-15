@@ -38,10 +38,17 @@ from acp.schema import (
     TextContentBlock,
     ToolCallProgress,
     ToolCallStart,
+    Usage,
+    UsageUpdate,
 )
 
 from flow_atelier.schemas.conduit import TaskDefinition
-from flow_atelier.schemas.log import ExecutionResult, IntermediateStep, StepKind
+from flow_atelier.schemas.log import (
+    ExecutionResult,
+    IntermediateStep,
+    StepKind,
+    TurnUsage,
+)
 from flow_atelier.services.executor.base import ExecutorBase, FlowContext
 from flow_atelier.services.executor.prompt_sink import (
     PromptSink,
@@ -147,6 +154,31 @@ def build_interactive_suffix(marker: str) -> str:
     )
 
 
+def _usage_from_client(client: _BufferingClient) -> TurnUsage | None:
+    """Build a :class:`TurnUsage` from a client's captured usage/cost.
+
+    Returns ``None`` when the agent reported neither a per-turn token
+    breakdown nor a session cost, so a step with no data carries
+    ``usage=None`` rather than a fabricated all-zero record.
+
+    :param client: buffering client whose ``usage``/``cost`` were populated
+        from the agent's ACP reports.
+    :returns: a :class:`TurnUsage`, or ``None`` if no usage data was seen.
+    """
+    if client.usage is None and client.cost is None:
+        return None
+    u = client.usage
+    return TurnUsage(
+        input_tokens=u.input_tokens if u is not None else None,
+        output_tokens=u.output_tokens if u is not None else None,
+        cached_read_tokens=u.cached_read_tokens if u is not None else None,
+        cached_write_tokens=u.cached_write_tokens if u is not None else None,
+        thought_tokens=u.thought_tokens if u is not None else None,
+        total_tokens=u.total_tokens if u is not None else None,
+        cost=client.cost,
+    )
+
+
 class _BufferingClient:
     """ACP :class:`acp.Client` that buffers agent output and routes user I/O.
 
@@ -192,9 +224,16 @@ class _BufferingClient:
         self._stream_steps = stream_steps
         self._done_marker = done_marker
         self.buffer: list[str] = []
+        # Set when an agent message chunk carried only non-text content
+        # (image/resource); lets an empty-but-successful turn be flagged.
+        self._saw_nontext_content = False
         self.steps: list[IntermediateStep] = []
         self._pending_thinking: list[str] = []
         self._pending_thinking_len: int = 0
+        # Last per-turn token breakdown and latest cumulative session cost
+        # the agent reported, if any. Both UNSTABLE/optional in ACP.
+        self.usage: Usage | None = None
+        self.cost: float | None = None
 
     async def _flush_thinking(self) -> None:
         """Emit any buffered thought chunks as one merged ``thinking`` step.
@@ -237,6 +276,8 @@ class _BufferingClient:
                 self.buffer.append(text)
                 if self._stream_messages:
                     await self._sink.display(text.replace(self._done_marker, ""))
+            else:
+                self._saw_nontext_content = True
         elif isinstance(update, AgentThoughtChunk):
             text = getattr(update.content, "text", "") or ""
             if not text:
@@ -271,6 +312,10 @@ class _BufferingClient:
                 self.steps.append(step)
                 if self._stream_steps and hasattr(self._sink, "display_step"):
                     await self._sink.display_step(step)
+        elif isinstance(update, UsageUpdate):
+            # Cumulative session cost — keep the latest value seen, not a sum.
+            if update.cost is not None:
+                self.cost = update.cost.amount
 
     async def request_permission(
         self, options, session_id: str, tool_call, **kwargs
@@ -478,6 +523,7 @@ class AcpHarnessExecutor(ExecutorBase):
                 stderr=f"harness timeout after {context.timeout}s",
                 output="".join(client.buffer),
                 steps=client.steps,
+                usage=_usage_from_client(client),
             )
         except Exception as exc:  # noqa: BLE001
             await client.flush_pending()
@@ -487,6 +533,7 @@ class AcpHarnessExecutor(ExecutorBase):
                 stderr=f"{type(exc).__name__}: {exc}",
                 output="".join(client.buffer),
                 steps=client.steps,
+                usage=_usage_from_client(client),
             )
 
     async def _drive_session(
@@ -581,6 +628,8 @@ class AcpHarnessExecutor(ExecutorBase):
             prompt=[TextContentBlock(type="text", text=prompt_text)],
             session_id=session_id,
         )
+        if resp.usage is not None:
+            client.usage = resp.usage
         await self._drain_pending_notifications(conn)
         await client.flush_pending()
         return self._result_for_turn(client, resp.stop_reason)
@@ -652,6 +701,10 @@ class AcpHarnessExecutor(ExecutorBase):
                 prompt=[TextContentBlock(type="text", text=next_prompt)],
                 session_id=session_id,
             )
+            # Take-last: usage/cost are documented as session totals, so the
+            # final non-null value wins rather than summing per-turn deltas.
+            if resp.usage is not None:
+                client.usage = resp.usage
             await self._drain_pending_notifications(conn)
             await client.flush_pending()
             last_stop = resp.stop_reason
@@ -675,8 +728,18 @@ class AcpHarnessExecutor(ExecutorBase):
                     output=cleaned,
                     last_turn_output=last_turn,
                     steps=client.steps,
+                    usage=_usage_from_client(client),
                 )
-            if resp.stop_reason not in ("end_turn", "max_tokens"):
+            if resp.stop_reason == "max_tokens":
+                # The reply was cut off mid-thought; nudge the agent to keep
+                # going instead of handing the truncated turn back to the human.
+                next_prompt = (
+                    "Your previous response was cut off before it finished. "
+                    "Continue from where you stopped."
+                    + build_interactive_suffix(self.done_marker)
+                )
+                continue
+            if resp.stop_reason != "end_turn":
                 break
             try:
                 user_reply = await self.sink.request_input(
@@ -689,6 +752,7 @@ class AcpHarnessExecutor(ExecutorBase):
                     stderr=f"interactive input unavailable: {type(exc).__name__}",
                     output=buffer_text,
                     steps=client.steps,
+                    usage=_usage_from_client(client),
                 )
             next_prompt = user_reply + build_interactive_suffix(self.done_marker)
 
@@ -702,6 +766,7 @@ class AcpHarnessExecutor(ExecutorBase):
             ),
             output=buffer_text,
             steps=client.steps,
+            usage=_usage_from_client(client),
         )
 
     @staticmethod
@@ -715,10 +780,18 @@ class AcpHarnessExecutor(ExecutorBase):
         :returns: :class:`ExecutionResult` with exit_code 0 on normal stops.
         """
         output = "".join(client.buffer)
+        usage = _usage_from_client(client)
         if stop_reason == "end_turn":
+            # An empty success is indistinguishable from a real one unless we
+            # note that the agent's only content was non-text (image/resource).
+            stderr = (
+                "agent produced only non-text content"
+                if not output and client._saw_nontext_content
+                else ""
+            )
             return ExecutionResult(
-                exit_code=0, stdout=output, stderr="", output=output,
-                steps=client.steps,
+                exit_code=0, stdout=output, stderr=stderr, output=output,
+                steps=client.steps, usage=usage,
             )
         if stop_reason == "max_tokens":
             # Truncated output must not flow downstream as if complete.
@@ -731,6 +804,7 @@ class AcpHarnessExecutor(ExecutorBase):
             stderr=stderr,
             output=output,
             steps=client.steps,
+            usage=usage,
         )
 
 

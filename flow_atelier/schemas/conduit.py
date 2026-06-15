@@ -11,7 +11,7 @@ _TASK_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 # Conduit names become a single filesystem path component (conduits/<name>/),
 # so they must reject "/", ".", ".." to prevent path traversal on write/delete.
 # Hyphens are allowed because real conduits on disk use them (autonomous-projects).
-_CONDUIT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+CONDUIT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class ToolType(str, Enum):
@@ -184,7 +184,7 @@ class Conduit(BaseModel):
         :param v: the proposed conduit name.
         :returns: the validated name unchanged.
         """
-        if not _CONDUIT_NAME_RE.match(v):
+        if not CONDUIT_NAME_RE.match(v):
             raise ValueError(
                 f"invalid conduit name {v!r}: only letters, digits, "
                 "underscores and hyphens are allowed"

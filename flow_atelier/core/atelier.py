@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from flow_atelier.core.settings import AtelierSettings
 from flow_atelier.modules.engine import (
     Engine,
@@ -14,6 +16,7 @@ from flow_atelier.modules.engine import (
     TaskEventCallback,
     TaskStartingCallback,
 )
+from flow_atelier.modules.liveness import is_runner_alive
 from flow_atelier.schemas.api import (
     CreateConduitInput,
     CreateScheduleInput,
@@ -166,6 +169,7 @@ class Atelier:
         on_task_starting: TaskStartingCallback | None = None,
         show_steps: bool = True,
         working_dir: Path | str | None = None,
+        stoppable: bool = False,
     ) -> str:
         """Start a new flow for the named conduit.
 
@@ -186,6 +190,8 @@ class Atelier:
             ``--hide-steps`` to opt out.
         :param working_dir: working directory for task execution. When
             ``None``, executors use the process cwd.
+        :param stoppable: install a SIGTERM stop handler for this run (the
+            ``atelier stop`` path); only the foreground CLI sets this.
         :returns: the newly created flow id
         """
         wd = Path(working_dir) if working_dir is not None else None
@@ -198,6 +204,7 @@ class Atelier:
             on_task_starting=on_task_starting,
             show_steps=show_steps,
             working_dir=wd,
+            stoppable=stoppable,
         )
 
     async def resume_flow(
@@ -208,13 +215,26 @@ class Atelier:
         on_task_starting: TaskStartingCallback | None = None,
         show_steps: bool = True,
         working_dir: Path | str | None = None,
+        stoppable: bool = False,
     ) -> str:
         """Resume a failed or crashed flow, skipping already-completed tasks.
 
         A flow whose process died (crash, kill, power loss) is left with
         status ``running``, so that status is resumable too — matching how
-        nested flows are recovered. There is no liveness check: resuming a
-        flow that is genuinely still running elsewhere double-runs it.
+        nested flows are recovered. As a guard against double-running, resume
+        refuses when the original runner pid is *provably* still alive on this
+        host (see :func:`is_runner_alive`). The honest limitation remains: a
+        runner on another host can't be probed, so a cross-machine
+        still-running flow could still be double-run.
+
+        Resume is at-least-once: an iteration's log entry is written before its
+        completion/output is persisted, so an iteration that finished but whose
+        completion was killed before being saved will execute again on resume.
+        This is mostly harmless, but for a paid AI-agent task it can re-spend
+        tokens on work that was already done. Recovering loop context also
+        re-reads and re-parses the full log file once per resume, a cost that
+        grows with long, repeatedly-resumed runs (folded into the retention/
+        pruning work rather than fixed here).
 
         :param flow_id: flow id of the prior failed/crashed run to resume
         :param on_task_event: optional task-event callback forwarded to the engine
@@ -222,6 +242,8 @@ class Atelier:
         :param on_task_starting: optional task-starting callback
         :param show_steps: stream intermediate harness steps
         :param working_dir: working directory for task execution
+        :param stoppable: install a SIGTERM stop handler for this run (the
+            ``atelier stop`` path); only the foreground CLI sets this.
         :returns: the flow id (same as input)
         :raises ValueError: if the flow is not in failed or running status
         """
@@ -230,11 +252,70 @@ class Atelier:
             raise ValueError(
                 f"can only resume failed or crashed flows, got {prior.status.value}"
             )
+        if is_runner_alive(prior):
+            raise ValueError(
+                f"flow {flow_id} runner pid {prior.runner_pid} is still alive on "
+                "this host; refusing to resume to avoid a double-run"
+            )
         conduit_name, _, _ = parse_flow_id(flow_id)
         conduit = self.store.read_conduit(conduit_name)
         inputs = self.store.read_input(flow_id)
+        if working_dir is None and prior.run_path:
+            working_dir = prior.run_path
+        wd = Path(working_dir) if working_dir is not None else None
+        return await self.engine.run(
+            conduit,
+            inputs,
+            on_task_event=on_task_event,
+            on_flow_started=on_flow_started,
+            on_task_starting=on_task_starting,
+            show_steps=show_steps,
+            working_dir=wd,
+            resume_from=flow_id,
+            stoppable=stoppable,
+        )
+
+    async def rerun_flow(
+        self,
+        flow_id: str,
+        overrides: dict[str, Any] | None = None,
+        on_task_event: TaskEventCallback | None = None,
+        on_flow_started: FlowStartedCallback | None = None,
+        on_task_starting: TaskStartingCallback | None = None,
+        show_steps: bool = True,
+        working_dir: Path | str | None = None,
+        stoppable: bool = False,
+    ) -> str:
+        """Start a brand-new flow of a past run's conduit, reusing its inputs.
+
+        Unlike :meth:`resume_flow`, this does not continue the old run: it
+        allocates a fresh flow id and re-executes the whole conduit from the
+        top. There is no status gate, so a ``completed`` flow can be repeated.
+        The source flow's persisted ``input.yaml`` is reused verbatim; keys in
+        ``overrides`` win, letting the caller vary individual inputs while
+        keeping the rest. The working directory is not an input; it comes from
+        the ``working_dir`` argument, falling back to the source flow's recorded
+        ``run_path`` when omitted.
+
+        :param flow_id: flow id of the prior run whose inputs to reuse
+        :param overrides: per-key input overrides applied on top of the stored
+            inputs; defaults to ``{}``
+        :param on_task_event: optional task-event callback forwarded to the engine
+        :param on_flow_started: optional flow-started callback
+        :param on_task_starting: optional task-starting callback
+        :param show_steps: stream intermediate harness steps
+        :param working_dir: working directory for task execution; when ``None``,
+            falls back to the source flow's recorded ``run_path``
+        :param stoppable: install a SIGTERM stop handler for this run (the
+            ``atelier stop`` path); only the foreground CLI sets this.
+        :returns: the newly created flow id (distinct from ``flow_id``)
+        :raises FileNotFoundError: if the source flow or its conduit is gone
+        """
+        conduit_name, _, _ = parse_flow_id(flow_id)
+        conduit = self.store.read_conduit(conduit_name)
+        inputs = {**self.store.read_input(flow_id), **(overrides or {})}
         if working_dir is None:
-            stored_run_path = inputs.get("run_path")
+            stored_run_path = self.store.read_progress(flow_id).run_path
             if stored_run_path:
                 working_dir = stored_run_path
         wd = Path(working_dir) if working_dir is not None else None
@@ -246,7 +327,7 @@ class Atelier:
             on_task_starting=on_task_starting,
             show_steps=show_steps,
             working_dir=wd,
-            resume_from=flow_id,
+            stoppable=stoppable,
         )
 
     def get_status(self, flow_id: str) -> Progress:
@@ -256,6 +337,16 @@ class Atelier:
         :returns: current progress snapshot
         """
         return self.store.read_progress(flow_id)
+
+    def get_outputs(self, flow_id: str) -> dict[str, Any]:
+        """Return the per-task results saved to ``outputs.yaml`` for ``flow_id``.
+
+        :param flow_id: flow identifier
+        :returns: mapping of task name to output value; ``{}`` if no
+            ``outputs.yaml`` has been written yet (flow still running or it
+            failed before any task completed)
+        """
+        return self.store.read_outputs(flow_id)
 
     def list_conduits(self) -> list[str]:
         """List all available conduit names.
@@ -279,11 +370,14 @@ class Atelier:
 
         :param payload: validated :class:`CreateConduitInput`
         :returns: the persisted :class:`Conduit`
-        :raises FileExistsError: if a project conduit with that name exists
+        :raises FileExistsError: if a conduit with that name already exists
+            in the project or global store
         """
-        existing = self.store.base_dir / "conduits" / payload.name
-        if existing.exists():
+        try:
+            self.store.conduit_source(payload.name)
             raise FileExistsError(f"conduit already exists: {payload.name}")
+        except FileNotFoundError:
+            pass
         conduit = Conduit.model_validate(payload.model_dump())
         self.store.write_conduit(conduit)
         return conduit
@@ -297,6 +391,7 @@ class Atelier:
         :param payload: subset of fields to overwrite
         :returns: the updated :class:`Conduit`
         :raises FileNotFoundError: if the conduit doesn't exist
+        :raises FileExistsError: if the update renames to a name already taken
         """
         existing = self.store.read_conduit(name)
         merged = existing.model_dump()
@@ -304,6 +399,13 @@ class Atelier:
             merged[key] = value
         merged["name"] = merged.get("name") or name
         updated = Conduit.model_validate(merged)
+        if updated.name != name:
+            # Rename: refuse to clobber an existing conduit at the target name.
+            try:
+                self.store.conduit_source(updated.name)
+                raise FileExistsError(f"conduit already exists: {updated.name}")
+            except FileNotFoundError:
+                pass
         self.store.write_conduit(updated)
         if updated.name != name:
             # Rename: drop the old folder.
@@ -331,22 +433,28 @@ class Atelier:
 
         :param payload: validated :class:`RunTaskInput`
         :returns: :class:`RunTaskOutput` carrying the flow id and logs
+        :raises ValueError: if ``name`` or ``tool`` is well-formed JSON but
+            invalid as a task definition (e.g. a hyphenated name or an unknown
+            tool), so the route can map it to a 400 instead of a 500
         """
-        conduit = Conduit.model_validate(
-            {
-                "name": f"task__{payload.name}",
-                "description": payload.description or payload.name,
-                "tasks": [
-                    {
-                        "name": payload.name,
-                        "description": payload.description or payload.name,
-                        "task": payload.task,
-                        "tool": payload.tool,
-                        "depends_on": [],
-                    }
-                ],
-            }
-        )
+        try:
+            conduit = Conduit.model_validate(
+                {
+                    "name": f"task__{payload.name}",
+                    "description": payload.description or payload.name,
+                    "tasks": [
+                        {
+                            "name": payload.name,
+                            "description": payload.description or payload.name,
+                            "task": payload.task,
+                            "tool": payload.tool,
+                            "depends_on": [],
+                        }
+                    ],
+                }
+            )
+        except ValidationError as e:
+            raise ValueError(f"invalid task definition: {e}") from e
         captured: dict[str, str | None] = {"id": None}
 
         def _on_started(fid: str) -> None:
@@ -378,15 +486,28 @@ class Atelier:
         """Persist a new schedule and return it.
 
         Validates that ``conduit_name`` resolves to a known conduit (in the
-        same store the fire will use), so a typo fails loudly here instead of
-        silently at fire time via a swallowed exception.
+        same store the fire will use) and that the schedule supplies every
+        required (default-less) input the conduit declares, so a typo or a
+        missing input fails loudly here instead of silently at fire time via
+        a swallowed exception.
 
         :param payload: validated :class:`CreateScheduleInput`
         :returns: the new :class:`ScheduledJob`
-        :raises ValueError: if ``conduit_name`` is not a known conduit
+        :raises ValueError: if ``conduit_name`` is not a known conduit, or the
+            schedule omits a required (default-less) conduit input
         """
         if payload.conduit_name not in self.store.list_conduits():
             raise ValueError(f"unknown conduit: {payload.conduit_name!r}")
+        conduit = self.store.read_conduit(payload.conduit_name)
+        required = {
+            key for key, spec in conduit.inputs.items() if spec.default is None
+        }
+        missing = required - set(payload.inputs)
+        if missing:
+            raise ValueError(
+                f"schedule for {payload.conduit_name!r} is missing required "
+                f"inputs: {sorted(missing)}"
+            )
         return self.schedule_store.create(payload)
 
     def delete_schedule(self, schedule_id: str) -> ScheduledJob:
@@ -429,10 +550,12 @@ class Atelier:
         return out
 
     def get_flow_logs(self, flow_id: str) -> list[LogEntry]:
-        """Return the log entries for ``flow_id`` including child flow logs.
+        """Return the log entries for ``flow_id`` including all descendant logs.
 
-        Child flow entries are tagged with ``extra["flow_id"]`` so callers
-        can distinguish their origin.
+        Descendant flow entries are tagged with ``extra["flow_id"]`` so callers
+        can distinguish their origin. Aggregation recurses depth-first, so a
+        ``tool:conduit`` whose child itself nests a conduit contributes its
+        grandchildren's logs too.
 
         :param flow_id: flow identifier
         :returns: list of :class:`LogEntry` (empty if the file is empty)
@@ -442,25 +565,34 @@ class Atelier:
         self.store._flow_dir(flow_id)
         logs = self.store.read_logs(flow_id)
         for child_id in self.store.list_child_flows(flow_id):
-            child_logs = self.store.read_logs(child_id)
-            tagged = [
-                entry.model_copy(
-                    update={"extra": {**(entry.extra or {}), "flow_id": child_id}}
-                )
-                for entry in child_logs
-            ]
-            logs.extend(tagged)
+            logs.extend(self._descendant_logs(child_id))
         return logs
+
+    def _descendant_logs(self, flow_id: str) -> list[LogEntry]:
+        """Return ``flow_id``'s logs plus all descendants', tagged by origin.
+
+        :param flow_id: flow identifier whose own and descendant logs to gather
+        :returns: log entries tagged with ``extra["flow_id"]`` of their flow
+        """
+        entries = [
+            entry.model_copy(
+                update={"extra": {**(entry.extra or {}), "flow_id": flow_id}}
+            )
+            for entry in self.store.read_logs(flow_id)
+        ]
+        for child_id in self.store.list_child_flows(flow_id):
+            entries.extend(self._descendant_logs(child_id))
+        return entries
 
     def _known_run_paths(self) -> set[Path]:
         """Return the resolved ``run_path`` of every known flow.
 
-        :returns: set of resolved run-path directories recorded in flow inputs.
+        :returns: set of resolved run-path directories recorded on flow progress.
         """
         known: set[Path] = set()
         for flow_id in self.store.list_flows():
             try:
-                rp = self.store.read_input(flow_id).get("run_path")
+                rp = self.store.read_progress(flow_id).run_path
             except (FileNotFoundError, ValueError):
                 continue
             if rp:

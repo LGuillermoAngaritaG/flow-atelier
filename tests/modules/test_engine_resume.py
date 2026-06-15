@@ -8,7 +8,7 @@ import pytest
 from flow_atelier.modules.engine import Engine
 from flow_atelier.schemas.conduit import Conduit
 from flow_atelier.schemas.log import ExecutionResult
-from flow_atelier.schemas.progress import FlowStatus, TaskStatus
+from flow_atelier.schemas.progress import FlowStatus, Progress, TaskStatus
 from flow_atelier.services.executor.base import ExecutorBase
 from flow_atelier.services.store.filesystem import FilesystemStore
 
@@ -381,6 +381,7 @@ async def test_until_exhaustion_fails_when_on_exhaust_fail(store):
     p = store.read_progress(flow_id)
     assert p.status == FlowStatus.failed
     assert p.tasks["loop"].status == TaskStatus.failed
+    assert "exhausted" in (p.tasks["loop"].reason or "")
 
 
 async def test_until_match_leaves_no_exhaustion_reason(store):
@@ -421,6 +422,7 @@ async def test_stagnation_limit_fails_on_identical_outputs(store):
     flow_id = store.list_flows()[0]
     p = store.read_progress(flow_id)
     assert p.tasks["loop"].status == TaskStatus.failed
+    assert "stagnated" in (p.tasks["loop"].reason or "")
 
 
 async def test_stagnation_limit_allows_varied_outputs(store):
@@ -484,3 +486,138 @@ async def test_resume_fires_on_task_starting_for_rerun_tasks(store):
         on_task_starting=lambda name, tool: starting.append(name),
     )
     assert starting == ["b"]
+
+
+# ------------------------------------------------------ run_path namespace (Fix 1)
+
+
+async def test_run_path_recorded_on_progress_not_in_inputs(store, tmp_path):
+    """The engine's run directory is bookkeeping on progress, never a user input.
+
+    Mixing it into input.yaml would let ``{{inputs.run_path}}`` silently work on
+    a resumed run but fail on a fresh one, and would clobber an author-declared
+    input literally named ``run_path``.
+
+    :param store: FilesystemStore fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    conduit = _conduit(
+        [{"name": "a", "description": "d", "task": "x", "tool": "tool:bash",
+          "depends_on": []}]
+    )
+    engine = Engine({"tool:bash": FakeExecutor()}, store)
+    flow_id = await engine.run(conduit, {}, working_dir=tmp_path)
+
+    assert "run_path" not in store.read_input(flow_id)
+    assert store.read_progress(flow_id).run_path == str(tmp_path)
+
+
+async def test_resume_preserves_user_declared_run_path_input(store, tmp_path):
+    """An author input named ``run_path`` survives a run + resume untouched.
+
+    :param store: FilesystemStore fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    conduit = _conduit(
+        [
+            {"name": "a", "description": "d", "task": "{{inputs.run_path}}",
+             "tool": "tool:bash", "depends_on": []},
+            {"name": "b", "description": "d", "task": "x", "tool": "tool:bash",
+             "depends_on": ["a"]},
+        ],
+        inputs={"run_path": {"description": "a user input that shadows the name"}},
+    )
+    fake = FakeExecutor(fail={"b"})
+    engine = Engine({"tool:bash": fake}, store)
+    with pytest.raises(RuntimeError):
+        await engine.run(conduit, {"run_path": "USER_VALUE"}, working_dir=tmp_path)
+    flow_id = store.list_flows()[0]
+
+    # The user's value lives in inputs; the engine's run dir lives on progress.
+    assert store.read_input(flow_id)["run_path"] == "USER_VALUE"
+    assert store.read_progress(flow_id).run_path == str(tmp_path)
+
+    # Resume must not overwrite the user's input with the filesystem path.
+    fake2 = FakeExecutor(outputs={"b": "ok"})
+    engine2 = Engine({"tool:bash": fake2}, store)
+    await engine2.run(conduit, {"run_path": "USER_VALUE"}, resume_from=flow_id)
+    assert store.read_input(flow_id)["run_path"] == "USER_VALUE"
+
+
+# ----------------------------------------- nested-child resume disambiguation (Fix 2)
+
+
+async def test_find_child_to_resume_disambiguates_by_invoking_task(store):
+    """Two parent steps invoking the same sub-conduit must resume independently.
+
+    The matcher takes the most-recent non-completed child of a name, so without
+    tracking which step spawned each child it would, for the step whose child
+    failed, see a newer same-named child (the other step's, completed) and
+    wrongly conclude there's nothing to resume.
+
+    :param store: FilesystemStore fixture.
+    """
+    parent = store.create_flow("parent", {})
+    # step1's child failed; step2's child (sorts last → "most recent") completed.
+    c1 = store.create_flow(
+        "build", {}, parent_flow_id=parent, flow_id="20260101_aaaaaaaa_build"
+    )
+    c2 = store.create_flow(
+        "build", {}, parent_flow_id=parent, flow_id="20260101_bbbbbbbb_build"
+    )
+    store.write_progress(c1, Progress(status=FlowStatus.failed, invoking_task="step1"))
+    store.write_progress(
+        c2, Progress(status=FlowStatus.completed, invoking_task="step2")
+    )
+
+    engine = Engine({}, store)
+    # step1 resumes its own failed child despite the newer completed one.
+    assert engine._find_child_to_resume(parent, "build", "step1") == c1
+    # step2's child already completed → nothing to resume.
+    assert engine._find_child_to_resume(parent, "build", "step2") is None
+
+
+async def test_find_child_to_resume_skips_live_running_child(store):
+    """A `running` child whose runner is still alive must not be picked up.
+
+    Resuming it would drive the same child directory from two engines at once.
+    A `running` child is resumable only when its runner is provably dead.
+
+    :param store: FilesystemStore fixture.
+    """
+    import os
+    import socket
+    import subprocess
+
+    parent = store.create_flow("parent", {})
+    child = store.create_flow(
+        "build", {}, parent_flow_id=parent, flow_id="20260101_aaaaaaaa_build"
+    )
+    host = socket.gethostname()
+
+    # Live runner (this very test process): the child must be left alone.
+    store.write_progress(
+        child,
+        Progress(
+            status=FlowStatus.running,
+            invoking_task="step1",
+            runner_pid=os.getpid(),
+            runner_host=host,
+        ),
+    )
+    engine = Engine({}, store)
+    assert engine._find_child_to_resume(parent, "build", "step1") is None
+
+    # Dead runner (a pid that has exited): the orphaned child is resumable.
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    store.write_progress(
+        child,
+        Progress(
+            status=FlowStatus.running,
+            invoking_task="step1",
+            runner_pid=dead.pid,
+            runner_host=host,
+        ),
+    )
+    assert engine._find_child_to_resume(parent, "build", "step1") == child

@@ -46,6 +46,7 @@ from acp.schema import (
     AgentCapabilities,
     AgentMessageChunk,
     AllowedOutcome,
+    Cost,
     Implementation,
     InitializeResponse,
     NewSessionResponse,
@@ -56,6 +57,8 @@ from acp.schema import (
     SetSessionModeResponse,
     TextContentBlock,
     ToolCallUpdate,
+    Usage,
+    UsageUpdate,
 )
 from acp.schema import (
     PermissionOption as AcpPermissionOption,
@@ -185,7 +188,21 @@ class FakeAgent:
                 ),
             )
 
-        return PromptResponse(stop_reason=turn.get("stop", "end_turn"))
+        cost = turn.get("cost")
+        if cost is not None:
+            await self._conn.session_update(
+                session_id=session_id,
+                update=UsageUpdate(
+                    session_update="usage_update",
+                    cost=Cost(amount=float(cost), currency="USD"),
+                    size=0,
+                    used=0,
+                ),
+            )
+
+        usage_spec = turn.get("usage")
+        usage = Usage(**usage_spec) if usage_spec is not None else None
+        return PromptResponse(stop_reason=turn.get("stop", "end_turn"), usage=usage)
 
     # ---- unused Agent methods: stub to satisfy protocol ----
     async def authenticate(self, method_id: str, **kwargs):

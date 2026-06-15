@@ -397,6 +397,7 @@ atelier run <conduit> [--input key=value ...] [--show-steps/--hide-steps]
 atelier run --resume <flow_id>                         # resume a failed/crashed flow
 atelier status <flow_id>
 atelier logs <flow_id> [--task <name>] [--follow] [--json]
+atelier outputs <flow_id> [--task <name>] [--json]    # read back a finished flow's results
 atelier list conduits
 atelier list flows [--conduit <name>]
 atelier rm <flow_id> [--force] [--yes]                 # delete one flow run

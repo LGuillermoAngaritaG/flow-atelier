@@ -82,6 +82,63 @@ def test_create_schedule_rejects_unknown_conduit(atelier):
     assert atelier.list_schedules() == []
 
 
+def test_create_schedule_rejects_missing_required_input(atelier, tmp_path):
+    """Verify create_schedule rejects a schedule omitting a required input.
+
+    A conduit input with no ``default`` is required; a schedule that fails to
+    supply it would fail on every fire (swallowed into daemon logs), so it must
+    be rejected loudly at create time.
+
+    :param atelier: Atelier facade fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    conduit_dir = tmp_path / ".atelier" / "conduits" / "needs_input"
+    conduit_dir.mkdir(parents=True)
+    (conduit_dir / "conduit.yaml").write_text(
+        "name: needs_input\n"
+        "description: requires an input\n"
+        "inputs:\n"
+        "  target:\n"
+        "    description: who to greet\n"
+        "tasks:\n"
+        "  - greet:\n"
+        "      description: say hi\n"
+        '      task: "echo {{inputs.target}}"\n'
+        "      tool: tool:bash\n"
+        "      depends_on: []\n"
+    )
+    with pytest.raises(ValueError, match="missing required inputs"):
+        atelier.create_schedule(_payload(conduit_name="needs_input", inputs={}))
+    assert atelier.list_schedules() == []
+
+
+def test_create_schedule_accepts_supplied_required_input(atelier, tmp_path):
+    """Verify create_schedule succeeds when the required input is supplied.
+
+    :param atelier: Atelier facade fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    conduit_dir = tmp_path / ".atelier" / "conduits" / "needs_input"
+    conduit_dir.mkdir(parents=True)
+    (conduit_dir / "conduit.yaml").write_text(
+        "name: needs_input\n"
+        "description: requires an input\n"
+        "inputs:\n"
+        "  target:\n"
+        "    description: who to greet\n"
+        "tasks:\n"
+        "  - greet:\n"
+        "      description: say hi\n"
+        '      task: "echo {{inputs.target}}"\n'
+        "      tool: tool:bash\n"
+        "      depends_on: []\n"
+    )
+    job = atelier.create_schedule(
+        _payload(conduit_name="needs_input", inputs={"target": "world"})
+    )
+    assert job.conduit_name == "needs_input"
+
+
 def test_list_schedules_includes_created(atelier):
     """Verify list_schedules includes a freshly created schedule.
 

@@ -85,6 +85,8 @@ async def update_conduit(
         conduit = atelier.update_conduit(name, payload)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return ConduitDTO.model_validate(conduit.model_dump())

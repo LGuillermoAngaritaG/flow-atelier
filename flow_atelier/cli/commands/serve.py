@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -65,8 +66,14 @@ def serve_cmd(
 
     global_schedule_store = ScheduleStore(settings.global_atelier_dir)
 
-    async def _broadcasting_executor(job: ScheduledJob, working_dir: Path) -> None:
-        """Run the conduit and fan lifecycle envelopes out to the bus."""
+    async def _broadcasting_executor(
+        job: ScheduledJob, working_dir: Path, report: Callable[[str], None]
+    ) -> None:
+        """Run the conduit and fan lifecycle envelopes out to the bus.
+
+        :param report: daemon's flow-id reporter, fed the captured id so the
+            scheduler can record which run this fire produced.
+        """
         base = {
             "schedule_id": job.id,
             "schedule_name": job.schedule.name,
@@ -87,6 +94,7 @@ def serve_cmd(
 
         def _on_started(flow_id: str) -> None:
             captured["flow_id"] = flow_id
+            report(flow_id)
             _spawn(
                 bus.broadcast(
                     {"type": "scheduled_run_started", "flow_id": flow_id, **base}

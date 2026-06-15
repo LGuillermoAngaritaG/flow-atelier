@@ -231,6 +231,22 @@ def test_log_entry_last_turn_output_optional():
     assert LogEntry.model_validate(entry.model_dump()).last_turn_output == "tail"
 
 
+def test_log_entry_usage_optional_and_round_trips():
+    """Verify usage defaults to None for legacy entries and round-trips."""
+    base = {
+        "task": "t", "tool": "tool:bash",
+        "started_at": "2026-06-11T00:00:00Z", "finished_at": "2026-06-11T00:00:01Z",
+    }
+    legacy = LogEntry.model_validate(base)
+    assert legacy.usage is None
+    usage = {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120, "cost": 0.01}
+    entry = LogEntry.model_validate({**base, "usage": usage})
+    reparsed = LogEntry.model_validate(entry.model_dump(mode="json"))
+    assert reparsed.usage is not None
+    assert reparsed.usage.total_tokens == 120
+    assert reparsed.usage.cost == 0.01
+
+
 @pytest.mark.parametrize("bad_name", ["my-task", "a.b", "a b", ""])
 def test_invalid_task_names_rejected(bad_name):
     """Verify task names outside [A-Za-z0-9_]+ are rejected at load time.

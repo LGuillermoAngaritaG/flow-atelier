@@ -5,8 +5,14 @@ import json
 import time
 
 import typer
+from rich.markup import escape
 
-from flow_atelier.cli._shared import _resolve_flow_id, console
+from flow_atelier.cli._shared import (
+    _flow_usage_totals,
+    _format_usage,
+    _resolve_flow_id,
+    console,
+)
 from flow_atelier.cli.main import app
 from flow_atelier.cli.rendering.render import _render_log_entry
 from flow_atelier.core.atelier import Atelier
@@ -87,11 +93,14 @@ def logs_cmd(
         if json_mode:
             typer.echo("[]")
             raise typer.Exit(code=1)
-        console.print(f"[yellow]no log entries for {scope}[/yellow]")
+        console.print(f"[yellow]no log entries for {escape(scope)}[/yellow]")
         raise typer.Exit(code=1)
 
-    if last is not None and last > 0:
-        entries = entries[-last:]
+    if last is not None:
+        if last < 0:
+            raise typer.BadParameter("--last must be zero or positive")
+        # entries[-0:] is the whole list, so handle 0 explicitly as "none".
+        entries = entries[-last:] if last > 0 else []
 
     if json_mode:
         typer.echo(
@@ -101,6 +110,10 @@ def logs_cmd(
 
     for entry in entries:
         _render_log_entry(entry, show, console)
+
+    total_usage = _format_usage(_flow_usage_totals(entries))
+    if total_usage:
+        console.print(f"[dim]run total · {total_usage}[/dim]")
 
 
 def _follow_logs(

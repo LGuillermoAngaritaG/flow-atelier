@@ -4,7 +4,12 @@ import socket
 import subprocess
 import sys
 
-from flow_atelier.modules.liveness import display_status, is_crashed
+from flow_atelier.modules.liveness import (
+    StopDecision,
+    display_status,
+    is_crashed,
+    stop_decision,
+)
 from flow_atelier.schemas.progress import FlowStatus, Progress
 
 
@@ -89,3 +94,83 @@ def test_legacy_progress_json_without_runner_fields_loads():
     restored = Progress.model_validate({"status": "running"})
     assert restored.runner_pid is None
     assert restored.runner_host is None
+
+
+def _running_here(pid: int, stoppable: bool = True) -> Progress:
+    """A running flow on this host with the given runner pid.
+
+    Defaults to ``stoppable=True`` (a foreground ``atelier run`` that installed
+    a graceful-stop handler); pass ``stoppable=False`` for the daemon/serve case.
+    """
+    return Progress(
+        status=FlowStatus.running,
+        runner_pid=pid,
+        runner_host=socket.gethostname(),
+        stoppable=stoppable,
+    )
+
+
+def test_stop_decision_happy_path():
+    """A running flow with a live local pid and no co-tenants is stoppable."""
+    p = _running_here(os.getpid())
+    assert stop_decision(p, []) is StopDecision.stoppable
+
+
+def test_stop_decision_already_terminal():
+    """A completed/failed/stopped flow is not running, so refuse."""
+    for status in (FlowStatus.completed, FlowStatus.failed, FlowStatus.stopped):
+        p = Progress(status=status, runner_pid=os.getpid(), runner_host=socket.gethostname())
+        assert stop_decision(p, []) is StopDecision.not_running
+
+
+def test_stop_decision_crashed_pid():
+    """A running flow whose local pid is provably dead is crashed, not stoppable."""
+    p = _running_here(_dead_local_pid())
+    assert stop_decision(p, []) is StopDecision.crashed
+
+
+def test_stop_decision_foreign_host():
+    """A running flow on another host cannot be stopped from here."""
+    p = Progress(
+        status=FlowStatus.running,
+        runner_pid=os.getpid(),
+        runner_host="some-other-box-that-is-not-us",
+    )
+    assert stop_decision(p, []) is StopDecision.foreign_host
+
+
+def test_stop_decision_no_pid():
+    """A running flow with no recorded pid cannot be stopped."""
+    p = Progress(status=FlowStatus.running, runner_host=socket.gethostname())
+    assert stop_decision(p, []) is StopDecision.no_pid
+
+
+def test_stop_decision_shared_runner():
+    """Two running flows sharing one pid+host refuse (the scheduler case)."""
+    target = _running_here(os.getpid())
+    sibling = _running_here(os.getpid())
+    assert stop_decision(target, [sibling]) is StopDecision.shared_runner
+
+
+def test_stop_decision_other_flow_different_pid_is_stoppable():
+    """A co-existing flow on a different pid does not block a stop."""
+    target = _running_here(os.getpid())
+    other = _running_here(_dead_local_pid())
+    assert stop_decision(target, [other]) is StopDecision.stoppable
+
+
+def test_stop_decision_not_stoppable_no_co_tenant():
+    """A live flow that installed no stop handler refuses even when alone.
+
+    This is the scheduler-daemon case: signalling its pid would tear down the
+    whole daemon, so it must refuse regardless of whether a co-tenant exists.
+    """
+    p = _running_here(os.getpid(), stoppable=False)
+    assert stop_decision(p, []) is StopDecision.not_stoppable
+
+
+def test_stop_decision_not_stoppable_with_co_tenant():
+    """A non-stoppable flow refuses even when a co-tenant shares its pid."""
+    target = _running_here(os.getpid(), stoppable=False)
+    sibling = _running_here(os.getpid(), stoppable=False)
+    assert stop_decision(target, [sibling]) is StopDecision.not_stoppable

@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -57,7 +58,11 @@ class OpenPathOutput(BaseModel):
 
 
 class FlowLogsOutput(BaseModel):
-    """Response shape for ``GET /flows/:flow_id/logs``."""
+    """Response shape for ``GET /flows/:flow_id/logs``.
+
+    ``logs`` spans the flow and all of its descendants (each entry tagged with
+    ``extra["flow_id"]``); ``children`` lists only the flow's direct children.
+    """
 
     run_path: str | None = None
     logs: list[LogEntry] = Field(default_factory=list)
@@ -93,6 +98,23 @@ class ScheduleConfig(BaseModel):
     days: list[int] | None = None
     times: list[str] | None = None
     run_at: datetime | None = None
+    timezone: str | None = None
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, v: str | None) -> str | None:
+        """Reject a timezone string ``ZoneInfo`` cannot construct.
+
+        :param v: IANA timezone name to validate, or ``None``.
+        :returns: the validated name unchanged, or ``None`` if not provided.
+        """
+        if v is None:
+            return v
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise ValueError(f"invalid timezone: {v!r}") from e
+        return v
 
     @field_validator("days")
     @classmethod
@@ -192,6 +214,20 @@ class CreateScheduleInput(BaseModel):
             if run_at <= now:
                 raise ValueError("once schedule run_at must be in the future")
         return self
+
+
+class ScheduleRunRecord(BaseModel):
+    """One durable record of a scheduler fire: when, outcome, and the flow id.
+
+    ``flow_id`` is nullable because a fire can fail before ``on_flow_started``
+    ever runs (e.g. a conduit read error), so there is no run to point at.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ran_at_iso: str
+    status: Literal["succeeded", "failed"]
+    flow_id: str | None = None
 
 
 class ScheduledJob(BaseModel):

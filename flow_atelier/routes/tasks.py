@@ -1,7 +1,7 @@
 """``/tasks/run`` REST route."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from flow_atelier.core.atelier import Atelier
 from flow_atelier.schemas.api import RunTaskInput, RunTaskOutput
@@ -20,4 +20,7 @@ async def run_task(
     :param atelier: injected :class:`Atelier` facade.
     :returns: the :class:`RunTaskOutput` result.
     """
-    return await atelier.run_single_task(payload)
+    try:
+        return await atelier.run_single_task(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e

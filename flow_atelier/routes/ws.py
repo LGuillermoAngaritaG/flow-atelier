@@ -14,7 +14,7 @@ from pydantic import TypeAdapter, ValidationError
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from flow_atelier.core.atelier import Atelier
-from flow_atelier.modules.engine import _current_flow_ctx, _current_task_ctx
+from flow_atelier.modules.engine import current_flow_id, current_task
 from flow_atelier.schemas.flow import new_flow_id, parse_flow_id
 from flow_atelier.schemas.log import TaskEvent
 from flow_atelier.schemas.progress import FlowStatus, TaskStatus
@@ -61,16 +61,19 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
     :param websocket: the incoming Starlette WebSocket connection.
     """
     base_atelier: Atelier = get_atelier(websocket)  # type: ignore[arg-type]
-    await websocket.accept()
 
     # Browser WebSockets cannot set headers, so the bearer token (when
-    # configured) is checked from the ?token= query parameter instead.
+    # configured) is checked from the ?token= query parameter instead. The
+    # check runs *before* accept() so an unauthenticated peer never completes
+    # the upgrade (Starlette turns a pre-accept close into an HTTP 403 denial).
     expected_token = getattr(websocket.app.state, "api_token", "")
     if expected_token and not secrets.compare_digest(
         websocket.query_params.get("token", ""), expected_token
     ):
         await websocket.close(code=1008, reason="invalid or missing API token")
         return
+
+    await websocket.accept()
 
     async def _send(payload: dict[str, Any]) -> None:
         """Send a JSON payload if the socket is still connected.
@@ -216,13 +219,13 @@ def _wire_atelier(
     def on_task_starting(name: str, tool: str) -> None:
         """Emit a step_status=running envelope when a task starts.
 
-        Reads ``_current_flow_ctx`` so nested conduit tasks are attributed
+        Reads ``current_flow_id()`` so nested conduit tasks are attributed
         to the child flow.
 
         :param name: task name entering the running state.
         :param tool: tool kind string for the task.
         """
-        fid = _current_flow_ctx.get(flow_id)
+        fid = current_flow_id(flow_id)
         _spawn(
             broker.send(
                 {
@@ -249,7 +252,7 @@ def _wire_atelier(
             cname, _, _ = parse_flow_id(child_flow_id)
         except ValueError:
             pass
-        parent_task = _current_task_ctx.get("") or None
+        parent_task = current_task("") or None
         _spawn(
             broker.send(
                 {

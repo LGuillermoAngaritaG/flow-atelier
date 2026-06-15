@@ -26,12 +26,13 @@ tasks:
 def init_cmd() -> None:
     """Scaffold ``.atelier/`` with a hello-world conduit; idempotent."""
     atelier_dir = Path.cwd() / ".atelier"
-    if atelier_dir.exists():
+    hello_dir = atelier_dir / "conduits" / "hello"
+    conduit_file = hello_dir / "conduit.yaml"
+    if conduit_file.exists():
         console.print("[yellow]atelier is already set up in this project[/yellow]")
         return
-    hello_dir = atelier_dir / "conduits" / "hello"
-    hello_dir.mkdir(parents=True)
-    (hello_dir / "conduit.yaml").write_text(HELLO_CONDUIT_YAML)
+    hello_dir.mkdir(parents=True, exist_ok=True)
+    conduit_file.write_text(HELLO_CONDUIT_YAML)
     console.print(
         f"[green]initialized[/green] {atelier_dir}\n"
         "try: [bold]atelier run hello --input name=world[/bold]"

@@ -50,19 +50,27 @@ def test_init_does_not_create_flows(fresh_cwd):
 
 
 def test_init_is_idempotent_when_atelier_exists(fresh_cwd):
-    """Verify `atelier init` is a no-op when `.atelier` already exists.
+    """Verify `atelier init` fills in the hello conduit when `.atelier` exists
+    for another reason, then is a no-op once the conduit is present.
 
     :param fresh_cwd: fresh working directory fixture.
     """
     (fresh_cwd / ".atelier").mkdir()
     (fresh_cwd / ".atelier" / "marker").write_text("keep me")
     runner = CliRunner()
-    result = runner.invoke(app, ["init"])
-    assert result.exit_code == 0
-    assert "already set up" in result.output.lower()
-    # nothing was touched
+    conduit_path = fresh_cwd / ".atelier" / "conduits" / "hello" / "conduit.yaml"
+
+    # First run: .atelier exists but the hello conduit doesn't — scaffold it,
+    # preserving unrelated content rather than bailing out.
+    first = runner.invoke(app, ["init"])
+    assert first.exit_code == 0
+    assert conduit_path.exists()
     assert (fresh_cwd / ".atelier" / "marker").read_text() == "keep me"
-    assert not (fresh_cwd / ".atelier" / "conduits").exists()
+
+    # Second run: the conduit now exists — a genuine no-op.
+    second = runner.invoke(app, ["init"])
+    assert second.exit_code == 0
+    assert "already set up" in second.output.lower()
 
 
 def test_init_does_not_touch_global(fresh_cwd, _isolate_global_atelier_dir):

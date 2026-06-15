@@ -4,10 +4,12 @@ from __future__ import annotations
 from acp.schema import (
     AgentMessageChunk,
     AgentThoughtChunk,
+    Cost,
     TextContentBlock,
     ToolCallLocation,
     ToolCallProgress,
     ToolCallStart,
+    UsageUpdate,
 )
 
 from flow_atelier.schemas.log import IntermediateStep, StepKind
@@ -102,6 +104,32 @@ class TestBufferingClientSteps:
         assert len(client.steps) == 1
         assert client.steps[0].text == "Let me think about this."
         assert len(sink.step_log) == 1
+
+    async def test_usage_update_captures_cost(self) -> None:
+        """A UsageUpdate notification stores the reported cumulative cost."""
+        sink = RecordingSink()
+        client = _BufferingClient(sink)
+        assert client.cost is None
+        await client.session_update(
+            "s1",
+            UsageUpdate(
+                sessionUpdate="usage_update",
+                cost=Cost(amount=0.42, currency="USD"),
+                size=0,
+                used=0,
+            ),
+        )
+        assert client.cost == 0.42
+
+    async def test_usage_update_without_cost_is_ignored(self) -> None:
+        """A UsageUpdate carrying no cost leaves client.cost untouched."""
+        sink = RecordingSink()
+        client = _BufferingClient(sink)
+        await client.session_update(
+            "s1",
+            UsageUpdate(sessionUpdate="usage_update", cost=None, size=0, used=0),
+        )
+        assert client.cost is None
 
     async def test_thinking_flushes_on_length(self) -> None:
         """Once the buffered thought text reaches the threshold the client

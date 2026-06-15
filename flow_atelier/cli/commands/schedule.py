@@ -6,13 +6,15 @@ import json
 from pathlib import Path
 
 import typer
+from rich.markup import escape
+from rich.table import Table
 
-from flow_atelier.cli._shared import _schedule_store, console
+from flow_atelier.cli._shared import _format_clock, _schedule_store, console
 from flow_atelier.cli.main import schedule_app
 from flow_atelier.cli.rendering.render import (
-    _render_planned_table,
-    _render_run_footer,
-    _render_task_event,
+    render_planned_table,
+    render_run_footer,
+    render_task_event,
 )
 from flow_atelier.core.atelier import Atelier
 from flow_atelier.schemas.api import CreateScheduleInput
@@ -113,6 +115,9 @@ def schedule_list_cmd(
                     "next_fire_time": (
                         p.next_fire_time.isoformat() if p.next_fire_time else None
                     ),
+                    "last_run": (
+                        p.last_run.model_dump(mode="json") if p.last_run else None
+                    ),
                     "working_dir": str(p.working_dir),
                 }
                 for p in planned
@@ -125,7 +130,7 @@ def schedule_list_cmd(
         console.print("[yellow]no schedules found[/yellow]")
         return
 
-    console.print(_render_planned_table(planned))
+    console.print(render_planned_table(planned))
 
 
 @schedule_app.command("remove", help="Delete a schedule by id or name (hard delete).")
@@ -143,6 +148,57 @@ def schedule_remove_cmd(
         raise typer.Exit(code=1)
     store.delete(job.id)
     console.print(f"[green]removed[/green] {job.id}")
+
+
+@schedule_app.command(
+    "history",
+    help="Show a schedule's recorded run history (newest first).",
+)
+def schedule_history_cmd(
+    ref: str = typer.Argument(..., help="Schedule id or schedule.name."),
+    json_mode: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON instead of a table."
+    ),
+) -> None:
+    """List the recorded fires for a schedule, newest first.
+
+    Each record carries the flow id verbatim — the same id ``atelier logs
+    <id>`` and ``atelier run --resume <id>`` accept — so a failed overnight
+    run leads straight to its logs.
+
+    :param ref: schedule id or ``schedule.name`` to inspect.
+    :param json_mode: when true, emit machine-readable JSON instead of a table.
+    """
+    store = _schedule_store()
+    job = _resolve_schedule(store, ref)
+    if job is None:
+        console.print(f"[red]schedule not found:[/red] {ref}")
+        raise typer.Exit(code=1)
+
+    records = list(reversed(store.run_history(job.id)))
+
+    if json_mode:
+        payload = {
+            "id": job.id,
+            "name": job.schedule.name,
+            "runs": [r.model_dump(mode="json") for r in records],
+        }
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    if not records:
+        console.print("[yellow]no recorded runs yet[/yellow]")
+        return
+
+    table = Table("ran at", "status", "flow_id")
+    for r in records:
+        status = (
+            "[green]ok[/green]"
+            if r.status == "succeeded"
+            else "[red]FAILED[/red]"
+        )
+        table.add_row(_format_clock(r.ran_at_iso), status, r.flow_id or "—")
+    console.print(table)
 
 
 @schedule_app.command(
@@ -176,7 +232,7 @@ def schedule_run_now_cmd(
         :param event: the emitted task event to record and display.
         """
         collected_events.append(event)
-        _render_task_event(event, console)
+        render_task_event(event, console)
 
     captured: dict[str, str | None] = {"id": None}
 
@@ -197,10 +253,10 @@ def schedule_run_now_cmd(
             )
         )
     except Exception as e:  # noqa: BLE001
-        _render_run_footer(collected_events, console)
-        console.print(f"[red]flow failed:[/red] {e}")
+        render_run_footer(collected_events, console)
+        console.print(f"[red]flow failed:[/red] {escape(str(e))}")
         if captured["id"]:
             console.print(f"[red]flow_id:[/red] {captured['id']}")
         raise typer.Exit(code=1)
-    _render_run_footer(collected_events, console)
+    render_run_footer(collected_events, console)
     console.print(f"[green]flow_id:[/green] {flow_id}")

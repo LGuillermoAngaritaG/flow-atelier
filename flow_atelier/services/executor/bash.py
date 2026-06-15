@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 
 from flow_atelier.schemas.conduit import TaskDefinition
 from flow_atelier.schemas.log import ExecutionResult
@@ -17,6 +19,29 @@ class BashExecutor(ExecutorBase):
     answer) can inject shell metacharacters into an author's command. Authors
     should quote interpolations they don't control (e.g. ``"{{inputs.x}}"``).
     """
+
+    @staticmethod
+    def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+        """SIGKILL the whole process group led by ``proc``.
+
+        Because the shell was started with ``start_new_session=True`` it leads
+        its own group, so killing the group also kills the build/server/etc. it
+        spawned — closing the orphaned-grandchild gap a bare ``proc.kill()``
+        leaves. Falls back to killing just the shell if the group can't be
+        resolved (already reaped) or signalled (race/permission), or on Windows
+        where ``os.getpgid``/``os.killpg`` do not exist (AttributeError).
+
+        :param proc: the shell subprocess to terminate together with its group.
+        """
+        if proc.pid is None:
+            return
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, AttributeError):
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
 
     async def execute(
         self,
@@ -36,11 +61,14 @@ class BashExecutor(ExecutorBase):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(context.working_dir) if context.working_dir else None,
+            # Own session/group: lets a timeout kill the shell *and* every
+            # descendant it spawned (see _kill_process_group), instead of
+            # leaving runaway grandchildren alive after the task gives up.
+            start_new_session=True,
         )
         # Streams are pumped incrementally (not via communicate()) so a
         # timeout can kill the process and still keep the partial output:
-        # cancelling communicate() discards data it already buffered, and
-        # orphaned grandchildren can hold the pipes open past the kill.
+        # cancelling communicate() discards data it already buffered.
         stdout_buf = bytearray()
         stderr_buf = bytearray()
 
@@ -55,10 +83,11 @@ class BashExecutor(ExecutorBase):
         try:
             await asyncio.wait_for(proc.wait(), timeout=context.timeout)
         except TimeoutError:
-            proc.kill()
+            self._kill_process_group(proc)
             # No proc.wait() here: its waiter only wakes once all pipes
-            # close, and an orphaned grandchild can hold them open long
-            # after the kill. The loop's child watcher reaps the shell.
+            # close, and a grandchild that survived the group kill (e.g. one
+            # that escaped into its own session) could hold them open. The
+            # loop's child watcher reaps the shell.
             await asyncio.wait(pumps, timeout=0.5)
             for p in pumps:
                 p.cancel()

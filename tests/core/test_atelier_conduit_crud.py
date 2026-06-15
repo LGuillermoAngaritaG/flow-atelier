@@ -12,6 +12,21 @@ from flow_atelier.core.settings import AtelierSettings
 from flow_atelier.schemas.api import CreateConduitInput, UpdateConduitInput
 
 
+def _seed_run_path(atelier: Atelier, conduit_name: str, run_path: Path) -> str:
+    """Create a flow and record ``run_path`` on its progress (its real home).
+
+    :param atelier: Atelier facade fixture.
+    :param conduit_name: conduit to attribute the flow to.
+    :param run_path: run directory to record so the opener accepts it.
+    :returns: the created flow id.
+    """
+    fid = atelier.store.create_flow(conduit_name, {})
+    progress = atelier.store.read_progress(fid)
+    progress.run_path = str(run_path)
+    atelier.store.write_progress(fid, progress)
+    return fid
+
+
 def _payload(name: str = "release_notes", description: str = "Release notes"):
     """Build a minimal CreateConduitInput payload for tests.
 
@@ -103,6 +118,34 @@ def test_update_conduit_unknown_raises_not_found(atelier):
         )
 
 
+def test_update_conduit_rename_to_existing_is_rejected(atelier):
+    """Renaming a conduit onto an existing name must not clobber it.
+
+    :param atelier: Atelier facade fixture.
+    """
+    atelier.create_conduit(_payload(name="conduit_a", description="A"))
+    atelier.create_conduit(_payload(name="conduit_b", description="B"))
+    with pytest.raises(FileExistsError):
+        atelier.update_conduit(
+            "conduit_a", UpdateConduitInput(name="conduit_b")
+        )
+    # B is untouched and A still exists.
+    assert atelier.store.read_conduit("conduit_b").description == "B"
+    assert sorted(atelier.list_conduits()) == ["conduit_a", "conduit_b"]
+
+
+def test_create_conduit_rejects_global_shadow(atelier):
+    """Creating a project conduit whose name exists only globally is refused.
+
+    :param atelier: Atelier facade fixture.
+    """
+    conduit = atelier.create_conduit(_payload(name="shared"))
+    atelier.store.write_conduit_global(conduit)
+    atelier.delete_conduit("shared")  # leave it only in the global store
+    with pytest.raises(FileExistsError):
+        atelier.create_conduit(_payload(name="shared"))
+
+
 # ----------------------------------------------------------- delete
 
 
@@ -136,7 +179,7 @@ def test_open_conduit_path_invokes_platform_opener(tmp_path, atelier):
     atelier.create_conduit(_payload())
     run_path = tmp_path / "runs"
     run_path.mkdir()
-    atelier.store.create_flow("release_notes", {"run_path": str(run_path)})
+    _seed_run_path(atelier, "release_notes", run_path)
     with patch("subprocess.Popen") as popen:
         popen.return_value.poll.return_value = None
         ok = atelier.open_conduit_path(str(run_path))
@@ -157,7 +200,7 @@ def test_open_conduit_path_returns_false_on_failure(tmp_path, atelier):
     :param atelier: Atelier facade fixture.
     """
     atelier.create_conduit(_payload())
-    atelier.store.create_flow("release_notes", {"run_path": str(tmp_path)})
+    _seed_run_path(atelier, "release_notes", tmp_path)
     with patch("subprocess.Popen", side_effect=FileNotFoundError("no opener")):
         ok = atelier.open_conduit_path(str(tmp_path))
     assert ok is False

@@ -25,11 +25,41 @@ from typing import Any
 
 import yaml
 
-from flow_atelier.schemas.api import CreateScheduleInput, ScheduledJob
+from flow_atelier.schemas.api import (
+    CreateScheduleInput,
+    ScheduledJob,
+    ScheduleRunRecord,
+)
+from flow_atelier.services.scheduler.triggers import default_local_zone
 
 logger = logging.getLogger(__name__)
 
 _SLUG_RE = re.compile(r"[^a-z0-9._-]+")
+
+
+def _atomic_replace(src: Path, dst: Path) -> None:
+    """``os.replace(src, dst)`` with retries for transient Windows contention.
+
+    On Windows, replacing a file while another thread or process holds it open
+    (a concurrent reader, or another replace) raises ``PermissionError``
+    (ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION). The competing handle is
+    short-lived, so a brief backoff-and-retry lets the replace land. POSIX
+    renames over an open file and never raises this, so the loop succeeds on
+    the first attempt there.
+    """
+    delay = 0.005
+    for _ in range(10):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            time.sleep(delay)
+            delay = min(delay * 2, 0.1)
+    os.replace(src, dst)  # final attempt; surface the error if it still fails
+
+# Cap the per-schedule run history so the flagship perpetual day/night loop
+# can't grow scheduler_state.json without bound.
+_MAX_HISTORY = 50
 
 
 def _slug(name: str) -> str:
@@ -131,7 +161,7 @@ class ScheduleStore:
         payload = job.model_dump(mode="json", exclude_none=True)
         tmp = path.with_suffix(f".yaml.tmp.{uuid.uuid4().hex}")
         tmp.write_text(yaml.safe_dump(payload, sort_keys=False))
-        os.replace(tmp, path)
+        _atomic_replace(tmp, path)
 
     def _iter_jobs(self) -> list[ScheduledJob]:
         """Return every persisted schedule, sorted by ``created_at`` ascending."""
@@ -188,12 +218,19 @@ class ScheduleStore:
             raise FileExistsError(
                 f"schedule already exists for name {name!r} ({path.name})"
             )
+        # Pin the host's current zone when the caller named none, so a later
+        # host-timezone change can't silently shift this schedule's fire times.
+        schedule = payload.schedule
+        if schedule.timezone is None:
+            schedule = schedule.model_copy(
+                update={"timezone": default_local_zone().key}
+            )
         job = ScheduledJob(
             id=f"SCH-{uuid.uuid4().hex[:12]}",
             conduit_name=payload.conduit_name,
             inputs=dict(payload.inputs),
             run_path=payload.run_path,
-            schedule=payload.schedule,
+            schedule=schedule,
             created_at=int(time.time() * 1000),
             runs_completed=0,
         )
@@ -239,9 +276,24 @@ class ScheduleStore:
         """Load the ``scheduler_state.json`` payload, returning a safe default."""
         if not self.state_path.exists():
             return {"schedules": {}}
+        # Retry transient OSErrors: on Windows a concurrent replace briefly
+        # locks the file (ERROR_SHARING_VIOLATION). Returning the empty default
+        # on such a blip would make the caller's read-modify-write clobber live
+        # markers, so wait for the writer's short-lived handle to clear first.
+        text: str | None = None
+        delay = 0.005
+        for _ in range(10):
+            try:
+                text = self.state_path.read_text()
+                break
+            except OSError:
+                time.sleep(delay)
+                delay = min(delay * 2, 0.1)
+        if text is None:
+            return {"schedules": {}}
         try:
-            data = json.loads(self.state_path.read_text())
-        except (json.JSONDecodeError, OSError):
+            data = json.loads(text)
+        except json.JSONDecodeError:
             return {"schedules": {}}
         if not isinstance(data, dict) or "schedules" not in data:
             return {"schedules": {}}
@@ -252,9 +304,9 @@ class ScheduleStore:
 
         :param data: full state payload to persist
         """
-        tmp = self.state_path.with_suffix(".json.tmp")
+        tmp = self.state_path.with_suffix(f".json.tmp.{uuid.uuid4().hex}")
         tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
-        os.replace(tmp, self.state_path)
+        _atomic_replace(tmp, self.state_path)
 
     def fired_at(self, schedule_id: str) -> str | None:
         """Return the ISO timestamp recorded for the last fire, or ``None``.
@@ -281,11 +333,19 @@ class ScheduleStore:
                 datetime.now(UTC).isoformat().replace("+00:00", "Z")
             )
         data = self._read_state()
-        data["schedules"][schedule_id] = {"fired_at_iso": scheduled_at_iso}
+        entry = data["schedules"].get(schedule_id)
+        if not isinstance(entry, dict):
+            entry = {}
+        # Merge rather than overwrite so an existing ``runs`` history survives.
+        entry["fired_at_iso"] = scheduled_at_iso
+        data["schedules"][schedule_id] = entry
         self._write_state(data)
 
     def clear_fired(self, schedule_id: str) -> None:
         """Drop the fired-once marker for ``schedule_id`` if present.
+
+        Deleting a schedule drops its entire state entry — including run
+        history — which is the intended behaviour.
 
         :param schedule_id: schedule identifier
         """
@@ -293,3 +353,66 @@ class ScheduleStore:
         if schedule_id in data["schedules"]:
             del data["schedules"][schedule_id]
             self._write_state(data)
+
+    # --------------------------------------------------------------- run history
+
+    def append_run_record(
+        self, schedule_id: str, status: str, flow_id: str | None
+    ) -> None:
+        """Append one fire outcome to ``schedule_id``'s bounded run history.
+
+        History lives under the schedule's per-id state entry as a ``runs``
+        list (newest-last), trimmed to the last ``_MAX_HISTORY`` records.
+
+        :param schedule_id: schedule identifier
+        :param status: ``"succeeded"`` or ``"failed"``
+        :param flow_id: flow id produced by the fire, or ``None`` if it failed
+            before the run started
+        """
+        from datetime import datetime
+
+        ran_at_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        data = self._read_state()
+        entry = data["schedules"].get(schedule_id)
+        if not isinstance(entry, dict):
+            entry = {}
+        runs = entry.get("runs")
+        if not isinstance(runs, list):
+            runs = []
+        runs.append(
+            {"ran_at_iso": ran_at_iso, "status": status, "flow_id": flow_id}
+        )
+        entry["runs"] = runs[-_MAX_HISTORY:]
+        data["schedules"][schedule_id] = entry
+        self._write_state(data)
+
+    def run_history(self, schedule_id: str) -> list[ScheduleRunRecord]:
+        """Return ``schedule_id``'s recorded fires, oldest-first.
+
+        Malformed entries are skipped, mirroring the defensive ``_read_state``
+        style.
+
+        :param schedule_id: schedule identifier
+        """
+        data = self._read_state()
+        entry = data["schedules"].get(schedule_id)
+        if not isinstance(entry, dict):
+            return []
+        raw = entry.get("runs")
+        if not isinstance(raw, list):
+            return []
+        records: list[ScheduleRunRecord] = []
+        for item in raw:
+            try:
+                records.append(ScheduleRunRecord.model_validate(item))
+            except Exception:  # noqa: BLE001 — skip malformed rows
+                continue
+        return records
+
+    def last_run(self, schedule_id: str) -> ScheduleRunRecord | None:
+        """Return the most recent recorded fire, or ``None`` if no history.
+
+        :param schedule_id: schedule identifier
+        """
+        history = self.run_history(schedule_id)
+        return history[-1] if history else None

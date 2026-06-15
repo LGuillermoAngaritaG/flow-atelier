@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TextIO, runtime_checkable
 
 from rich.console import Console
+from rich.markup import escape
 
 if TYPE_CHECKING:
     from flow_atelier.schemas.log import IntermediateStep
@@ -164,14 +165,14 @@ class TerminalPromptSink:
             "[bold green]👤 you[/bold green]", align="left", style="green"
         )
         if prompt and prompt.strip():
-            self._console.print(f"[dim]{prompt.strip()}[/dim]")
+            self._console.print(f"[dim]{escape(prompt.strip())}[/dim]")
         if sys.stdin.isatty():
             from flow_atelier.cli.rendering.multiline_input import multiline_input
 
             answer = await multiline_input("› ", hint="Alt+Enter to submit")
         else:
             answer = await asyncio.to_thread(builtins.input)
-            self._console.print(f"[green]›[/green] {answer}")
+            self._console.print(f"[green]›[/green] {escape(answer)}")
         return answer
 
     async def display_step(self, step: IntermediateStep) -> None:
@@ -199,9 +200,9 @@ class TerminalPromptSink:
             align="left",
             style="yellow",
         )
-        self._console.print(summary)
+        self._console.print(escape(summary))
         for idx, opt in enumerate(options, start=1):
-            self._console.print(f"  [bold]{idx})[/bold] {opt.label}")
+            self._console.print(f"  [bold]{idx})[/bold] {escape(opt.label)}")
 
         while True:
             raw = await asyncio.to_thread(

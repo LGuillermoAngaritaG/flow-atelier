@@ -25,21 +25,11 @@ inputs:
       Project must have been untouched (no git commit or file edit under
       `location`) for at least this many hours.
     default: "2"
-  max_pending_review:
-    description: >-
-      Pause to-do execution (not idea/review generation) once a project's
-      pending-review/ folder has at least this many task files.
-    default: "10"
   token_limit:
     description: >-
       Token ceiling used to compute usage %. Approximate your 5h Claude Code
       session quota.
     default: "19000000"
-  max_ideas:
-    description: >-
-      Stop generating ideas/reviews for a project once its ideas/ folder already
-      holds this many idea (resp. review) documents.
-    default: "20"
 
 tasks:
   - pick_project:
@@ -81,18 +71,36 @@ tasks:
         set -eu
         printf '%s' "$(printf '%s' '{{pick_project.output}}' | sed -n 's/^LOCATION:[[:space:]]*//p')"
 
+  - resolve_max_ideas:
+      description: Read the project's max_ideas cap (ideation gate) from the picker output.
+      tool: tool:bash
+      depends_on:
+        - "pick_project.output.match(^READY: )"
+      task: |
+        set -eu
+        printf '%s' "$(printf '%s' '{{pick_project.output}}' | sed -n 's/^MAX_IDEAS:[[:space:]]*//p')"
+
+  - resolve_max_pending_review:
+      description: Read the project's max_pending_review cap (development gate) from the picker output.
+      tool: tool:bash
+      depends_on:
+        - "pick_project.output.match(^READY: )"
+      task: |
+        set -eu
+        printf '%s' "$(printf '%s' '{{pick_project.output}}' | sed -n 's/^MAX_PENDING_REVIEW:[[:space:]]*//p')"
+
   - gen_gate:
       description: Allow idea/review generation only while under the combined max_ideas cap.
       tool: tool:bash
-      depends_on: [resolve_name]
+      depends_on: [resolve_name, resolve_max_ideas]
       task: |
         set -eu
         dir="{{inputs.projects_dir}}/tasks/{{resolve_name.output}}/ideas"
         count="$(find "$dir" -maxdepth 1 \( -name 'idea_*.md' -o -name 'review_*.md' \) 2>/dev/null | wc -l | tr -d ' ')"
-        if [ "$count" -lt "{{inputs.max_ideas}}" ]; then
-          echo "GEN: yes ($count idea+review docs < {{inputs.max_ideas}})"
+        if [ "$count" -lt "{{resolve_max_ideas.output}}" ]; then
+          echo "GEN: yes ($count idea+review docs < {{resolve_max_ideas.output}})"
         else
-          echo "GEN: skip ($count idea+review docs >= {{inputs.max_ideas}})"
+          echo "GEN: skip ($count idea+review docs >= {{resolve_max_ideas.output}})"
         fi
 
   - generate_idea:
@@ -145,15 +153,15 @@ tasks:
   - pr_gate:
       description: Pause to-do execution once pending-review/ is full (does not gate generation).
       tool: tool:bash
-      depends_on: [resolve_name]
+      depends_on: [resolve_name, resolve_max_pending_review]
       task: |
         set -eu
         dir="{{inputs.projects_dir}}/tasks/{{resolve_name.output}}/pending-review"
         count="$(find "$dir" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
-        if [ "$count" -lt "{{inputs.max_pending_review}}" ]; then
-          echo "PR: ok ($count pending-review < {{inputs.max_pending_review}})"
+        if [ "$count" -lt "{{resolve_max_pending_review.output}}" ]; then
+          echo "PR: ok ($count pending-review < {{resolve_max_pending_review.output}})"
         else
-          echo "PR: full ($count pending-review >= {{inputs.max_pending_review}})"
+          echo "PR: full ($count pending-review >= {{resolve_max_pending_review.output}})"
         fi
 
   - work_task:
@@ -202,7 +210,17 @@ tasks:
           6. cd into the project's `location` directory from the frontmatter.
           7. Do the work. Respect `use_git`: if true, commit changes with a clear message;
              if false, just edit files.
-          8. When finished, update the task file: fill in the frontmatter (`datetime`
+          8. Validation gate (mandatory before moving the task): run the project's FULL
+             automated test suite (e.g. `uv run pytest`), not only the tests you added.
+             Record the exact pass/fail counts in `# Validation process`. The suite MUST be
+             green before you move the task. If it is red, fix the regression or revert your
+             change — never move a task that leaves tests failing. Do NOT dismiss failures as
+             "pre-existing" unless you have proven it against the committed baseline: `git
+             stash` does NOT revert committed code, so it cannot establish a baseline. To
+             check, compare against HEAD before your own commits (e.g. `git stash` is invalid
+             here; use `git checkout <pre-work-commit> -- . ` in a scratch worktree, or run
+             the suite on a clean clone) — when unsure, assume the failure is yours.
+          9. When finished, update the task file: fill in the frontmatter (`datetime`
              — the completion date AND time, e.g. the output of
              `date '+%Y-%m-%d %H:%M:%S %Z'`; `location` (local path or PR URL);
              `commits`) and the `# Validation process` section describing how you verified

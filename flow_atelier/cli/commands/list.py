@@ -86,7 +86,7 @@ def list_conduits_cmd(
             tasks_cell = "?"
             inputs_cell = "?"
         else:
-            description_cell = str(r["description"])
+            description_cell = escape(str(r["description"]))
             tasks_cell = str(r["tasks"])
             inputs_cell = str(r["inputs"])
         table.add_row(
