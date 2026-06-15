@@ -1,6 +1,7 @@
 """Tests for flow_atelier.cli.updater — all network calls are mocked."""
 from __future__ import annotations
 
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -159,6 +160,11 @@ def _stage_pending(mod, binary, asset_name):
         mod._pending_asset_name = asset_name
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX executable-bit semantics; on Windows executability is "
+    "extension-based and os.chmod cannot set S_IXUSR.",
+)
 def test_do_swap_preserves_executable_bit(tmp_path, monkeypatch):
     """A swapped-in binary must remain executable, not inherit 0600."""
     import os
