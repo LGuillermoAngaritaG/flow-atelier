@@ -36,6 +36,27 @@ logger = logging.getLogger(__name__)
 
 _SLUG_RE = re.compile(r"[^a-z0-9._-]+")
 
+
+def _atomic_replace(src: Path, dst: Path) -> None:
+    """``os.replace(src, dst)`` with retries for transient Windows contention.
+
+    On Windows, replacing a file while another thread or process holds it open
+    (a concurrent reader, or another replace) raises ``PermissionError``
+    (ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION). The competing handle is
+    short-lived, so a brief backoff-and-retry lets the replace land. POSIX
+    renames over an open file and never raises this, so the loop succeeds on
+    the first attempt there.
+    """
+    delay = 0.005
+    for _ in range(10):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            time.sleep(delay)
+            delay = min(delay * 2, 0.1)
+    os.replace(src, dst)  # final attempt; surface the error if it still fails
+
 # Cap the per-schedule run history so the flagship perpetual day/night loop
 # can't grow scheduler_state.json without bound.
 _MAX_HISTORY = 50
@@ -140,7 +161,7 @@ class ScheduleStore:
         payload = job.model_dump(mode="json", exclude_none=True)
         tmp = path.with_suffix(f".yaml.tmp.{uuid.uuid4().hex}")
         tmp.write_text(yaml.safe_dump(payload, sort_keys=False))
-        os.replace(tmp, path)
+        _atomic_replace(tmp, path)
 
     def _iter_jobs(self) -> list[ScheduledJob]:
         """Return every persisted schedule, sorted by ``created_at`` ascending."""
@@ -255,9 +276,24 @@ class ScheduleStore:
         """Load the ``scheduler_state.json`` payload, returning a safe default."""
         if not self.state_path.exists():
             return {"schedules": {}}
+        # Retry transient OSErrors: on Windows a concurrent replace briefly
+        # locks the file (ERROR_SHARING_VIOLATION). Returning the empty default
+        # on such a blip would make the caller's read-modify-write clobber live
+        # markers, so wait for the writer's short-lived handle to clear first.
+        text: str | None = None
+        delay = 0.005
+        for _ in range(10):
+            try:
+                text = self.state_path.read_text()
+                break
+            except OSError:
+                time.sleep(delay)
+                delay = min(delay * 2, 0.1)
+        if text is None:
+            return {"schedules": {}}
         try:
-            data = json.loads(self.state_path.read_text())
-        except (json.JSONDecodeError, OSError):
+            data = json.loads(text)
+        except json.JSONDecodeError:
             return {"schedules": {}}
         if not isinstance(data, dict) or "schedules" not in data:
             return {"schedules": {}}
@@ -270,7 +306,7 @@ class ScheduleStore:
         """
         tmp = self.state_path.with_suffix(f".json.tmp.{uuid.uuid4().hex}")
         tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
-        os.replace(tmp, self.state_path)
+        _atomic_replace(tmp, self.state_path)
 
     def fired_at(self, schedule_id: str) -> str | None:
         """Return the ISO timestamp recorded for the last fire, or ``None``.
