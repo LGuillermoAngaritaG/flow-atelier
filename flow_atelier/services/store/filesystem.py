@@ -234,6 +234,21 @@ class FilesystemStore(StoreBase):
         tmp.write_text(yaml.safe_dump(payload, sort_keys=False))
         _atomic_replace(tmp, path)
 
+    def conduit_dir(self, name: str) -> Path:
+        """Return the directory conduit ``name`` loads from (project then global).
+
+        :param name: conduit name
+        :raises FileNotFoundError: if not found in either store
+        """
+        project_dir = self._conduit_dir(name)
+        if self._conduit_yaml(name).exists():
+            return project_dir
+        global_dir = self._global_conduit_dir(name)
+        global_yaml = self._global_conduit_yaml(name)
+        if global_dir is not None and global_yaml is not None and global_yaml.exists():
+            return global_dir
+        raise FileNotFoundError(f"conduit not found: {name}")
+
     def conduit_source(self, name: str) -> ConduitSource:
         """Return whether ``name`` lives in the project or global store.
 

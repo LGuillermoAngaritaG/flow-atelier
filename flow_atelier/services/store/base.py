@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Literal
 
 from flow_atelier.schemas.conduit import Conduit
@@ -31,6 +32,15 @@ class StoreBase(ABC):
     @abstractmethod
     def list_conduits_with_source(self) -> list[tuple[str, ConduitSource]]:
         """Return ``(name, source)`` pairs. Project shadows global on collision."""
+        ...
+
+    @abstractmethod
+    def conduit_dir(self, name: str) -> Path:
+        """Return the directory conduit ``name`` loads from (project then global).
+
+        :param name: conduit name
+        :raises FileNotFoundError: if not found in either store
+        """
         ...
 
     @abstractmethod
