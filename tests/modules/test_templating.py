@@ -1,4 +1,6 @@
 """Templating unit tests."""
+from pathlib import Path
+
 import pytest
 
 from flow_atelier.modules.templating import (
@@ -155,6 +157,25 @@ def test_resolve_loop_history_entry_chars_zero_unlimited():
         loop_history=[big], loop_history_entry_chars=0,
     )
     assert big in out
+
+
+def test_resolve_conduit_dir_substitutes_absolute_path():
+    """Verify {{conduit_dir}} resolves to the supplied dir's absolute string."""
+    base = Path("/a/b")
+    out = resolve("{{conduit_dir}}/x", {}, {}, conduit_dir=base)
+    assert out == f"{base}/x"
+
+
+def test_resolve_conduit_dir_none_falls_through_to_unknown():
+    """Verify {{conduit_dir}} raises TemplateError when no conduit_dir given."""
+    with pytest.raises(TemplateError):
+        resolve("{{conduit_dir}}", {}, {})
+
+
+def test_extract_template_refs_classifies_conduit_dir():
+    """Verify {{conduit_dir}} is classified as a known 'conduit_dir' kind."""
+    refs = extract_template_refs("{{conduit_dir}}")
+    assert refs == [TemplateRef("conduit_dir", "conduit_dir", "conduit_dir")]
 
 
 def test_extract_task_refs_finds_output_refs():

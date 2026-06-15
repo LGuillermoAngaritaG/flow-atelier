@@ -352,6 +352,42 @@ async def test_supplied_input_overrides_default(store):
     assert fake.cmd == "echo override"
 
 
+async def test_conduit_dir_in_task_template_resolves(store):
+    """Verify {{conduit_dir}} in a task resolves to the conduit's install dir.
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [{"name": "a", "description": "d", "task": "echo {{conduit_dir}}/x",
+          "tool": "tool:bash", "depends_on": []}],
+    )
+    store.write_conduit(conduit)
+    fake = _Capturing()
+    engine = Engine({"tool:bash": fake}, store)
+    await engine.run(conduit, {})
+    assert fake.cmd == f"echo {store.conduit_dir('test')}/x"
+
+
+async def test_conduit_dir_default_resolves_at_apply_time(store):
+    """Verify a default of {{conduit_dir}} resolves to the install dir.
+
+    Defaults bypass resolve(), so the engine must substitute {{conduit_dir}}
+    when applying the default value (D5).
+
+    :param store: FilesystemStore fixture.
+    """
+    conduit = _conduit(
+        [{"name": "a", "description": "d", "task": "echo {{inputs.dir}}",
+          "tool": "tool:bash", "depends_on": []}],
+        inputs={"dir": {"description": "d", "default": "{{conduit_dir}}"}},
+    )
+    store.write_conduit(conduit)
+    fake = _Capturing()
+    engine = Engine({"tool:bash": fake}, store)
+    await engine.run(conduit, {})
+    assert fake.cmd == f"echo {store.conduit_dir('test')}"
+
+
 async def test_required_input_still_raises_when_others_defaulted(store):
     """Verify defaults don't excuse a sibling input that has no default.
 

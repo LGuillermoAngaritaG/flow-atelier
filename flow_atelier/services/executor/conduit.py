@@ -44,6 +44,7 @@ class ConduitExecutor(ExecutorBase):
                     loop_history=context.loop_history,
                     loop_history_limit=context.loop_history_limit,
                     loop_history_entry_chars=context.loop_history_entry_chars,
+                    conduit_dir=context.conduit_dir,
                 )
             else:
                 child_inputs[key] = raw

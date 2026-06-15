@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -41,6 +42,18 @@ from flow_atelier.services.executor.harness import (
 )
 from flow_atelier.services.executor.hitl import HitlExecutor
 from flow_atelier.services.executor.prompt_sink import PromptSink, TerminalPromptSink
+from flow_atelier.services.package import (
+    InstallReport,
+    PackageError,
+    RemoveReport,
+    delete_lockfile_entry,
+    fetch_source,
+    install_package,
+    read_lockfile,
+    read_package,
+    resolve_source,
+    write_lockfile,
+)
 from flow_atelier.services.scheduler.store import ScheduleStore
 from flow_atelier.services.store.filesystem import FilesystemStore
 
@@ -427,6 +440,146 @@ class Atelier:
         :returns: True if it existed and was deleted, False otherwise
         """
         return self.store.delete_flow(flow_id)
+
+    # ------------------------------------------------------------------ packages
+
+    def _skill_roots(self, skill_roots: list[Path] | None) -> list[Path]:
+        """Resolve the skill destination roots, defaulting to user level.
+
+        Two unconditional writes (``~/.claude/skills`` and ``~/.agents/skills``)
+        cover all five supported harnesses (D4).
+
+        :param skill_roots: explicit roots (tests inject a fake HOME); when
+            ``None``, the user-level defaults are used.
+        """
+        if skill_roots is not None:
+            return skill_roots
+        home = Path.home()
+        return [home / ".claude" / "skills", home / ".agents" / "skills"]
+
+    def _lockfile_path(self) -> Path:
+        """Return the install lockfile path under the global atelier dir."""
+        return self.settings.global_atelier_dir / "installed.json"
+
+    def install_package(
+        self,
+        source: str,
+        *,
+        ref: str | None = None,
+        project: bool = False,
+        force: bool = False,
+        skill_roots: list[Path] | None = None,
+    ) -> InstallReport:
+        """Fetch a package and install its conduits + skills, then lock it.
+
+        :param source: git URL, ``owner/repo``, or local path.
+        :param ref: optional git ref to check out.
+        :param project: install conduits into the project store instead of global.
+        :param force: overwrite colliding conduits/skills.
+        :param skill_roots: explicit skill destination roots (tests inject a
+            fake HOME); defaults to the user-level dirs.
+        :returns: an :class:`InstallReport` of what was installed/skipped.
+        """
+        src = resolve_source(source)
+        cache_root = self.settings.global_atelier_dir / "cache"
+        repo_dir = fetch_source(src, cache_root, ref)
+        manifest = read_package(repo_dir)
+        conduit_base = (
+            self.settings.atelier_dir if project else self.settings.global_atelier_dir
+        )
+        conduit_root = conduit_base / "conduits"
+        roots = self._skill_roots(skill_roots)
+        report = install_package(
+            repo_dir, manifest,
+            conduit_root=conduit_root, skill_roots=roots,
+            scope="project" if project else "global", force=force,
+        )
+        write_lockfile(
+            self._lockfile_path(),
+            manifest.name,
+            {
+                "source": src.location,
+                "ref": ref or "",
+                "conduits": report.conduits_installed,
+                "skills": report.skills_installed,
+                "skill_dirs": [str(r) for r in roots],
+                "scope": report.scope,
+            },
+        )
+        return report
+
+    def update_package(self, name: str, *, force: bool = False) -> InstallReport:
+        """Re-fetch and re-install a package from its recorded source.
+
+        Reuses the recorded source/ref/scope/skill dirs so a user's hand-made
+        schedule survives (D7). Without ``--force``, items already present
+        skip-and-warn but stay package-owned (their lockfile ownership is
+        preserved across the update).
+
+        :param name: installed package name (lockfile key).
+        :param force: overwrite existing conduits/skills.
+        :raises PackageError: if no package by that name is installed.
+        """
+        entry = read_lockfile(self._lockfile_path()).get(name)
+        if entry is None:
+            raise PackageError(
+                f"package not installed: {name} (install it with `atelier add`)"
+            )
+        recorded_roots = [Path(r) for r in entry.get("skill_dirs", [])]
+        report = self.install_package(
+            entry["source"],
+            ref=entry.get("ref") or None,
+            project=entry.get("scope") == "project",
+            force=force,
+            skill_roots=recorded_roots or None,
+        )
+        # install_package wrote the lockfile with only what it (re)installed;
+        # union with prior ownership so skipped-but-owned items aren't dropped.
+        merged_conduits = sorted(
+            set(entry.get("conduits", [])) | set(report.conduits_installed)
+        )
+        merged_skills = sorted(
+            set(entry.get("skills", [])) | set(report.skills_installed)
+        )
+        new_entry = read_lockfile(self._lockfile_path()).get(name, {})
+        new_entry["conduits"] = merged_conduits
+        new_entry["skills"] = merged_skills
+        write_lockfile(self._lockfile_path(), name, new_entry)
+        return report
+
+    def remove_package(self, name: str) -> RemoveReport:
+        """Delete exactly the conduit and skill dirs a package installed.
+
+        Only lockfile-owned items are removed: collision-skipped skills, user
+        data, and user schedules are left intact (D6, D7).
+
+        :param name: installed package name (lockfile key).
+        :raises PackageError: if no package by that name is installed.
+        """
+        entry = read_lockfile(self._lockfile_path()).get(name)
+        if entry is None:
+            raise PackageError(
+                f"package not installed: {name} (see installed packages with `atelier add`)"
+            )
+        report = RemoveReport(name=name)
+        global_scope = entry.get("scope", "global") == "global"
+        for conduit in entry.get("conduits", []):
+            removed = (
+                self.store.delete_conduit_global(conduit)
+                if global_scope
+                else self.store.delete_conduit(conduit)
+            )
+            if removed:
+                report.conduits_removed.append(conduit)
+        for root in entry.get("skill_dirs", []):
+            for skill in entry.get("skills", []):
+                dest = Path(root) / skill
+                if dest.exists():
+                    shutil.rmtree(dest)
+                    if skill not in report.skills_removed:
+                        report.skills_removed.append(skill)
+        delete_lockfile_entry(self._lockfile_path(), name)
+        return report
 
     async def run_single_task(self, payload: RunTaskInput) -> RunTaskOutput:
         """Run an ad-hoc one-task conduit and return the resulting logs.

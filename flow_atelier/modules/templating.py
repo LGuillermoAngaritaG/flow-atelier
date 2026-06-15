@@ -14,6 +14,7 @@ Rules:
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any, NamedTuple
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
@@ -81,7 +82,7 @@ def extract_task_refs(template: str) -> set[str]:
 class TemplateRef(NamedTuple):
     """One ``{{...}}`` expression classified against the resolve grammar."""
 
-    kind: str   # "input" | "loop" | "task" | "unknown"
+    kind: str   # "input" | "loop" | "task" | "conduit_dir" | "unknown"
     value: str  # input name / loop expr / task name / raw expr
     raw: str    # original expression, for error messages
 
@@ -102,6 +103,8 @@ def extract_template_refs(template: str) -> list[TemplateRef]:
             refs.append(TemplateRef("input", expr[len("inputs."):], expr))
         elif expr in ("loop.previous", "loop.history"):
             refs.append(TemplateRef("loop", expr, expr))
+        elif expr == "conduit_dir":
+            refs.append(TemplateRef("conduit_dir", expr, expr))
         elif expr.endswith(".output"):
             refs.append(TemplateRef("task", expr[: -len(".output")], expr))
         else:
@@ -136,6 +139,7 @@ def resolve(
     loop_history: list[str] | None = None,
     loop_history_limit: int = 0,
     loop_history_entry_chars: int = 0,
+    conduit_dir: Path | None = None,
 ) -> str:
     """Resolve `{{...}}` expressions in ``template``.
 
@@ -150,6 +154,8 @@ def resolve(
         newest kept; <= 0 means unlimited
     :param loop_history_entry_chars: max characters per rendered history
         entry; <= 0 means unlimited
+    :param conduit_dir: absolute dir of the running conduit, backing
+        ``{{conduit_dir}}``; when ``None`` the token is treated as unknown
     :raises TemplateError: missing input or unknown identifier
     :raises SkipSignal: reference to a skipped/failed task output
     """
@@ -174,6 +180,8 @@ def resolve(
             return _format_history(
                 history, loop_history_limit, loop_history_entry_chars
             )
+        if expr == "conduit_dir" and conduit_dir is not None:
+            return str(conduit_dir)
         if expr.endswith(".output"):
             task = expr[: -len(".output")]
             if task in unavailable:

@@ -355,6 +355,58 @@ def test_read_missing_from_both_raises(tmp_path):
         s.read_conduit("nope")
 
 
+# --------------------------------------------------------------- conduit_dir
+
+
+def test_conduit_dir_returns_project_path(tmp_path):
+    """conduit_dir returns the project directory when the conduit lives there.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
+    project = tmp_path / ".atelier"
+    global_dir = tmp_path / "global_atelier"
+    s = FilesystemStore(project, global_dir=global_dir)
+    _write_conduit(project, "hello", PROJECT_HELLO_OVERRIDE_YAML)
+    assert s.conduit_dir("hello") == project / "conduits" / "hello"
+
+
+def test_conduit_dir_falls_back_to_global_path(tmp_path):
+    """conduit_dir returns the global directory when only the global exists.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
+    project = tmp_path / ".atelier"
+    global_dir = tmp_path / "global_atelier"
+    s = FilesystemStore(project, global_dir=global_dir)
+    _write_conduit(global_dir, "deploy", GLOBAL_DEPLOY_YAML)
+    assert s.conduit_dir("deploy") == global_dir / "conduits" / "deploy"
+
+
+def test_conduit_dir_project_shadows_global(tmp_path):
+    """conduit_dir prefers the project directory over a same-named global one.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
+    project = tmp_path / ".atelier"
+    global_dir = tmp_path / "global_atelier"
+    s = FilesystemStore(project, global_dir=global_dir)
+    _write_conduit(global_dir, "hello", GLOBAL_DEPLOY_YAML.replace("deploy", "hello"))
+    _write_conduit(project, "hello", PROJECT_HELLO_OVERRIDE_YAML)
+    assert s.conduit_dir("hello") == project / "conduits" / "hello"
+
+
+def test_conduit_dir_missing_raises(tmp_path):
+    """conduit_dir raises FileNotFoundError when missing from both stores.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
+    project = tmp_path / ".atelier"
+    global_dir = tmp_path / "global_atelier"
+    s = FilesystemStore(project, global_dir=global_dir)
+    with pytest.raises(FileNotFoundError):
+        s.conduit_dir("nope")
+
+
 # --------------------------------------------------------------- write/delete
 
 
