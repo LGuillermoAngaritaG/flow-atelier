@@ -12,9 +12,68 @@ from __future__ import annotations
 
 import os
 import socket
+import sys
 from enum import Enum
 
 from flow_atelier.schemas.progress import FlowStatus, Progress
+
+
+class _PidState(Enum):
+    """Outcome of probing a local pid: provably alive, provably dead, or unknown."""
+
+    alive = "alive"
+    dead = "dead"
+    unknown = "unknown"
+
+
+def _pid_state(pid: int) -> _PidState:
+    """Probe a pid on *this* host without signalling it.
+
+    ``dead`` only when the OS proves no such process exists; every permission
+    or probe error is ``unknown`` so callers can stay conservative. ``os.kill``
+    is never used on Windows, where ``os.kill(pid, 0)`` calls ``TerminateProcess``
+    and would kill the very runner we are inspecting.
+    """
+    if sys.platform == "win32":
+        return _win_pid_state(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return _PidState.dead
+    except (PermissionError, OSError):
+        return _PidState.unknown
+    return _PidState.alive
+
+
+def _win_pid_state(pid: int) -> _PidState:
+    """Windows probe via ``OpenProcess``/``GetExitCodeProcess`` (no signalling)."""
+    import ctypes
+    from ctypes import wintypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    ERROR_INVALID_PARAMETER = 87
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        if ctypes.get_last_error() == ERROR_INVALID_PARAMETER:
+            return _PidState.dead  # no such process
+        return _PidState.unknown  # access denied or other probe failure
+    try:
+        kernel32.GetExitCodeProcess.argtypes = (
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return _PidState.unknown
+        return _PidState.alive if code.value == STILL_ACTIVE else _PidState.dead
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def is_crashed(progress: Progress) -> bool:
@@ -22,8 +81,8 @@ def is_crashed(progress: Progress) -> bool:
 
     :param progress: the flow's progress snapshot.
     :returns: True iff status is ``running``, the runner pid/host are recorded,
-        the host matches this machine, and ``os.kill(pid, 0)`` proves the pid
-        is gone. Any other case returns False (treated as still running).
+        the host matches this machine, and a liveness probe proves the pid is
+        gone. Any other case returns False (treated as still running).
     """
     if progress.status != FlowStatus.running:
         return False
@@ -31,15 +90,9 @@ def is_crashed(progress: Progress) -> bool:
         return False
     if progress.runner_host != socket.gethostname():
         return False
-    try:
-        os.kill(progress.runner_pid, 0)
-    except ProcessLookupError:
-        return True
-    except (PermissionError, OSError):
-        # Pid exists (possibly owned by another user) or the probe failed for
-        # another reason — stay conservative and report still running.
-        return False
-    return False
+    # Pid still present, owned by another user, or an unclassifiable probe
+    # error — stay conservative and report still running.
+    return _pid_state(progress.runner_pid) is _PidState.dead
 
 
 def is_runner_alive(progress: Progress) -> bool:
@@ -52,8 +105,8 @@ def is_runner_alive(progress: Progress) -> bool:
 
     :param progress: the flow's progress snapshot.
     :returns: True iff status is ``running``, the runner pid/host are recorded,
-        the host matches this machine, and ``os.kill(pid, 0)`` succeeds. Any
-        other case returns False.
+        the host matches this machine, and a liveness probe proves the pid is
+        alive. Any other case returns False.
     """
     if progress.status != FlowStatus.running:
         return False
@@ -61,11 +114,7 @@ def is_runner_alive(progress: Progress) -> bool:
         return False
     if progress.runner_host != socket.gethostname():
         return False
-    try:
-        os.kill(progress.runner_pid, 0)
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
-    return True
+    return _pid_state(progress.runner_pid) is _PidState.alive
 
 
 def display_status(progress: Progress) -> str:
@@ -115,11 +164,10 @@ def stop_decision(progress: Progress, others: list[Progress]) -> StopDecision:
         return StopDecision.foreign_host
     if progress.runner_pid is None:
         return StopDecision.no_pid
-    try:
-        os.kill(progress.runner_pid, 0)
-    except ProcessLookupError:
+    state = _pid_state(progress.runner_pid)
+    if state is _PidState.dead:
         return StopDecision.crashed
-    except (PermissionError, OSError):
+    if state is _PidState.unknown:
         # Pid exists but we can't probe it cleanly — treat as foreign rather
         # than risk signalling a process we don't actually own.
         return StopDecision.foreign_host
