@@ -9,7 +9,7 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from flow_atelier.cli import app
-from flow_atelier.cli.rendering.render import _render_task_event, _truncate_tail
+from flow_atelier.cli.rendering.render import _truncate_tail, render_task_event
 from flow_atelier.schemas.log import TaskEvent
 
 CONDUIT_YAML = """
@@ -125,6 +125,50 @@ def test_run_and_status(workdir):
     assert result2.exit_code == 0
     assert "greet" in result2.output
     assert "completed" in result2.output
+
+
+GATED_BRACKET_YAML = """
+name: gated
+description: d
+tasks:
+  - gate:
+      description: d
+      task: "echo lowercase"
+      tool: tool:bash
+      depends_on: []
+  - work:
+      description: d
+      task: "echo work"
+      tool: tool:bash
+      depends_on:
+        - "gate.output.match([A-Z]+)"
+"""
+
+
+def test_status_escapes_bracketed_skip_reason(workdir, monkeypatch):
+    """`status` renders a bracketed conditional skip reason literally, not markup.
+
+    A conditional dependency whose regex contains a character class like
+    ``[A-Z]`` makes the engine record a skip reason carrying those brackets.
+    Rich would read ``[A-Z]`` as a style tag and crash the table render unless
+    the cell is escaped.
+
+    :param workdir: isolated working directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    monkeypatch.setenv("COLUMNS", "200")
+    d = workdir / ".atelier" / "conduits" / "gated"
+    d.mkdir(parents=True)
+    (d / "conduit.yaml").write_text(GATED_BRACKET_YAML)
+    runner = CliRunner()
+    run_result = runner.invoke(app, ["run", "gated"])
+    assert run_result.exit_code == 0, run_result.output
+    line = [l for l in run_result.output.splitlines() if "flow_id" in l][0]
+    flow_id = line.split()[-1]
+    result = runner.invoke(app, ["status", flow_id])
+    assert result.exit_code == 0, result.output
+    assert result.exception is None
+    assert "[A-Z]" in result.output
 
 
 def test_version_flag():
@@ -651,6 +695,41 @@ def test_schedule_add_and_list(workdir, tmp_path):
     assert "recurring" in listing.output
 
 
+SCHEDULE_BRACKET_NAME_JSON = """{
+  "conduit_name": "hello",
+  "inputs": {"name": "world"},
+  "run_path": ".",
+  "schedule": {
+    "mode": "recurring",
+    "name": "gate[A-Z]run",
+    "days": [1, 5],
+    "times": ["09:00"]
+  }
+}"""
+
+
+def test_schedule_list_escapes_bracketed_name(workdir, tmp_path, monkeypatch):
+    """`schedule list` renders a bracketed schedule name literally, not markup.
+
+    A schedule name is free text; brackets in it would otherwise be read by
+    Rich as a style tag and crash the listing table.
+
+    :param workdir: isolated working directory fixture.
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    monkeypatch.setenv("COLUMNS", "200")
+    src = tmp_path / "bracket.json"
+    src.write_text(SCHEDULE_BRACKET_NAME_JSON)
+    runner = CliRunner()
+    add = runner.invoke(app, ["schedule", "add", str(src)])
+    assert add.exit_code == 0, add.output
+    listing = runner.invoke(app, ["schedule", "list"])
+    assert listing.exit_code == 0, listing.output
+    assert listing.exception is None
+    assert "[A-Z]" in listing.output
+
+
 def test_schedule_add_rejects_invalid(workdir, tmp_path):
     """Verify `schedule add` rejects payloads with invalid schedule modes.
 
@@ -929,7 +1008,7 @@ def _capture(event: TaskEvent) -> str:
     console = Console(
         file=buf, force_terminal=False, color_system=None, width=120
     )
-    _render_task_event(event, console)
+    render_task_event(event, console)
     return buf.getvalue()
 
 

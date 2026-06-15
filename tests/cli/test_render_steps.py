@@ -11,7 +11,7 @@ from flow_atelier.cli.rendering.render import (
     _render_log_entry,
     _render_orchestration_msg,
     _render_step,
-    _render_task_event,
+    render_task_event,
 )
 from flow_atelier.schemas.log import IntermediateStep, LogEntry, StepKind, TaskEvent
 
@@ -147,7 +147,7 @@ class TestRenderTaskEventStepSummary:
             steps=steps,
         )
         c, buf = _console()
-        _render_task_event(event, c)
+        render_task_event(event, c)
         output = buf.getvalue()
         # Should show thinking count and tool count
         assert "thinking(2)" in output
@@ -163,7 +163,7 @@ class TestRenderTaskEventStepSummary:
             duration_seconds=1.0,
         )
         c, buf = _console()
-        _render_task_event(event, c)
+        render_task_event(event, c)
         output = buf.getvalue()
         assert "thinking" not in output
         assert "tools" not in output
@@ -180,7 +180,7 @@ class TestRenderTaskEventStepSummary:
             steps=steps,
         )
         c, buf = _console()
-        _render_task_event(event, c)
+        render_task_event(event, c)
         output = buf.getvalue()
         assert "streamed live" in output
 
@@ -195,7 +195,7 @@ class TestRenderTaskEventStepSummary:
             steps=steps,
         )
         c, buf = _console()
-        _render_task_event(event, c)
+        render_task_event(event, c)
         output = buf.getvalue()
         assert "no output" in output
 

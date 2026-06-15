@@ -90,16 +90,25 @@ def build_plan(conduit: Conduit, parsed: dict[str, list]) -> ExecutionPlan:
     :returns: the ordered, annotated execution plan.
     """
     # Longest-path layering: level = 0 for roots, else 1 + max(dep levels).
+    # Iterative post-order (parsed is already validated acyclic) so a deep
+    # single-chain conduit cannot blow the recursion limit.
     level: dict[str, int] = {}
-
-    def level_of(name: str) -> int:
-        if name not in level:
+    for start in parsed:
+        if start in level:
+            continue
+        stack = [start]
+        while stack:
+            name = stack[-1]
+            if name in level:
+                stack.pop()
+                continue
             deps = parsed[name]
-            level[name] = 0 if not deps else 1 + max(level_of(d.task) for d in deps)
-        return level[name]
-
-    for name in parsed:
-        level_of(name)
+            pending = [d.task for d in deps if d.task not in level]
+            if pending:
+                stack.extend(pending)
+                continue
+            level[name] = 0 if not deps else 1 + max(level[d.task] for d in deps)
+            stack.pop()
 
     sinks = set(sink_task_names(conduit))
 

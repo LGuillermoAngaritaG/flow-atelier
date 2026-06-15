@@ -12,9 +12,9 @@ from rich.table import Table
 from flow_atelier.cli._shared import _format_clock, _schedule_store, console
 from flow_atelier.cli.main import schedule_app
 from flow_atelier.cli.rendering.render import (
-    _render_planned_table,
-    _render_run_footer,
-    _render_task_event,
+    render_planned_table,
+    render_run_footer,
+    render_task_event,
 )
 from flow_atelier.core.atelier import Atelier
 from flow_atelier.schemas.api import CreateScheduleInput
@@ -130,7 +130,7 @@ def schedule_list_cmd(
         console.print("[yellow]no schedules found[/yellow]")
         return
 
-    console.print(_render_planned_table(planned))
+    console.print(render_planned_table(planned))
 
 
 @schedule_app.command("remove", help="Delete a schedule by id or name (hard delete).")
@@ -232,7 +232,7 @@ def schedule_run_now_cmd(
         :param event: the emitted task event to record and display.
         """
         collected_events.append(event)
-        _render_task_event(event, console)
+        render_task_event(event, console)
 
     captured: dict[str, str | None] = {"id": None}
 
@@ -253,10 +253,10 @@ def schedule_run_now_cmd(
             )
         )
     except Exception as e:  # noqa: BLE001
-        _render_run_footer(collected_events, console)
+        render_run_footer(collected_events, console)
         console.print(f"[red]flow failed:[/red] {escape(str(e))}")
         if captured["id"]:
             console.print(f"[red]flow_id:[/red] {captured['id']}")
         raise typer.Exit(code=1)
-    _render_run_footer(collected_events, console)
+    render_run_footer(collected_events, console)
     console.print(f"[green]flow_id:[/green] {flow_id}")

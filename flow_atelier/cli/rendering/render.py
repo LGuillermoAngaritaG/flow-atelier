@@ -6,6 +6,7 @@ from collections import Counter
 import yaml
 from pydantic import ValidationError
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -161,7 +162,7 @@ def _render_steps_timeline(steps: list[IntermediateStep]) -> Text:
     return body
 
 
-def _render_task_event(event: TaskEvent, console: Console) -> None:
+def render_task_event(event: TaskEvent, console: Console) -> None:
     """Pretty-print a :class:`TaskEvent` to ``console``.
 
     Success with non-empty output → green-bordered :class:`Panel`.
@@ -287,7 +288,7 @@ def _task_status_summary(progress: Progress) -> Text:
     return text
 
 
-def _render_run_footer(events: list[TaskEvent], console: Console) -> None:
+def render_run_footer(events: list[TaskEvent], console: Console) -> None:
     """One-line aggregate summary printed at the end of `atelier run`.
 
     :param events: task events collected during the run.
@@ -498,7 +499,7 @@ def _format_last_run(record) -> str:
     return marker
 
 
-def _render_planned_table(planned: list[PlannedJob]) -> Table:
+def render_planned_table(planned: list[PlannedJob]) -> Table:
     """Render planned scheduler jobs as a Rich table.
 
     :param planned: planned jobs with computed next-fire times.
@@ -512,12 +513,12 @@ def _render_planned_table(planned: list[PlannedJob]) -> Table:
         if p.next_fire_time is None and p.schedule_kind == "once":
             next_cell = "[dim](already fired)[/dim]"
         table.add_row(
-            p.id,
-            p.name,
-            p.conduit_name,
+            escape(p.id),
+            escape(p.name),
+            escape(p.conduit_name),
             f"[{kind_style}]{p.schedule_kind}[/{kind_style}]",
             next_cell,
             _format_last_run(p.last_run),
-            str(p.working_dir),
+            escape(str(p.working_dir)),
         )
     return table

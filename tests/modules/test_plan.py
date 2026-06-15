@@ -132,6 +132,26 @@ def test_gate_detection_and_prune_set():
     assert tasks["child"].prunes == []
 
 
+def test_deep_linear_chain_no_recursion_error():
+    """A long single-file chain layers without hitting the recursion limit."""
+    n = 2000
+    tasks = [
+        {
+            "name": f"t{i}",
+            "description": "d",
+            "task": "x",
+            "tool": "tool:bash",
+            "depends_on": [] if i == 0 else [f"t{i - 1}"],
+        }
+        for i in range(n)
+    ]
+    plan = _plan(_conduit(tasks))
+    by_name = _by_name(plan)
+    assert by_name["t0"].level == 0
+    assert by_name[f"t{n - 1}"].level == n - 1
+    assert len(plan.waves) == n
+
+
 def test_max_concurrency_carried():
     """max_concurrency is reflected on the plan."""
     conduit = _conduit(

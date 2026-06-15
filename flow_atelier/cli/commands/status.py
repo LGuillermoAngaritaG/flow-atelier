@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 import typer
+from rich.markup import escape
 from rich.table import Table
 
 from flow_atelier.cli._shared import (
@@ -77,10 +78,10 @@ def status_cmd(
     columns.append("reason")
     table = Table(*columns)
     for name, tp in progress.tasks.items():
-        row = [name, tp.status.value]
+        row = [escape(name), tp.status.value]
         if show_iteration:
             row.append(f"{tp.iteration}/{tp.of}" if tp.of > 1 else "")
-        row.append(tp.reason or "")
+        row.append(escape(tp.reason or ""))
         table.add_row(*row)
     console.print(table)
     console.print(_task_status_summary(progress))

@@ -13,9 +13,9 @@ from flow_atelier.cli._shared import _parse_inputs, _resolve_flow_id, console
 from flow_atelier.cli.main import app
 from flow_atelier.cli.rendering.render import (
     _render_orchestration_msg,
-    _render_run_footer,
-    _render_task_event,
     format_conduit_error,
+    render_run_footer,
+    render_task_event,
 )
 from flow_atelier.core.atelier import Atelier
 from flow_atelier.schemas.flow import parse_flow_id
@@ -96,7 +96,7 @@ def run_cmd(
 
         def _on_event(event: TaskEvent) -> None:
             collected_events.append(event)
-            _render_task_event(event, console)
+            render_task_event(event, console)
 
         def _on_started(fid: str) -> None:
             captured_flow_id["id"] = fid
@@ -118,17 +118,17 @@ def run_cmd(
             )
         except asyncio.CancelledError:
             # SIGTERM via `atelier stop`: engine has marked the flow stopped.
-            _render_run_footer(collected_events, console)
+            render_run_footer(collected_events, console)
             console.print("[yellow]flow stopped[/yellow]")
             stopped_id = captured_flow_id["id"]
             if stopped_id:
                 console.print(f"[yellow]flow_id:[/yellow] {stopped_id}")
             raise typer.Exit(code=0)
         except Exception as e:  # noqa: BLE001
-            _render_run_footer(collected_events, console)
+            render_run_footer(collected_events, console)
             console.print(f"[red]flow failed:[/red] {escape(str(e))}")
             raise typer.Exit(code=1)
-        _render_run_footer(collected_events, console)
+        render_run_footer(collected_events, console)
         console.print(f"[green]flow_id:[/green] {result_id}")
         return
 
@@ -152,7 +152,7 @@ def run_cmd(
 
         def _on_event(event: TaskEvent) -> None:
             collected_events.append(event)
-            _render_task_event(event, console)
+            render_task_event(event, console)
 
         def _on_started(fid: str) -> None:
             captured_flow_id["id"] = fid
@@ -175,21 +175,21 @@ def run_cmd(
                 )
             )
         except asyncio.CancelledError:
-            _render_run_footer(collected_events, console)
+            render_run_footer(collected_events, console)
             console.print("[yellow]flow stopped[/yellow]")
             stopped_id = captured_flow_id["id"]
             if stopped_id:
                 console.print(f"[yellow]flow_id:[/yellow] {stopped_id}")
             raise typer.Exit(code=0)
         except Exception as e:  # noqa: BLE001
-            _render_run_footer(collected_events, console)
+            render_run_footer(collected_events, console)
             console.print(f"[red]flow failed:[/red] {escape(str(e))}")
             fid = captured_flow_id["id"]
             if fid:
                 console.print(f"[red]flow_id:[/red] {fid}")
                 console.print(f"[dim]→ atelier run --resume {fid}[/dim]")
             raise typer.Exit(code=1)
-        _render_run_footer(collected_events, console)
+        render_run_footer(collected_events, console)
         console.print(f"[green]flow_id:[/green] {result_id}")
         return
 
@@ -254,7 +254,7 @@ def run_cmd(
         :param event: the emitted task event to record and display.
         """
         collected_events.append(event)
-        _render_task_event(event, console)
+        render_task_event(event, console)
 
     def _on_started(fid: str) -> None:
         """Capture the flow id and print a start banner.
@@ -288,19 +288,19 @@ def run_cmd(
         )
     except asyncio.CancelledError:
         # SIGTERM via `atelier stop`: engine has marked the flow stopped.
-        _render_run_footer(collected_events, console)
+        render_run_footer(collected_events, console)
         console.print("[yellow]flow stopped[/yellow]")
         stopped_id = captured_flow_id["id"]
         if stopped_id:
             console.print(f"[yellow]flow_id:[/yellow] {stopped_id}")
         raise typer.Exit(code=0)
     except Exception as e:  # noqa: BLE001
-        _render_run_footer(collected_events, console)
+        render_run_footer(collected_events, console)
         console.print(f"[red]flow failed:[/red] {escape(str(e))}")
         fid = captured_flow_id["id"]
         if fid:
             console.print(f"[red]flow_id:[/red] {fid}")
             console.print(f"[dim]→ atelier run --resume {fid}[/dim]")
         raise typer.Exit(code=1)
-    _render_run_footer(collected_events, console)
+    render_run_footer(collected_events, console)
     console.print(f"[green]flow_id:[/green] {flow_id}")
