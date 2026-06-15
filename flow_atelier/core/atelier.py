@@ -41,6 +41,14 @@ from flow_atelier.services.executor.harness import (
 )
 from flow_atelier.services.executor.hitl import HitlExecutor
 from flow_atelier.services.executor.prompt_sink import PromptSink, TerminalPromptSink
+from flow_atelier.services.package import (
+    InstallReport,
+    fetch_source,
+    install_package,
+    read_package,
+    resolve_source,
+    write_lockfile,
+)
 from flow_atelier.services.scheduler.store import ScheduleStore
 from flow_atelier.services.store.filesystem import FilesystemStore
 
@@ -427,6 +435,73 @@ class Atelier:
         :returns: True if it existed and was deleted, False otherwise
         """
         return self.store.delete_flow(flow_id)
+
+    # ------------------------------------------------------------------ packages
+
+    def _skill_roots(self, skill_roots: list[Path] | None) -> list[Path]:
+        """Resolve the skill destination roots, defaulting to user level.
+
+        Two unconditional writes (``~/.claude/skills`` and ``~/.agents/skills``)
+        cover all five supported harnesses (D4).
+
+        :param skill_roots: explicit roots (tests inject a fake HOME); when
+            ``None``, the user-level defaults are used.
+        """
+        if skill_roots is not None:
+            return skill_roots
+        home = Path.home()
+        return [home / ".claude" / "skills", home / ".agents" / "skills"]
+
+    def _lockfile_path(self) -> Path:
+        """Return the install lockfile path under the global atelier dir."""
+        return self.settings.global_atelier_dir / "installed.json"
+
+    def install_package(
+        self,
+        source: str,
+        *,
+        ref: str | None = None,
+        project: bool = False,
+        force: bool = False,
+        skill_roots: list[Path] | None = None,
+    ) -> InstallReport:
+        """Fetch a package and install its conduits + skills, then lock it.
+
+        :param source: git URL, ``owner/repo``, or local path.
+        :param ref: optional git ref to check out.
+        :param project: install conduits into the project store instead of global.
+        :param force: overwrite colliding conduits/skills.
+        :param skill_roots: explicit skill destination roots (tests inject a
+            fake HOME); defaults to the user-level dirs.
+        :returns: an :class:`InstallReport` of what was installed/skipped.
+        """
+        src = resolve_source(source)
+        cache_root = self.settings.global_atelier_dir / "cache"
+        repo_dir = fetch_source(src, cache_root, ref)
+        manifest = read_package(repo_dir)
+        conduit_base = (
+            self.settings.atelier_dir if project else self.settings.global_atelier_dir
+        )
+        conduit_root = conduit_base / "conduits"
+        roots = self._skill_roots(skill_roots)
+        report = install_package(
+            repo_dir, manifest,
+            conduit_root=conduit_root, skill_roots=roots,
+            scope="project" if project else "global", force=force,
+        )
+        write_lockfile(
+            self._lockfile_path(),
+            manifest.name,
+            {
+                "source": src.location,
+                "ref": ref or "",
+                "conduits": report.conduits_installed,
+                "skills": report.skills_installed,
+                "skill_dirs": [str(r) for r in roots],
+                "scope": report.scope,
+            },
+        )
+        return report
 
     async def run_single_task(self, payload: RunTaskInput) -> RunTaskOutput:
         """Run an ad-hoc one-task conduit and return the resulting logs.

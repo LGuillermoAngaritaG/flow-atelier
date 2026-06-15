@@ -7,15 +7,17 @@ to directory discovery, with a warning, when the manifest is absent).
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
+from flow_atelier.schemas.conduit import Conduit
 from flow_atelier.schemas.package import PackageManifest
 
 logger = logging.getLogger(__name__)
@@ -195,3 +197,116 @@ def read_package(repo_dir: Path) -> PackageManifest:
     return PackageManifest(
         name=repo_dir.name, version=1, conduits=conduits, skills=skills
     )
+
+
+@dataclass
+class InstallReport:
+    """What an install actually wrote vs. skipped.
+
+    ``*_installed`` are package-owned (safe for ``remove`` to delete);
+    ``*_skipped`` pre-existed and were left untouched (not owned).
+    """
+
+    name: str
+    scope: str
+    conduit_root: Path
+    skill_roots: list[Path]
+    conduits_installed: list[str] = field(default_factory=list)
+    conduits_skipped: list[str] = field(default_factory=list)
+    skills_installed: list[str] = field(default_factory=list)
+    skills_skipped: list[str] = field(default_factory=list)
+
+
+def install_package(
+    repo_dir: Path,
+    manifest: PackageManifest,
+    *,
+    conduit_root: Path,
+    skill_roots: list[Path],
+    scope: str,
+    force: bool = False,
+) -> InstallReport:
+    """Copy declared conduits and skills into their install targets.
+
+    Copies each conduit's *whole directory* (so picker.py / templates travel),
+    after confirming its ``conduit.yaml`` parses. Skills are copied into every
+    root in ``skill_roots``. On collision (target exists), skip-and-warn unless
+    ``force``; skipped items are not recorded as owned.
+
+    :param repo_dir: the fetched package directory.
+    :param manifest: the parsed package manifest.
+    :param conduit_root: the ``conduits/`` dir to install conduits into.
+    :param skill_roots: skill destination roots (e.g. ~/.claude/skills).
+    :param scope: ``"global"`` or ``"project"`` (recorded in the report).
+    :param force: overwrite colliding conduits/skills instead of skipping.
+    :raises PackageError: a declared conduit/skill is missing or invalid.
+    """
+    report = InstallReport(
+        name=manifest.name, scope=scope,
+        conduit_root=conduit_root, skill_roots=skill_roots,
+    )
+    src_conduits = repo_dir / ".atelier" / "conduits"
+    for name in manifest.conduits:
+        src = src_conduits / name
+        yaml_path = src / "conduit.yaml"
+        if not yaml_path.exists():
+            raise PackageError(f"declared conduit not found in package: {name}")
+        try:
+            Conduit.model_validate(yaml.safe_load(yaml_path.read_text()))
+        except (yaml.YAMLError, ValueError) as e:
+            raise PackageError(f"conduit {name!r} has an invalid conduit.yaml: {e}") from e
+        dest = conduit_root / name
+        if dest.exists() and not force:
+            logger.warning("conduit %s already exists, skipping (use --force)", name)
+            report.conduits_skipped.append(name)
+            continue
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, dest)
+        report.conduits_installed.append(name)
+
+    src_skills = repo_dir / "skills"
+    for name in manifest.skills:
+        src = src_skills / name
+        if not (src / "SKILL.md").exists():
+            raise PackageError(f"declared skill missing SKILL.md: {name}")
+        dests = [root / name for root in skill_roots]
+        if any(d.exists() for d in dests) and not force:
+            logger.warning("skill %s already exists, skipping (use --force)", name)
+            report.skills_skipped.append(name)
+            continue
+        for root, dest in zip(skill_roots, dests, strict=True):
+            if dest.exists():
+                shutil.rmtree(dest)
+            root.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src, dest)
+        report.skills_installed.append(name)
+    return report
+
+
+def read_lockfile(path: Path) -> dict:
+    """Return the parsed install lockfile, or an empty dict if absent.
+
+    :param path: path to ``installed.json``.
+    """
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_lockfile(path: Path, name: str, entry: dict) -> None:
+    """Record (or replace) ``name``'s entry in the lockfile at ``path``.
+
+    :param path: path to ``installed.json``.
+    :param name: package name (lockfile key).
+    :param entry: the package's recorded install metadata.
+    """
+    data = read_lockfile(path)
+    data[name] = entry
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2))

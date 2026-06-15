@@ -5,8 +5,11 @@ from flow_atelier.schemas.package import PackageManifest
 from flow_atelier.services.package import (
     PackageError,
     fetch_source,
+    install_package,
+    read_lockfile,
     read_package,
     resolve_source,
+    write_lockfile,
 )
 
 CONDUIT_YAML = """
@@ -39,12 +42,18 @@ def _make_repo(root, *, manifest=True):
     conduit = root / ".atelier" / "conduits" / "demo"
     conduit.mkdir(parents=True)
     (conduit / "conduit.yaml").write_text(CONDUIT_YAML)
+    (conduit / "picker.py").write_text("print('pick')\n")
     skill = root / "skills" / "idea"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("# idea\n")
     if manifest:
         (root / "atelier-package.yaml").write_text(MANIFEST_YAML)
     return root
+
+
+def _manifest():
+    """Return the demo manifest (one conduit, one skill)."""
+    return PackageManifest(name="demo-pkg", conduits=["demo"], skills=["idea"])
 
 
 def test_resolve_owner_repo_to_github_url():
@@ -128,3 +137,77 @@ def test_read_package_fallback_discovers_and_warns(tmp_path, caplog):
     assert manifest.conduits == ["demo"]
     assert manifest.skills == ["idea"]
     assert any("atelier-package.yaml" in r.message for r in caplog.records)
+
+
+# ------------------------------------------------------------------ install
+
+
+def test_install_copies_whole_conduit_dir_and_skills(tmp_path):
+    """install_package copies the whole conduit dir and skills into all roots."""
+    repo = _make_repo(tmp_path / "pkgsrc")
+    conduit_root = tmp_path / "global" / "conduits"
+    roots = [tmp_path / "claude" / "skills", tmp_path / "agents" / "skills"]
+    report = install_package(
+        repo, _manifest(), conduit_root=conduit_root,
+        skill_roots=roots, scope="global",
+    )
+    assert report.conduits_installed == ["demo"]
+    assert report.skills_installed == ["idea"]
+    assert (conduit_root / "demo" / "conduit.yaml").exists()
+    assert (conduit_root / "demo" / "picker.py").exists()
+    for root in roots:
+        assert (root / "idea" / "SKILL.md").exists()
+
+
+def test_install_skips_existing_skill_and_does_not_own_it(tmp_path):
+    """A pre-existing skill in any root is skipped and not recorded as owned."""
+    repo = _make_repo(tmp_path / "pkgsrc")
+    conduit_root = tmp_path / "global" / "conduits"
+    roots = [tmp_path / "claude" / "skills", tmp_path / "agents" / "skills"]
+    (roots[0] / "idea").mkdir(parents=True)
+    (roots[0] / "idea" / "SKILL.md").write_text("# user's own\n")
+    report = install_package(
+        repo, _manifest(), conduit_root=conduit_root,
+        skill_roots=roots, scope="global",
+    )
+    assert report.skills_skipped == ["idea"]
+    assert report.skills_installed == []
+    assert (roots[0] / "idea" / "SKILL.md").read_text() == "# user's own\n"
+
+
+def test_install_force_overwrites_existing_skill(tmp_path):
+    """--force overwrites a colliding skill and records it as owned."""
+    repo = _make_repo(tmp_path / "pkgsrc")
+    conduit_root = tmp_path / "global" / "conduits"
+    roots = [tmp_path / "claude" / "skills", tmp_path / "agents" / "skills"]
+    (roots[0] / "idea").mkdir(parents=True)
+    (roots[0] / "idea" / "SKILL.md").write_text("# user's own\n")
+    report = install_package(
+        repo, _manifest(), conduit_root=conduit_root,
+        skill_roots=roots, scope="global", force=True,
+    )
+    assert report.skills_installed == ["idea"]
+    assert (roots[0] / "idea" / "SKILL.md").read_text() == "# idea\n"
+
+
+def test_install_invalid_conduit_yaml_raises(tmp_path):
+    """A conduit whose conduit.yaml fails validation is reported, not skipped."""
+    repo = _make_repo(tmp_path / "pkgsrc")
+    (repo / ".atelier" / "conduits" / "demo" / "conduit.yaml").write_text(
+        "name: demo\n"  # missing required fields
+    )
+    with pytest.raises(PackageError, match="invalid conduit.yaml"):
+        install_package(
+            repo, _manifest(), conduit_root=tmp_path / "g" / "conduits",
+            skill_roots=[tmp_path / "s"], scope="global",
+        )
+
+
+def test_lockfile_roundtrips(tmp_path):
+    """write_lockfile then read_lockfile returns the recorded entry."""
+    path = tmp_path / "installed.json"
+    write_lockfile(path, "demo-pkg", {"source": "x", "conduits": ["demo"]})
+    write_lockfile(path, "other", {"source": "y"})
+    data = read_lockfile(path)
+    assert data["demo-pkg"]["conduits"] == ["demo"]
+    assert data["other"]["source"] == "y"
