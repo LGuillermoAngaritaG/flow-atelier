@@ -58,6 +58,25 @@ def _once_payload(**overrides):
     return CreateScheduleInput.model_validate(base)
 
 
+def _interval_payload(**overrides):
+    """Build an interval-mode CreateScheduleInput with optional overrides.
+
+    :param overrides: keyword overrides applied to the base payload.
+    """
+    base = {
+        "conduit_name": "poll",
+        "inputs": {},
+        "run_path": "/tmp/x",
+        "schedule": {
+            "mode": "interval",
+            "name": "half hourly",
+            "every_minutes": 30,
+        },
+    }
+    base.update(overrides)
+    return CreateScheduleInput.model_validate(base)
+
+
 # ----------------------------------------------------------- list / create
 
 
@@ -491,3 +510,17 @@ def test_recreate_after_load_round_trips(store, tmp_path):
     assert len(listed) == 1
     assert listed[0].id == job.id
     assert listed[0].schedule.times == ["06:00", "12:00"]
+
+
+def test_interval_schedule_round_trips(store, tmp_path):
+    """An interval schedule persists every_minutes across a reload.
+
+    :param store: ScheduleStore fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    job = store.create(_interval_payload())
+    fresh = ScheduleStore(tmp_path / ".atelier")
+    (loaded,) = fresh.list()
+    assert loaded.id == job.id
+    assert loaded.schedule.mode == "interval"
+    assert loaded.schedule.every_minutes == 30
