@@ -79,7 +79,7 @@ class AtelierSettings(BaseSettings):
     )
     done_marker: str = "[ATELIER_DONE]"
     api_token: str = Field(
-        default="",
+        default="secret-key",
         description=(
             "Optional bearer token for the HTTP/WS API (env ATELIER_API_TOKEN). "
             "When set, every REST request must send 'Authorization: Bearer "

@@ -3,6 +3,7 @@
 __pycache__/
 *.py[oc]
 build/
+/dist/
 wheels/
 *.egg-info
 *.spec
@@ -20,3 +21,12 @@ claude.md
 AGENTS.md
 .agents/
 .atelier/
+
+# Frontend (React/Vite) — tooling & local build artifacts under frontend/.
+# NOTE: flow_atelier/dist/ is intentionally NOT ignored — it is the committed
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/.devtool/
+frontend/.env
+*.tsbuildinfo

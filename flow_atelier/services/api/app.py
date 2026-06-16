@@ -18,7 +18,9 @@ from flow_atelier import __version__
 from flow_atelier.core.atelier import Atelier
 from flow_atelier.services.api.base import ApiServerBase
 
-_STATIC_DIR = Path(__file__).resolve().parents[3] / "dist"
+# Bundled SPA assets. Lives inside the package (flow_atelier/dist/) so it ships
+# in the wheel and is found both from a source checkout and an installed wheel.
+_STATIC_DIR = Path(__file__).resolve().parents[2] / "dist"
 
 
 class FastApiServer(ApiServerBase):
