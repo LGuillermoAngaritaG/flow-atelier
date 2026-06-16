@@ -508,7 +508,7 @@ def render_planned_table(planned: list[PlannedJob]) -> Table:
         "id", "name", "conduit", "kind", "next fire", "last run", "working_dir"
     )
     for p in planned:
-        kind_style = "cyan" if p.schedule_kind == "recurring" else "magenta"
+        kind_style = "magenta" if p.schedule_kind == "once" else "cyan"
         next_cell = _format_next_fire(p.next_fire_time)
         if p.next_fire_time is None and p.schedule_kind == "once":
             next_cell = "[dim](already fired)[/dim]"

@@ -93,11 +93,12 @@ class ScheduleConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    mode: Literal["recurring", "once"]
+    mode: Literal["recurring", "once", "interval"]
     name: str = ""
     days: list[int] | None = None
     times: list[str] | None = None
     run_at: datetime | None = None
+    every_minutes: int | None = None
     timezone: str | None = None
 
     @field_validator("timezone")
@@ -150,6 +151,18 @@ class ScheduleConfig(BaseModel):
                 )
         return v
 
+    @field_validator("every_minutes")
+    @classmethod
+    def _validate_every_minutes(cls, v: int | None) -> int | None:
+        """Ensure ``every_minutes`` is a positive count of minutes.
+
+        :param v: interval in minutes to validate, or ``None``.
+        :returns: the validated value unchanged, or ``None`` if not provided.
+        """
+        if v is not None and v < 1:
+            raise ValueError(f"every_minutes must be >= 1, got {v!r}")
+        return v
+
     @field_validator("run_at", mode="before")
     @classmethod
     def _parse_iso(cls, v: Any) -> Any:
@@ -176,6 +189,9 @@ class ScheduleConfig(BaseModel):
                 raise ValueError("recurring schedule requires at least one day")
             if not self.times:
                 raise ValueError("recurring schedule requires at least one time")
+        elif self.mode == "interval":
+            if self.every_minutes is None:
+                raise ValueError("interval schedule requires every_minutes")
         else:  # once
             if self.run_at is None:
                 raise ValueError("once schedule requires run_at")

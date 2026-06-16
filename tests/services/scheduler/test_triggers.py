@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from flow_atelier.schemas.api import ScheduledJob
 from flow_atelier.services.scheduler.triggers import default_local_zone, to_trigger
@@ -130,6 +131,39 @@ def test_recurring_full_week():
     trig = to_trigger(job, default_zone=UTC)
     fire = trig.get_next_fire_time(None, datetime(2026, 4, 25, 12, 0, tzinfo=UTC))
     assert fire == datetime(2026, 4, 26, 0, 0, tzinfo=UTC)
+
+
+# -------------------------------------------------------------- interval
+
+
+def test_interval_returns_interval_trigger():
+    """Verify interval-mode schedules return an IntervalTrigger."""
+    job = _job({"mode": "interval", "name": "x", "every_minutes": 30})
+    trig = to_trigger(job, default_zone=UTC)
+    assert isinstance(trig, IntervalTrigger)
+
+
+def test_interval_fires_every_n_minutes():
+    """Verify consecutive fires are exactly every_minutes apart."""
+    job = _job({"mode": "interval", "name": "x", "every_minutes": 30})
+    trig = to_trigger(job, default_zone=UTC)
+    prev = datetime(2026, 5, 1, 9, 0, tzinfo=UTC)
+    fire = trig.get_next_fire_time(prev, prev)
+    assert fire == datetime(2026, 5, 1, 9, 30, tzinfo=UTC)
+
+
+def test_interval_honors_schedule_timezone():
+    """An interval schedule's pinned timezone is carried into the trigger."""
+    job = _job(
+        {
+            "mode": "interval",
+            "name": "x",
+            "every_minutes": 120,
+            "timezone": "America/New_York",
+        }
+    )
+    trig = to_trigger(job, default_zone=UTC)
+    assert str(trig.timezone) == "America/New_York"
 
 
 def test_default_local_zone_returns_zoneinfo():

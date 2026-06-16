@@ -82,6 +82,20 @@ async def test_create_schedule_returns_201(fixture):
     assert body["conduit_name"] == "report"
 
 
+async def test_create_interval_schedule_returns_201(fixture):
+    """Verify POST /schedules accepts an interval-mode payload.
+
+    :param fixture: client+atelier+tmp_path tuple fixture.
+    """
+    client, _, _ = fixture
+    payload = _payload(
+        schedule={"mode": "interval", "name": "half hourly", "every_minutes": 30}
+    )
+    resp = await client.post("/schedules", json=payload)
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["schedule"]["every_minutes"] == 30
+
+
 async def test_create_schedule_persists_to_yaml_file(fixture):
     """Verify a created schedule is persisted to a YAML file under schedules/.
 

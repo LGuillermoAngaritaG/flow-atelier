@@ -133,6 +133,29 @@ def test_schedule_config_once_requires_run_at():
     assert sc.run_at is not None
 
 
+def test_schedule_config_interval_accepts_every_minutes():
+    """Verify interval-mode ScheduleConfig accepts every_minutes."""
+    sc = ScheduleConfig.model_validate(
+        {"mode": "interval", "name": "half hourly", "every_minutes": 30}
+    )
+    assert sc.mode == "interval"
+    assert sc.every_minutes == 30
+
+
+def test_schedule_config_interval_requires_every_minutes():
+    """Verify interval-mode ScheduleConfig rejects a missing every_minutes."""
+    with pytest.raises(Exception):
+        ScheduleConfig.model_validate({"mode": "interval", "name": "x"})
+
+
+def test_schedule_config_interval_rejects_non_positive():
+    """Verify interval-mode ScheduleConfig rejects every_minutes < 1."""
+    with pytest.raises(Exception):
+        ScheduleConfig.model_validate(
+            {"mode": "interval", "name": "x", "every_minutes": 0}
+        )
+
+
 def test_schedule_config_recurring_rejects_bad_day():
     """Verify recurring ScheduleConfig rejects an out-of-range day."""
     with pytest.raises(Exception):

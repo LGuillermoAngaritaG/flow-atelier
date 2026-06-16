@@ -441,8 +441,10 @@ schedule:
 
 `days` are `1=Mon` .. `7=Sun`; `times` are `"HH:mm"` 24-hour strings.
 One-shots use `mode: once` with a `run_at` ISO datetime instead of
-`days` / `times`. `atelier schedule add` also accepts the same shape
-in JSON if you prefer that format.
+`days` / `times`. Fixed intervals use `mode: interval` with
+`every_minutes` (e.g. `every_minutes: 30` for every half hour, `120`
+for every two hours) — these repeat forever. `atelier schedule add`
+also accepts the same shape in JSON if you prefer that format.
 
 - New or removed schedules are picked up on the next reload tick
   (default 30s).
