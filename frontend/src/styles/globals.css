@@ -1,0 +1,157 @@
+@import "tailwindcss";
+@import "@/assets/styles/index.css";
+
+
+:root {
+  color-scheme: dark;
+  --color-type-conduit: oklch(0.80 0.16 70);
+  --color-type-task: oklch(0.76 0.17 300);
+  --color-type-schedule: oklch(0.75 0.12 190);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --color-background: oklch(0.985 0.004 80);
+  --color-foreground: oklch(0.22 0.010 60);
+  --color-muted: oklch(0.94 0.004 80);
+  --color-muted-foreground: oklch(0.42 0.010 60);
+  --color-border: oklch(0.86 0.006 70);
+  --color-primary: oklch(0.62 0.16 55);
+  --color-primary-foreground: oklch(0.985 0.004 80);
+  --color-ok: oklch(0.58 0.09 145);
+  --color-destructive: oklch(0.55 0.18 30);
+  --color-card: oklch(0.97 0.004 80);
+  --color-accent: oklch(0.90 0.018 70);
+
+  --color-type-conduit: oklch(0.54 0.19 55);
+  --color-type-task: oklch(0.46 0.22 300);
+  --color-type-schedule: oklch(0.44 0.14 190);
+}
+
+/* -----------------------------------------------------------------------
+   Base
+----------------------------------------------------------------------- */
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings:
+      "ss01",
+      "ss02",
+      "cv11";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: -0.01em;
+  }
+  code,
+  kbd,
+  samp,
+  pre,
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+  button,
+  select,
+  [role="button"] {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
+
+/* -----------------------------------------------------------------------
+   React Flow re-skin — hide every default visual, keep layout only.
+----------------------------------------------------------------------- */
+.react-flow {
+  background: transparent !important;
+}
+.react-flow__controls,
+.react-flow__attribution {
+  display: none !important;
+}
+.react-flow__minimap {
+  left: 12px !important;
+  right: auto !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: 4px !important;
+}
+.react-flow__background {
+  display: none !important;
+}
+.react-flow__edges .react-flow__edge-path {
+  stroke: black;
+}
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:focus .react-flow__edge-path {
+  stroke: var(--color-primary) !important;
+  stroke-width: 2.5 !important;
+  filter: drop-shadow(0 0 3px oklch(0.62 0.16 55 / 0.4));
+}
+.react-flow__connection-path {
+  stroke: var(--color-primary) !important;
+  stroke-width: 2 !important;
+}
+.react-flow__handle {
+  border-radius: 50% !important;
+  background: var(--color-background) !important;
+  border: 2px solid var(--color-muted-foreground) !important;
+  width: 12px !important;
+  height: 12px !important;
+}
+.react-flow__handle:hover {
+  border-color: var(--color-primary) !important;
+  background: var(--color-primary) !important;
+}
+.react-flow__node {
+  font-family: var(--font-mono);
+}
+.react-flow__pane {
+  cursor: default;
+}
+
+@keyframes fadein {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-title {
+  font-family: var(--font-display);
+  font-size: 36px;
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+}
+
+@media (min-width: 1024px) {
+  .page-title {
+    font-size: 52px;
+  }
+}
+
+.sub-title {
+  margin-bottom: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--color-muted-foreground);
+}

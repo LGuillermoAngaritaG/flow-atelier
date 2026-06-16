@@ -1,0 +1,77 @@
+name: Frontend
+
+# Builds the React/Vite UI under frontend/ and syncs its build output into
+# flow_atelier/dist/ — the bundled SPA that ships in the wheel and is served by
+# the FastAPI app (see flow_atelier/services/api/app.py, _STATIC_DIR).
+#
+# On pushes to main the rebuilt bundle is committed back so the repo (and the
+# published wheel) always carry a current UI. The commit is made with
+# GITHUB_TOKEN and tagged [skip ci]; GITHUB_TOKEN pushes do not re-trigger
+# workflows, so there is no build loop. On PRs the workflow builds as a check
+# only and does not commit.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  # Do not cancel a run that may be mid-commit/push to main.
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        # For a production bundle set VITE_USE_MOCK_API / VITE_BACKEND_URL via
+        # repo variables or secrets; left unset, the build ships mock data.
+        run: npm run build
+
+      - name: Sync build output to flow_atelier/dist
+        working-directory: .
+        run: |
+          rm -rf flow_atelier/dist
+          cp -r frontend/dist flow_atelier/dist
+
+      - name: Commit bundled UI
+        if: >-
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+          && github.ref == 'refs/heads/main'
+        working-directory: .
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add flow_atelier/dist
+          if git diff --cached --quiet; then
+            echo "No UI changes — nothing to commit."
+          else
+            git commit -m "chore(ui): rebuild bundled frontend [skip ci]"
+            git push
+          fi

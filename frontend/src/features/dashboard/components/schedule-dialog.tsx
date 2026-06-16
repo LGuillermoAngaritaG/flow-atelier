@@ -1,0 +1,407 @@
+import { useState, useEffect } from "react";
+import type { ScheduleConfig } from "@/types/schedule";
+import { hintStr } from "@/types/conduit";
+import { useConduits, getConduitSync } from "@/services/ConduitProvider";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
+
+interface Props {
+  conduitName: string;
+  defaultInputs?: Record<string, string>;
+  defaultRunPath?: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (
+    config: ScheduleConfig,
+    conduitName: string,
+    inputs: Record<string, string>,
+    runPath: string,
+  ) => void;
+}
+
+const DAYS = [
+  { value: 1, label: "mon" },
+  { value: 2, label: "tue" },
+  { value: 3, label: "wed" },
+  { value: 4, label: "thu" },
+  { value: 5, label: "fri" },
+  { value: 6, label: "sat" },
+  { value: 7, label: "sun" },
+] as const;
+
+function localIsoDefault() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + 60);
+  d.setSeconds(0, 0);
+  return d.toISOString().slice(0, 16);
+}
+
+function toLocalIso(datetimeLocal: string) {
+  const d = new Date(datetimeLocal);
+  const offsetMs = d.getTimezoneOffset() * 60000;
+  const local = new Date(d.getTime() - offsetMs);
+  const offsetMin = d.getTimezoneOffset();
+  const sign = offsetMin <= 0 ? "+" : "-";
+  const absOffset = Math.abs(offsetMin);
+  const hh = String(Math.floor(absOffset / 60)).padStart(2, "0");
+  const mm = String(absOffset % 60).padStart(2, "0");
+  return local.toISOString().replace("Z", "") + sign + hh + ":" + mm;
+}
+
+export function ScheduleDialog({
+  conduitName,
+  defaultInputs,
+  defaultRunPath,
+  open,
+  onOpenChange,
+  onConfirm,
+}: Props) {
+  const { conduits } = useConduits();
+  const [mode, setMode] = useState<"once" | "recurring">("once");
+  const [runAt, setRunAt] = useState(localIsoDefault);
+  const [selectedDays, setSelectedDays] = useState<number[]>([]);
+  const [times, setTimes] = useState<string[]>(["09:00"]);
+  const [name, setName] = useState("");
+
+  const [selectedConduitName, setSelectedConduitName] = useState(conduitName);
+  const [conduitPickerOpen, setConduitPickerOpen] = useState(false);
+  const [inputValues, setInputValues] = useState<Record<string, string>>(
+    defaultInputs ?? {},
+  );
+  const [runPath, setRunPath] = useState(defaultRunPath ?? "");
+
+  const selectedConduit = getConduitSync(selectedConduitName, conduits);
+
+  useEffect(() => {
+    if (open) {
+      setSelectedConduitName(conduitName);
+      setInputValues(defaultInputs ?? {});
+      setRunPath(defaultRunPath ?? "");
+      setName("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  useEffect(() => {
+    if (!conduitPickerOpen) return;
+    const close = () => setConduitPickerOpen(false);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [conduitPickerOpen]);
+
+  const handleConduitSelect = (cName: string) => {
+    setSelectedConduitName(cName);
+    const c = getConduitSync(cName, conduits);
+    setInputValues(
+      c ? Object.fromEntries(Object.keys(c.inputs).map((k) => [k, ""])) : {},
+    );
+    setConduitPickerOpen(false);
+  };
+
+  const handleInputChange = (inputName: string, value: string) => {
+    setInputValues((prev) => ({ ...prev, [inputName]: value }));
+  };
+
+  const toggleDay = (day: number) => {
+    setSelectedDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day],
+    );
+  };
+
+  const updateTime = (index: number, value: string) => {
+    setTimes((prev) => prev.map((t, i) => (i === index ? value : t)));
+  };
+
+  const addTime = () => setTimes((prev) => [...prev, ""]);
+
+  const removeTime = (index: number) => {
+    setTimes((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleConfirm = () => {
+    const base = { name: name || undefined };
+    if (mode === "once") {
+      onConfirm(
+        { ...base, mode: "once", runAt: toLocalIso(runAt) },
+        selectedConduitName,
+        inputValues,
+        runPath,
+      );
+    } else {
+      onConfirm(
+        {
+          ...base,
+          mode: "recurring",
+          days: selectedDays,
+          times: times.filter(Boolean),
+        },
+        selectedConduitName,
+        inputValues,
+        runPath,
+      );
+    }
+    onOpenChange(false);
+  };
+
+  const isValid =
+    name.trim() !== "" &&
+    !!selectedConduitName &&
+    (mode === "once"
+      ? !!runAt
+      : selectedDays.length > 0 && times.some((t) => t !== ""));
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[calc(100%-2rem)] max-w-lg sm:w-full">
+        <DialogHeader>
+          <DialogTitle>
+            schedule a{" "}
+            <em className="text-primary not-italic italic">conduit</em>
+          </DialogTitle>
+          <DialogDescription>
+            choose a conduit and when it should run automatically
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="max-h-[60vh] overflow-y-auto space-y-5 py-2 pr-3">
+          {/* Conduit picker */}
+          <div className="space-y-2">
+            <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+              conduit
+            </label>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConduitPickerOpen(!conduitPickerOpen);
+                }}
+                className="flex w-full items-center justify-between border border-border/60 bg-transparent px-2 py-1.5 text-left font-mono text-[11px] text-foreground hover:border-primary"
+              >
+                <span
+                  className={
+                    selectedConduitName
+                      ? "text-foreground"
+                      : "text-muted-foreground"
+                  }
+                >
+                  {selectedConduitName || "select conduit…"}
+                </span>
+                <span className="text-muted-foreground">▾</span>
+              </button>
+              {conduitPickerOpen && (
+                <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-[240px] overflow-auto border border-border bg-card shadow-md">
+                  {conduits.map((c) => (
+                    <button
+                      key={c.name}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleConduitSelect(c.name);
+                      }}
+                      className={`w-full px-2 py-1.5 text-left hover:bg-muted ${
+                        selectedConduitName === c.name ? "bg-primary/8" : ""
+                      }`}
+                    >
+                      <div
+                        className={`font-mono text-[11px] leading-tight ${
+                          selectedConduitName === c.name
+                            ? "text-primary"
+                            : "text-foreground"
+                        }`}
+                      >
+                        {c.name}
+                      </div>
+                      {c.description && (
+                        <div className="mt-0.5 truncate text-[10px] leading-snug text-muted-foreground">
+                          {c.description}
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Run path */}
+          <div className="space-y-2">
+            <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+              run path
+            </label>
+            <input
+              value={runPath}
+              onChange={(e) => setRunPath(e.target.value)}
+              className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
+              placeholder="/path/to/project"
+            />
+          </div>
+
+          {/* Inputs */}
+          {selectedConduit &&
+            Object.keys(selectedConduit.inputs).length > 0 && (
+              <div className="space-y-2">
+                <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                  inputs
+                </label>
+                <div className="border-t border-border/60">
+                  {Object.entries(selectedConduit.inputs).map(
+                    ([inputName, hint]) => (
+                      <div
+                        key={inputName}
+                        className="grid grid-cols-[120px_1fr] items-start gap-4 border-b border-border/50 py-3"
+                      >
+                        <div>
+                          <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-foreground">
+                            {inputName}
+                          </div>
+                          <div className="mt-1 text-[10px] text-muted-foreground">
+                            {hintStr(hint)}
+                          </div>
+                        </div>
+                        <input
+                          value={inputValues[inputName] ?? ""}
+                          onChange={(e) =>
+                            handleInputChange(inputName, e.target.value)
+                          }
+                          className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
+                          placeholder={hintStr(hint)}
+                        />
+                      </div>
+                    ),
+                  )}
+                </div>
+              </div>
+            )}
+
+          {/* Mode tabs */}
+          <div className="flex border border-border">
+            {(["once", "recurring"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                className={cn(
+                  "flex-1 py-2 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors",
+                  mode === m
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {m === "once" ? "one-time" : "recurring"}
+              </button>
+            ))}
+          </div>
+
+          {mode === "once" ? (
+            <div className="space-y-2">
+              <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                run at
+              </label>
+              <input
+                type="datetime-local"
+                value={runAt}
+                onChange={(e) => setRunAt(e.target.value)}
+                className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
+              />
+            </div>
+          ) : (
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                  on days
+                </label>
+                <div className="flex justify-between gap-1">
+                  {DAYS.map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => toggleDay(value)}
+                      className={cn(
+                        "flex h-9 w-9 items-center justify-center rounded-full border text-[11px] font-mono uppercase transition-colors",
+                        selectedDays.includes(value)
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border text-muted-foreground hover:border-foreground hover:text-foreground",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                  at times
+                </label>
+                <div className="space-y-2">
+                  {times.map((time, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <input
+                        type="time"
+                        value={time}
+                        onChange={(e) => updateTime(i, e.target.value)}
+                        className="flex-1 border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
+                      />
+                      {times.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeTime(i)}
+                          className="text-muted-foreground hover:text-destructive transition-colors text-sm leading-none"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={addTime}
+                    className="flex h-7 w-7 items-center justify-center rounded border border-dashed border-border text-muted-foreground hover:border-foreground hover:text-foreground transition-colors"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Name */}
+          <div className="space-y-2">
+            <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+              name
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={selectedConduitName}
+              className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none placeholder:text-muted-foreground/50 focus:border-primary"
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+          >
+            cancel
+          </Button>
+          <Button size="sm" onClick={handleConfirm} disabled={!isValid}>
+            ◷ schedule
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
