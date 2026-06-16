@@ -64,6 +64,14 @@ async def test_stderr_captured():
     assert "boom" in r.stderr
 
 
+async def test_bashism_pipefail_supported():
+    """`set -o pipefail` must work: the executor runs bash, not /bin/sh."""
+    cmd = "set -euo pipefail; echo ok"
+    r = await BashExecutor().execute(_task(cmd), cmd, _ctx())
+    assert r.exit_code == 0
+    assert "ok" in r.output
+
+
 async def test_timeout_kills_process():
     """Verify a long-running command is killed when the timeout expires."""
     r = await BashExecutor().execute(
