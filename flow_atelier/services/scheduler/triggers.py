@@ -8,6 +8,7 @@ from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from flow_atelier.schemas.api import ScheduledJob
 
@@ -52,11 +53,15 @@ def to_trigger(job: ScheduledJob, default_zone: ZoneInfo) -> BaseTrigger:
     :param job: persisted schedule
     :param default_zone: timezone used when the schedule pins none and for
         naive ``run_at`` values
-    :returns: ``DateTrigger`` for ``mode="once"``; ``CronTrigger`` (or
-        ``OrTrigger`` of crons) for ``mode="recurring"``
+    :returns: ``DateTrigger`` for ``mode="once"``; ``IntervalTrigger`` for
+        ``mode="interval"``; ``CronTrigger`` (or ``OrTrigger`` of crons) for
+        ``mode="recurring"``
     """
     schedule = job.schedule
     zone = ZoneInfo(schedule.timezone) if schedule.timezone else default_zone
+    if schedule.mode == "interval":
+        assert schedule.every_minutes is not None  # validated upstream
+        return IntervalTrigger(minutes=schedule.every_minutes, timezone=zone)
     if schedule.mode == "once":
         run_at = schedule.run_at
         assert run_at is not None  # validated upstream
