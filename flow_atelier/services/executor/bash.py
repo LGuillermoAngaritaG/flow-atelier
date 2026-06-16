@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import signal
 
 from flow_atelier.schemas.conduit import TaskDefinition
@@ -56,7 +57,17 @@ class BashExecutor(ExecutorBase):
         :param context: runtime :class:`FlowContext`, used for ``timeout``
         :returns: :class:`ExecutionResult` with stdout/stderr/exit code
         """
-        proc = await asyncio.create_subprocess_shell(
+        # Run under bash explicitly, not create_subprocess_shell: that uses
+        # /bin/sh (dash on Debian/Ubuntu/WSL) or cmd.exe on Windows, so
+        # bashisms like `set -o pipefail` fail even though the tool is "bash".
+        bash = shutil.which("bash")
+        if bash is None:
+            raise RuntimeError(
+                "tool:bash requires `bash` on PATH (install git-bash/WSL on Windows)"
+            )
+        proc = await asyncio.create_subprocess_exec(
+            bash,
+            "-c",
             resolved_command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
