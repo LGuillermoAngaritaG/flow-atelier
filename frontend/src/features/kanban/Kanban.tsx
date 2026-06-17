@@ -9,6 +9,7 @@ import {
   type DragStartEvent,
   type DragEndEvent,
 } from "@dnd-kit/core";
+import { toast } from "sonner";
 import { startTask } from "@/runner/engine";
 import { useTaskStore } from "@/runner";
 import { useConduit } from "@/hooks/useConduit";
@@ -113,6 +114,7 @@ export function Kanban() {
         useTaskStore.getState().updateTask(task.name, (t) => ({ ...t, column: "done" }));
       }
     },
+    onError: (message) => toast.error(message),
   });
 
   const sensors = useSensors(

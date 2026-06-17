@@ -97,18 +97,21 @@ export function InputForm({ conduit, onRun, onSchedule }: Props) {
 
       <div className="border-t border-border/60">
         <div className="grid grid-cols-[140px_1fr] items-start gap-6 border-b border-border/50 py-4">
-          <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-foreground">
+          <label htmlFor="run-path" className="font-mono text-[11px] uppercase tracking-[0.12em] text-foreground">
             working directory
-          </div>
+          </label>
           <div>
             <input
+              id="run-path"
               value={runPath}
               onChange={(e) => setRunPath(e.target.value)}
               onBlur={(e) => handlePathBlur(e.target.value)}
+              aria-invalid={!!errors.runPath}
+              aria-describedby={errors.runPath ? "run-path-error" : undefined}
               className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
               placeholder="/path/to/project"
             />
-            {errors.runPath && <div className="mt-1 font-mono text-[10px] text-destructive">{errors.runPath}</div>}
+            {errors.runPath && <div id="run-path-error" className="mt-1 font-mono text-[10px] text-destructive">{errors.runPath}</div>}
           </div>
         </div>
       </div>
@@ -126,23 +129,26 @@ export function InputForm({ conduit, onRun, onSchedule }: Props) {
             className="grid grid-cols-[140px_1fr] items-start gap-6 border-b border-border/50 py-4"
           >
             <div>
-              <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-foreground">
+              <label htmlFor={`input-${name}`} className="font-mono text-[11px] uppercase tracking-[0.12em] text-foreground">
                 {name}
-              </div>
+              </label>
               <div className="mt-1 text-[11px] text-muted-foreground">
                 {hintStr(hint)}
               </div>
             </div>
             <div>
               <input
+                id={`input-${name}`}
                 name={name}
                 value={values[name] ?? ""}
                 onChange={(e) => handleChange(name, e.target.value)}
                 onBlur={handleBlur}
+                aria-invalid={!!errors[name]}
+                aria-describedby={errors[name] ? `input-${name}-error` : undefined}
                 className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
                 placeholder={hintStr(hint)}
               />
-              {errors[name] && <div className="mt-1 font-mono text-[10px] text-destructive">{errors[name]}</div>}
+              {errors[name] && <div id={`input-${name}-error`} className="mt-1 font-mono text-[10px] text-destructive">{errors[name]}</div>}
             </div>
           </div>
         ))}

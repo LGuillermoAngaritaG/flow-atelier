@@ -2,7 +2,15 @@ const MIN = 60_000;
 const HR = 60 * MIN;
 const DAY = 24 * HR;
 
+// Upstream "treat bad dates as now" behavior can hand these helpers NaN or
+// negative input; render a clean fallback instead of `NaN:NaN`/negative ms.
+const FALLBACK = "-";
+function isBadMs(ms: number): boolean {
+  return !Number.isFinite(ms) || ms < 0;
+}
+
 export function fmtDuration(ms: number): string {
+  if (isBadMs(ms)) return FALLBACK;
   if (ms < 1_000) return `${ms}ms`;
   if (ms < MIN) return `${(ms / 1000).toFixed(1)}s`;
   if (ms < HR) {
@@ -16,6 +24,7 @@ export function fmtDuration(ms: number): string {
 }
 
 export function fmtRelative(ms: number, now = Date.now()): string {
+  if (!Number.isFinite(ms)) return FALLBACK;
   const delta = now - ms;
   if (delta < MIN) return "just now";
   if (delta < HR) return `${Math.floor(delta / MIN)}m ago`;
@@ -25,6 +34,7 @@ export function fmtRelative(ms: number, now = Date.now()): string {
 
 /** Format milliseconds as m:ss or h:mm:ss */
 export function fmtMSS(ms: number): string {
+  if (isBadMs(ms)) return FALLBACK;
   const totalSec = Math.floor(ms / 1000);
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
@@ -34,6 +44,7 @@ export function fmtMSS(ms: number): string {
 }
 
 export function fmtClock(ms: number): string {
+  if (isBadMs(ms)) return FALLBACK;
   const d = new Date(ms);
   return (
     d.getHours().toString().padStart(2, "0") +

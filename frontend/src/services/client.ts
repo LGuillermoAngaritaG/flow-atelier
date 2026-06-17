@@ -26,8 +26,11 @@ export async function fetchJson<TResponse>(
     const errorText = await res.text();
     throw new Error(`API error ${res.status}: ${errorText}`);
   }
-  const json = await res.json();
-  return toCamelCase<TResponse>(json);
+  // A successful call may have no body (e.g. a 204 DELETE). Parsing an empty
+  // string as JSON throws, so a successful delete would surface as an error.
+  const text = await res.text();
+  if (!text) return undefined as TResponse;
+  return toCamelCase<TResponse>(JSON.parse(text));
 }
 
 export { USE_MOCK, BASE_URL };

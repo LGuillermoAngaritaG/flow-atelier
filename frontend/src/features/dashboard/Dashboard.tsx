@@ -23,6 +23,7 @@ export default function Dashboard() {
     onFlowComplete: () => {
       setRefreshKey((k) => k + 1);
     },
+    onError: (message) => toast.error(message),
   });
 
   const refreshAll = () => {
