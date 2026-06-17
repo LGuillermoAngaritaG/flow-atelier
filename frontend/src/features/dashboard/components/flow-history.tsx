@@ -77,19 +77,24 @@ export function FlowHistory({
 
   // ── Row list ──────────────────────────────────────────────────────────────
 
-  const liveRows: Row[] = liveRuns
-    .filter((r) => !r.parentFlowId)
-    .map((r) => ({
-    flowId: r.flowId,
-    conduit: r.conduitName,
-    startedAt: r.startedAt,
-    duration: r.status === "running"
-      ? Date.now() - r.startedAt
-      : (r.logLines[r.logLines.length - 1]?.t ?? Date.now()) - r.startedAt,
-    state: r.status,
-    tag: r.status === "running" ? "live" : r.status === "cancelled" ? "cancelled" : r.status,
-    isConduit: true,
-  }));
+  const liveRows: Row[] = useMemo(
+    () =>
+      liveRuns
+        .filter((r) => !r.parentFlowId)
+        .map((r) => ({
+          flowId: r.flowId,
+          conduit: r.conduitName,
+          startedAt: r.startedAt,
+          duration:
+            r.status === "running"
+              ? Date.now() - r.startedAt
+              : (r.logLines[r.logLines.length - 1]?.t ?? Date.now()) - r.startedAt,
+          state: r.status,
+          tag: r.status === "running" ? "live" : r.status === "cancelled" ? "cancelled" : r.status,
+          isConduit: true,
+        })),
+    [liveRuns],
+  );
 
   // Dedup: exclude prior rows whose flowId matches a live run (exact match only).
   const liveFlowIds = useMemo(
@@ -97,23 +102,24 @@ export function FlowHistory({
     [liveRuns],
   );
 
-  const priorRows: Row[] = priorFlows
-    .filter((p) => {
-      if (liveFlowIds.has(p.flowId)) return false;
-      return true;
-    })
-    .map((p) => {
-      const isTask = p.conduitName.startsWith("task__");
-      return {
-        flowId: p.flowId,
-        conduit: isTask ? p.conduitName.slice(6) : p.conduitName,
-        startedAt: p.startedAt,
-        duration: p.duration ?? 0,
-        state: p.status === "cancelled" ? "cancelled" : p.status,
-        tag: p.status,
-        isConduit: !isTask,
-      };
-    });
+  const priorRows: Row[] = useMemo(
+    () =>
+      priorFlows
+        .filter((p) => !liveFlowIds.has(p.flowId))
+        .map((p) => {
+          const isTask = p.conduitName.startsWith("task__");
+          return {
+            flowId: p.flowId,
+            conduit: isTask ? p.conduitName.slice(6) : p.conduitName,
+            startedAt: p.startedAt,
+            duration: p.duration ?? 0,
+            state: p.status === "cancelled" ? "cancelled" : p.status,
+            tag: p.status,
+            isConduit: !isTask,
+          };
+        }),
+    [priorFlows, liveFlowIds],
+  );
 
   const rows = useMemo(() => {
     const sorted = [...liveRows, ...priorRows]

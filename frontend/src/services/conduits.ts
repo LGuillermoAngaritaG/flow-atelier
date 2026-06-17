@@ -40,11 +40,9 @@ export function getConduitCached(name: string): Conduit | undefined {
 export async function fetchConduit(name: string): Promise<Conduit | undefined> {
   if (USE_MOCK) return mockGetConduit(name);
   if (_conduitCache) return _conduitCache.find((c) => c.name === name);
-  try {
-    return await apiGetConduitByName(name);
-  } catch {
-    return undefined;
-  }
+  // Let real errors propagate; swallowing them to `undefined` made a network
+  // or permission failure indistinguishable from "this conduit doesn't exist."
+  return apiGetConduitByName(name);
 }
 
 // ── Flows ─────────────────────────────────────────────────────────────────

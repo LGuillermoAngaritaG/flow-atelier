@@ -26,6 +26,9 @@ export function TaskCardRunning({ task, selected, onClick }: Props) {
 
   const logsRef = useRef<HTMLDivElement>(null);
   const tail = flow.logLines.slice(-4);
+  // Absolute index of the first visible line, so keys stay stable as the
+  // window slides (avoids React reusing rows for different content).
+  const tailBase = flow.logLines.length - tail.length;
 
   useEffect(() => {
     if (logsRef.current) {
@@ -111,7 +114,7 @@ export function TaskCardRunning({ task, selected, onClick }: Props) {
       >
         {tail.map((line, i) => (
           <div
-            key={i}
+            key={tailBase + i}
             className={cn(
               "truncate",
               line.level === "ok" && "text-[color:var(--color-ok)]",

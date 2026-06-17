@@ -6,6 +6,10 @@ export function loadDraftConduit(): Conduit | null {
     const raw = localStorage.getItem(DRAFT_CONDUIT_STORAGE_KEY);
     if (!raw) return null;
     const parsed: Conduit = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      localStorage.removeItem(DRAFT_CONDUIT_STORAGE_KEY);
+      return null;
+    }
     if (Array.isArray(parsed.inputs)) {
       localStorage.removeItem(DRAFT_CONDUIT_STORAGE_KEY);
       return null;

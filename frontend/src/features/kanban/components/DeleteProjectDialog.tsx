@@ -42,7 +42,7 @@ export function DeleteProjectDialog({ open, onOpenChange, projectName, hasHistor
           <>
             <DialogHeader>
               <DialogTitle>
-                delete <em className="text-primary not-italic italic">{projectName}</em>?
+                delete <em className="text-primary not-italic">{projectName}</em>?
               </DialogTitle>
               <DialogDescription>
                 Are you sure you want to delete this project?
@@ -61,7 +61,7 @@ export function DeleteProjectDialog({ open, onOpenChange, projectName, hasHistor
           <>
             <DialogHeader>
               <DialogTitle>
-                this cannot be <em className="text-destructive not-italic italic">undone</em>
+                this cannot be <em className="text-destructive not-italic">undone</em>
               </DialogTitle>
               <DialogDescription>
                 Your completed flows will be removed if you delete this project.

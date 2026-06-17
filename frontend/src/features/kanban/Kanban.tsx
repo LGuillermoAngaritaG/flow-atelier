@@ -163,7 +163,10 @@ export function Kanban() {
   const handleDragCancel = useCallback(() => setActiveTask(null), []);
 
   const showAllProjects = activeProjectId === ALL_PROJECTS;
-  const activeProject = projects.find((p) => p.id === activeProjectId) ?? projects[0] ?? { id: "", name: "" };
+  const activeProject = useMemo(
+    () => projects.find((p) => p.id === activeProjectId) ?? projects[0] ?? { id: "", name: "" },
+    [projects, activeProjectId],
+  );
 
   const handleProjectSwitch = useCallback((id: string) => {
     if (id === "__new__") {
@@ -244,7 +247,7 @@ export function Kanban() {
     <div className="min-h-[calc(100vh-3.5rem)] px-4 py-6 lg:px-10 lg:py-10">
       <header className="mb-6 lg:mb-10 flex items-baseline justify-between gap-4 lg:gap-10 border-b border-border pb-4 lg:pb-7">
         <h1 className="page-title">
-          Run a <em className="text-primary not-italic italic">task</em>
+          Run a <em className="text-primary not-italic">task</em>
         </h1>
       </header>
 

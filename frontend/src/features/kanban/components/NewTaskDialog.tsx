@@ -33,7 +33,7 @@ export function NewTaskDialog({ open, onOpenChange, editTask, projectId }: Props
       <DialogContent data-testid="new-task-dialog" className="w-[calc(100%-2rem)] max-w-xl p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>
-            <em className="text-primary not-italic italic">{s.stepTitle()}</em>
+            <em className="text-primary not-italic">{s.stepTitle()}</em>
           </DialogTitle>
           <DialogDescription>{s.stepDesc()}</DialogDescription>
         </DialogHeader>

@@ -98,7 +98,7 @@ export default function Dashboard() {
       >
         <header className="mb-10 flex items-baseline justify-between gap-10 border-b border-border pb-7">
           <h1 className="page-title">
-            Run a <em className="text-primary not-italic italic">conduit</em>
+            Run a <em className="text-primary not-italic">conduit</em>
           </h1>
           <div className="text-right font-mono text-[11px] uppercase tracking-[0.12em] leading-relaxed text-muted-foreground">
             {loading ? "loading…" : `${conduits.length} conduits`}

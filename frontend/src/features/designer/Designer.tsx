@@ -296,50 +296,11 @@ export function Designer() {
                   open conduit
                 </Button>
               </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>
-                    Open a <em className="text-primary not-italic italic">conduit</em>
-                  </DialogTitle>
-                  <DialogDescription>
-                    Select an existing conduit to edit in the designer.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="max-h-[360px] overflow-auto">
-                  <div className="flex flex-col gap-1.5">
-                    {allConduits.map((c) => (
-                      <button
-                        key={c.name}
-                        type="button"
-                        onClick={() => handlePickerSelect(c.name)}
-                        className={`w-full rounded-md border px-3 py-2.5 text-left transition-colors ${
-                          c.name === conduit.name
-                            ? "border-primary/50 bg-primary/8"
-                            : "border-border/50 hover:border-border hover:bg-muted/40"
-                        }`}
-                      >
-                        <div
-                          className={`font-mono text-[11px] leading-tight ${
-                            c.name === conduit.name ? "text-primary" : "text-foreground"
-                          }`}
-                        >
-                          {c.name}
-                        </div>
-                        {c.description && (
-                          <div className="mt-1 truncate text-[10px] leading-snug text-muted-foreground">
-                            {c.description}
-                          </div>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <DialogFooter>
-                  <DialogClose asChild>
-                    <Button variant="outline" size="sm">cancel</Button>
-                  </DialogClose>
-                </DialogFooter>
-              </DialogContent>
+              <OpenConduitDialogContent
+                allConduits={allConduits}
+                currentName={conduit.name}
+                onSelect={handlePickerSelect}
+              />
             </Dialog>
 
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
@@ -348,74 +309,17 @@ export function Designer() {
                   new conduit
                 </Button>
               </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>
-                    Create a new <em className="text-primary not-italic italic">conduit</em>
-                  </DialogTitle>
-                  <DialogDescription>
-                    Name and describe the conduit. Add tasks in the canvas, then save when ready.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-2">
-                  <div className="grid gap-2">
-                    <Label htmlFor="conduit-name">name</Label>
-                    <Input
-                      id="conduit-name"
-                      placeholder="e.g. my_pipeline"
-                      value={createName}
-                      onChange={(e) => setCreateName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleCreate();
-                      }}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="conduit-desc">description</Label>
-                    <Input
-                      id="conduit-desc"
-                      placeholder="What this conduit does"
-                      value={createDesc}
-                      onChange={(e) => setCreateDesc(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleCreate();
-                      }}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="conduit-timeout">timeout (seconds)</Label>
-                      <Input
-                        id="conduit-timeout"
-                        type="number"
-                        min={1}
-                        placeholder="3600"
-                        value={createTimeout}
-                        onChange={(e) => setCreateTimeout(e.target.value)}
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="conduit-max-concurrency">max concurrency</Label>
-                      <Input
-                        id="conduit-max-concurrency"
-                        type="number"
-                        min={1}
-                        placeholder="1"
-                        value={createMaxConcurrency}
-                        onChange={(e) => setCreateMaxConcurrency(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                </div>
-                <DialogFooter>
-                  <DialogClose asChild>
-                    <Button variant="outline" size="sm">cancel</Button>
-                  </DialogClose>
-                  <Button size="sm" onClick={handleCreate} data-testid="create-conduit-submit">
-                    create
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
+              <CreateConduitDialogContent
+                name={createName}
+                setName={setCreateName}
+                desc={createDesc}
+                setDesc={setCreateDesc}
+                timeout={createTimeout}
+                setTimeout={setCreateTimeout}
+                maxConcurrency={createMaxConcurrency}
+                setMaxConcurrency={setCreateMaxConcurrency}
+                onCreate={handleCreate}
+              />
             </Dialog>
 
             <Sheet open={yamlOpen} onOpenChange={setYamlOpen}>
@@ -424,29 +328,7 @@ export function Designer() {
                   preview yaml
                 </Button>
               </SheetTrigger>
-              <SheetContent
-                side="right"
-                className="flex w-full flex-col sm:max-w-[560px]"
-                data-testid="yaml-sheet"
-              >
-                <SheetHeader>
-                  <SheetTitle>
-                    <em className="text-primary not-italic italic">preview</em>{" "}
-                    yaml
-                  </SheetTitle>
-                  <SheetDescription>
-                    read-only · rendered from current canvas state
-                  </SheetDescription>
-                </SheetHeader>
-                <ScrollArea className="flex-1 px-6 py-4">
-                  <pre
-                    data-testid="yaml-contents"
-                    className="whitespace-pre font-mono text-[11px] leading-relaxed text-foreground"
-                  >
-                    {renderConduitYaml(conduit)}
-                  </pre>
-                </ScrollArea>
-              </SheetContent>
+              <PreviewYamlSheetContent conduit={conduit} />
             </Sheet>
             <Button
               size="sm"
@@ -478,50 +360,11 @@ export function Designer() {
                       open conduit
                     </button>
                   </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>
-                        Open a <em className="text-primary not-italic italic">conduit</em>
-                      </DialogTitle>
-                      <DialogDescription>
-                        Select an existing conduit to edit in the designer.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="max-h-[360px] overflow-auto">
-                      <div className="flex flex-col gap-1.5">
-                        {allConduits.map((c) => (
-                          <button
-                            key={c.name}
-                            type="button"
-                            onClick={() => { handlePickerSelect(c.name); setMenuOpen(false); }}
-                            className={`w-full rounded-md border px-3 py-2.5 text-left transition-colors ${
-                              c.name === conduit.name
-                                ? "border-primary/50 bg-primary/8"
-                                : "border-border/50 hover:border-border hover:bg-muted/40"
-                            }`}
-                          >
-                            <div
-                              className={`font-mono text-[11px] leading-tight ${
-                                c.name === conduit.name ? "text-primary" : "text-foreground"
-                              }`}
-                            >
-                              {c.name}
-                            </div>
-                            {c.description && (
-                              <div className="mt-1 truncate text-[10px] leading-snug text-muted-foreground">
-                                {c.description}
-                              </div>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <DialogClose asChild>
-                        <Button variant="outline" size="sm">cancel</Button>
-                      </DialogClose>
-                    </DialogFooter>
-                  </DialogContent>
+                  <OpenConduitDialogContent
+                    allConduits={allConduits}
+                    currentName={conduit.name}
+                    onSelect={(name) => { handlePickerSelect(name); setMenuOpen(false); }}
+                  />
                 </Dialog>
 
                 <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) setMenuOpen(false); }}>
@@ -530,70 +373,17 @@ export function Designer() {
                       new conduit
                     </button>
                   </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>
-                        Create a new <em className="text-primary not-italic italic">conduit</em>
-                      </DialogTitle>
-                      <DialogDescription>
-                        Name and describe the conduit. Add tasks in the canvas, then save when ready.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="grid gap-4 py-2">
-                      <div className="grid gap-2">
-                        <Label htmlFor="conduit-name">name</Label>
-                        <Input
-                          id="conduit-name"
-                          placeholder="e.g. my_pipeline"
-                          value={createName}
-                          onChange={(e) => setCreateName(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="conduit-desc">description</Label>
-                        <Input
-                          id="conduit-desc"
-                          placeholder="What this conduit does"
-                          value={createDesc}
-                          onChange={(e) => setCreateDesc(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="grid gap-2">
-                          <Label htmlFor="conduit-timeout">timeout (seconds)</Label>
-                          <Input
-                            id="conduit-timeout"
-                            type="number"
-                            min={1}
-                            placeholder="3600"
-                            value={createTimeout}
-                            onChange={(e) => setCreateTimeout(e.target.value)}
-                          />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label htmlFor="conduit-max-concurrency">max concurrency</Label>
-                          <Input
-                            id="conduit-max-concurrency"
-                            type="number"
-                            min={1}
-                            placeholder="1"
-                            value={createMaxConcurrency}
-                            onChange={(e) => setCreateMaxConcurrency(e.target.value)}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <DialogClose asChild>
-                        <Button variant="outline" size="sm">cancel</Button>
-                      </DialogClose>
-                      <Button size="sm" onClick={handleCreate} data-testid="create-conduit-submit">
-                        create
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
+                  <CreateConduitDialogContent
+                    name={createName}
+                    setName={setCreateName}
+                    desc={createDesc}
+                    setDesc={setCreateDesc}
+                    timeout={createTimeout}
+                    setTimeout={setCreateTimeout}
+                    maxConcurrency={createMaxConcurrency}
+                    setMaxConcurrency={setCreateMaxConcurrency}
+                    onCreate={handleCreate}
+                  />
                 </Dialog>
 
                 <Sheet open={yamlOpen} onOpenChange={(open) => { setYamlOpen(open); if (!open) setMenuOpen(false); }}>
@@ -602,29 +392,7 @@ export function Designer() {
                       preview yaml
                     </button>
                   </SheetTrigger>
-                  <SheetContent
-                    side="right"
-                    className="flex w-full flex-col sm:max-w-[560px]"
-                    data-testid="yaml-sheet"
-                  >
-                    <SheetHeader>
-                      <SheetTitle>
-                        <em className="text-primary not-italic italic">preview</em>{" "}
-                        yaml
-                      </SheetTitle>
-                      <SheetDescription>
-                        read-only · rendered from current canvas state
-                      </SheetDescription>
-                    </SheetHeader>
-                    <ScrollArea className="flex-1 px-6 py-4">
-                      <pre
-                        data-testid="yaml-contents"
-                        className="whitespace-pre font-mono text-[11px] leading-relaxed text-foreground"
-                      >
-                        {renderConduitYaml(conduit)}
-                      </pre>
-                    </ScrollArea>
-                  </SheetContent>
+                  <PreviewYamlSheetContent conduit={conduit} />
                 </Sheet>
 
                 <button
@@ -687,5 +455,185 @@ export function Designer() {
         </button>
       )}
     </div>
+  );
+}
+
+// Shared dialog/sheet bodies, used by both the desktop toolbar and the mobile
+// burger menu so the two never drift out of sync.
+
+function OpenConduitDialogContent({
+  allConduits,
+  currentName,
+  onSelect,
+}: {
+  allConduits: Conduit[];
+  currentName: string;
+  onSelect: (name: string) => void;
+}) {
+  return (
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>
+          Open a <em className="text-primary not-italic">conduit</em>
+        </DialogTitle>
+        <DialogDescription>
+          Select an existing conduit to edit in the designer.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="max-h-[360px] overflow-auto">
+        <div className="flex flex-col gap-1.5">
+          {allConduits.map((c) => (
+            <button
+              key={c.name}
+              type="button"
+              onClick={() => onSelect(c.name)}
+              className={`w-full rounded-md border px-3 py-2.5 text-left transition-colors ${
+                c.name === currentName
+                  ? "border-primary/50 bg-primary/8"
+                  : "border-border/50 hover:border-border hover:bg-muted/40"
+              }`}
+            >
+              <div
+                className={`font-mono text-[11px] leading-tight ${
+                  c.name === currentName ? "text-primary" : "text-foreground"
+                }`}
+              >
+                {c.name}
+              </div>
+              {c.description && (
+                <div className="mt-1 truncate text-[10px] leading-snug text-muted-foreground">
+                  {c.description}
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+      <DialogFooter>
+        <DialogClose asChild>
+          <Button variant="outline" size="sm">cancel</Button>
+        </DialogClose>
+      </DialogFooter>
+    </DialogContent>
+  );
+}
+
+function CreateConduitDialogContent({
+  name,
+  setName,
+  desc,
+  setDesc,
+  timeout,
+  setTimeout,
+  maxConcurrency,
+  setMaxConcurrency,
+  onCreate,
+}: {
+  name: string;
+  setName: (v: string) => void;
+  desc: string;
+  setDesc: (v: string) => void;
+  timeout: string;
+  setTimeout: (v: string) => void;
+  maxConcurrency: string;
+  setMaxConcurrency: (v: string) => void;
+  onCreate: () => void;
+}) {
+  return (
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>
+          Create a new <em className="text-primary not-italic">conduit</em>
+        </DialogTitle>
+        <DialogDescription>
+          Name and describe the conduit. Add tasks in the canvas, then save when ready.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="grid gap-4 py-2">
+        <div className="grid gap-2">
+          <Label htmlFor="conduit-name">name</Label>
+          <Input
+            id="conduit-name"
+            placeholder="e.g. my_pipeline"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onCreate();
+            }}
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="conduit-desc">description</Label>
+          <Input
+            id="conduit-desc"
+            placeholder="What this conduit does"
+            value={desc}
+            onChange={(e) => setDesc(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onCreate();
+            }}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-2">
+            <Label htmlFor="conduit-timeout">timeout (seconds)</Label>
+            <Input
+              id="conduit-timeout"
+              type="number"
+              min={1}
+              placeholder="3600"
+              value={timeout}
+              onChange={(e) => setTimeout(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="conduit-max-concurrency">max concurrency</Label>
+            <Input
+              id="conduit-max-concurrency"
+              type="number"
+              min={1}
+              placeholder="1"
+              value={maxConcurrency}
+              onChange={(e) => setMaxConcurrency(e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+      <DialogFooter>
+        <DialogClose asChild>
+          <Button variant="outline" size="sm">cancel</Button>
+        </DialogClose>
+        <Button size="sm" onClick={onCreate} data-testid="create-conduit-submit">
+          create
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  );
+}
+
+function PreviewYamlSheetContent({ conduit }: { conduit: Conduit }) {
+  return (
+    <SheetContent
+      side="right"
+      className="flex w-full flex-col sm:max-w-[560px]"
+      data-testid="yaml-sheet"
+    >
+      <SheetHeader>
+        <SheetTitle>
+          <em className="text-primary not-italic">preview</em> yaml
+        </SheetTitle>
+        <SheetDescription>
+          read-only · rendered from current canvas state
+        </SheetDescription>
+      </SheetHeader>
+      <ScrollArea className="flex-1 px-6 py-4">
+        <pre
+          data-testid="yaml-contents"
+          className="whitespace-pre font-mono text-[11px] leading-relaxed text-foreground"
+        >
+          {renderConduitYaml(conduit)}
+        </pre>
+      </ScrollArea>
+    </SheetContent>
   );
 }

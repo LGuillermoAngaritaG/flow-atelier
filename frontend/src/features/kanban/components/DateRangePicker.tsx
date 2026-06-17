@@ -14,7 +14,7 @@ interface Props {
 }
 
 export function DateRangePicker({ from, to, onConfirm }: Props) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<DateRange | undefined>(() =>
     from ? { from: parseLocal(from), to: to ? parseLocal(to) : undefined } : undefined,
   );

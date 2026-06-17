@@ -41,9 +41,18 @@ interface BackendTask {
   locations: string[];
 }
 
+// Parse an ISO timestamp to epoch ms, or null when missing/invalid. Returning
+// null (instead of falling back to Date.now()) keeps a bad timestamp from
+// masquerading as a fresh one and scrambling sort order.
+export function parseTs(s: string | null | undefined): number | null {
+  if (!s) return null;
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? null : t;
+}
+
 function toPriorFlow(raw: BackendPriorFlow): PriorFlow {
-  const startedAt = raw.startedAt ? Date.parse(raw.startedAt) : 0;
-  const finishedAt = raw.finishedAt ? Date.parse(raw.finishedAt) : undefined;
+  const startedAt = parseTs(raw.startedAt) ?? 0;
+  const finishedAt = parseTs(raw.finishedAt) ?? undefined;
   return {
     flowId: raw.flowId,
     conduitName: raw.conduitName,
@@ -62,13 +71,16 @@ function toLogEntries(raw: BackendLogEntry[]): LogEntry[] {
   if (raw.length === 0) return [];
 
   const lines: LogEntry[] = [];
-  const firstT = Date.parse(raw[0].startedAt) || Date.now();
+  const firstT = parseTs(raw[0].startedAt) ?? 0;
   lines.push({ t: firstT, text: "▸ flow started", level: "info" });
 
   const seenTasks = new Set<string>();
+  // Carry forward the last good timestamp so a bad one doesn't jump to "now".
+  let lastT = firstT;
 
   for (const entry of raw) {
-    const t = Date.parse(entry.startedAt) || Date.now();
+    const t = parseTs(entry.startedAt) ?? lastT;
+    lastT = t;
     const level: LogEntry["level"] = entry.exitCode === 0 ? "ok" : "err";
     const task = entry.task || undefined;
 
@@ -102,10 +114,10 @@ function toLogEntries(raw: BackendLogEntry[]): LogEntry[] {
   }
 
   const last = raw[raw.length - 1];
-  const lastT = Date.parse(last.finishedAt) || Date.now();
+  const finalT = parseTs(last.finishedAt) ?? lastT;
   const allOk = raw.every((e) => e.exitCode === 0);
   lines.push({
-    t: lastT,
+    t: finalT,
     text: allOk ? "✓ flow complete" : "✗ flow failed",
     level: allOk ? "ok" : "err",
   });
