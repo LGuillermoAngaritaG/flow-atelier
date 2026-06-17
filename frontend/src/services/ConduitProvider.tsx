@@ -21,8 +21,10 @@ export function ConduitProvider({ children }: { children: ReactNode }) {
   const [conduits, setConduits] = useState<Conduit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Tracks whether a load has ever succeeded with data, so the retry timer can
-  // stop instead of reading a stale `conduits.length` from its mount closure.
+  // Tracks whether a fetch has ever succeeded, so the retry timer can stop
+  // instead of reading a stale `conduits.length` from its mount closure. A
+  // successful empty response is "loaded" too — no conduits is a valid state,
+  // so we must not keep polling. Only a failed fetch leaves this false to retry.
   const loadedRef = useRef(false);
 
   const load = useCallback(() => {
@@ -32,7 +34,7 @@ export function ConduitProvider({ children }: { children: ReactNode }) {
       .then((data) => {
         setConduits(data);
         setError(null);
-        if (data.length > 0) loadedRef.current = true;
+        loadedRef.current = true;
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : "Failed to fetch conduits");
@@ -44,8 +46,8 @@ export function ConduitProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     load();
     if (!USE_MOCK) {
-      // Retry until the list loads, then stop. ponytail: simple 5s retry; swap
-      // for backend push/SSE if conduits ever need live updates after load.
+      // Retry until a fetch succeeds (empty or not), then stop. ponytail: simple
+      // 5s retry; swap for backend push/SSE if conduits ever need live updates.
       const id = setInterval(() => {
         if (loadedRef.current) clearInterval(id);
         else load();

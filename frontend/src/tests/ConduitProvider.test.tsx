@@ -44,8 +44,29 @@ describe("ConduitProvider polling", () => {
     expect(fetchConduits).toHaveBeenCalledTimes(1);
   });
 
-  it("retries on the timer while the list stays empty", async () => {
+  it("stops fetching after a successful empty response", async () => {
     fetchConduits.mockResolvedValue([]);
+
+    render(
+      <ConduitProvider>
+        <div />
+      </ConduitProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchConduits).toHaveBeenCalledTimes(1);
+
+    // an empty list is a valid loaded state — no forever-poll
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20000);
+    });
+    expect(fetchConduits).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries on the timer while fetches keep failing", async () => {
+    fetchConduits.mockRejectedValue(new Error("network down"));
 
     render(
       <ConduitProvider>
