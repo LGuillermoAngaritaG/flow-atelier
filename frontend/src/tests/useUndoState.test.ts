@@ -100,6 +100,95 @@ describe("useUndoState", () => {
     expect(result.current[0]).toBe("initial");
   });
 
+  it("redo reverses undo", () => {
+    const { result } = renderHook(() => useUndoState("initial"));
+    act(() => {
+      result.current[1]("a");
+    });
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(result.current[0]).toBe("a");
+    act(() => {
+      result.current[2](); // undo
+    });
+    expect(result.current[0]).toBe("initial");
+    act(() => {
+      result.current[3](); // redo
+    });
+    expect(result.current[0]).toBe("a");
+  });
+
+  it("redo is a no-op on empty future", () => {
+    const { result } = renderHook(() => useUndoState("initial"));
+    act(() => {
+      result.current[3](); // redo with nothing undone
+    });
+    expect(result.current[0]).toBe("initial");
+  });
+
+  it("new edit clears redo", () => {
+    const { result } = renderHook(() => useUndoState("initial"));
+    act(() => {
+      result.current[1]("a");
+    });
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    act(() => {
+      result.current[2](); // undo
+    });
+    expect(result.current[0]).toBe("initial");
+    act(() => {
+      result.current[1]("b"); // new edit after undo
+    });
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(result.current[0]).toBe("b");
+    act(() => {
+      result.current[3](); // redo — future was cleared
+    });
+    expect(result.current[0]).toBe("b");
+  });
+
+  it("multi-step undo/redo symmetry", () => {
+    const { result } = renderHook(() => useUndoState("initial"));
+    act(() => {
+      result.current[1]("a");
+    });
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    act(() => {
+      result.current[1]("b");
+    });
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    act(() => {
+      result.current[1]("c");
+    });
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(result.current[0]).toBe("c");
+    // Undo 3 times back to initial
+    act(() => { result.current[2](); });
+    expect(result.current[0]).toBe("b");
+    act(() => { result.current[2](); });
+    expect(result.current[0]).toBe("a");
+    act(() => { result.current[2](); });
+    expect(result.current[0]).toBe("initial");
+    // Redo 3 times forward to c
+    act(() => { result.current[3](); });
+    expect(result.current[0]).toBe("a");
+    act(() => { result.current[3](); });
+    expect(result.current[0]).toBe("b");
+    act(() => { result.current[3](); });
+    expect(result.current[0]).toBe("c");
+  });
+
   it("enforces MAX_HISTORY=50 cap", () => {
     const { result } = renderHook(() => useUndoState(0));
     // Make 51 distinct state changes with debounce flushes

@@ -38,7 +38,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { renderConduitYaml } from "@/utils/yaml";
 import { useUndoState } from "@/hooks/useUndoState";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { Menu } from "lucide-react";
+import { Menu, Undo2, Redo2 } from "lucide-react";
 
 function initConduit(conduits: Conduit[]): Conduit {
   return (
@@ -54,7 +54,7 @@ function initConduit(conduits: Conduit[]): Conduit {
 
 export function Designer() {
   const { conduits: allConduits } = useConduits();
-  const [conduit, setConduitRaw, undo] = useUndoState<Conduit>(() => initConduit(allConduits));
+  const [conduit, setConduitRaw, undo, redo] = useUndoState<Conduit>(() => initConduit(allConduits));
   const [saving, setSaving] = useState(false);
 
   const setConduit = useCallback(
@@ -73,14 +73,27 @@ export function Designer() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
         undo();
+      } else if ((mod && e.key === "y") || (mod && e.shiftKey && e.key === "z")) {
+        e.preventDefault();
+        redo();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo]);
+  }, [undo, redo]);
 
   const [selectedName, setSelectedName] = useState<string | undefined>();
   const [yamlOpen, setYamlOpen] = useState(false);
@@ -308,6 +321,15 @@ export function Designer() {
                 onSelect={handlePickerSelect}
               />
             </Dialog>
+
+            <div className="mx-1 h-5 w-px bg-border" />
+            <Button variant="outline" size="sm" onClick={() => undo()} title="Undo (Ctrl+Z)">
+              <Undo2 className="size-3.5" />
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => redo()} title="Redo (Ctrl+Shift+Z / Ctrl+Y)">
+              <Redo2 className="size-3.5" />
+            </Button>
+            <div className="mx-1 h-5 w-px bg-border" />
 
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
               <DialogTrigger asChild>
