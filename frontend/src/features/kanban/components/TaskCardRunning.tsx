@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import type { Task } from "@/types/task";
 import { useConduits, getConduitSync } from "@/services/ConduitProvider";
+import { useTaskStore } from "@/runner";
 import { cancelTask as cancelEngine } from "@/runner";
 import { TOOL_COLORS } from "../toolMeta";
 import { cn } from "@/lib/cn";
@@ -11,7 +12,11 @@ interface Props {
   onClick?: () => void;
 }
 
-export function TaskCardRunning({ task, selected, onClick }: Props) {
+export function TaskCardRunning({ task: initialTask, selected, onClick }: Props) {
+  const selectThisTask = useCallback((s: { tasks: Task[] }) => s.tasks.find((t) => t.name === initialTask.name), [initialTask.name]);
+  const liveTask = useTaskStore(selectThisTask);
+  const task = liveTask ?? initialTask;
+
   const { conduits } = useConduits();
   const conduit = getConduitSync(task.name, conduits);
   const isConduit = !!conduit;

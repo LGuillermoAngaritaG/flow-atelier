@@ -7,6 +7,28 @@ import type { Task, ColumnId } from "@/types/task";
 
 const selectByColumnCache = new Map<ColumnId, Task[]>();
 
+// Storage adapter that persists only when no task is actively running.
+// Zustand v5's persist calls setItem on every state mutation — without this
+// gate, every log-line tick during a mock run serializes the whole task list
+// to localStorage at many writes per second.
+// We use a deferred getter to avoid TDZ during store creation (the store
+// variable is assigned after create() returns, but setItem runs inside it).
+let _getState: (() => TaskStoreState) | null = null;
+const tasksStorage = {
+  getItem: (name: string) => {
+    const raw = localStorage.getItem(name);
+    return raw ? JSON.parse(raw) : null;
+  },
+  setItem: (name: string, value: unknown) => {
+    const running = _getState?.()
+      .tasks.some((t) => t.column === "in_progress" && t.flow) ?? false;
+    if (!running) {
+      localStorage.setItem(name, JSON.stringify(value));
+    }
+  },
+  removeItem: (name: string) => localStorage.removeItem(name),
+};
+
 export interface TaskStoreState {
   tasks: Task[];
   setTasks: (next: Task[]) => void;
@@ -58,8 +80,9 @@ export const useTaskStore = create<TaskStoreState>()(
     {
       name: TASKS_KEY,
       version: 1,
+      storage: tasksStorage,
       partialize: (s) => ({
-        tasks: s.tasks.map((t) => ({ ...t, flow: undefined })),
+        tasks: s.tasks.filter((t) => !(t.column === "in_progress" && t.flow)),
       }),
       migrate: (persisted, version) => {
         // Clear stale mock seed data when switching to API mode
@@ -69,6 +92,8 @@ export const useTaskStore = create<TaskStoreState>()(
     },
   ),
 );
+
+_getState = () => useTaskStore.getState();
 
 export const selectRunningCount = (s: TaskStoreState) =>
   s.tasks.filter((t) => t.column === "in_progress").length;

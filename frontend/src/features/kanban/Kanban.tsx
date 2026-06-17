@@ -11,6 +11,7 @@ import {
 } from "@dnd-kit/core";
 import { toast } from "sonner";
 import { startTask } from "@/runner/engine";
+import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useTaskStore } from "@/runner";
 import { useConduit } from "@/hooks/useConduit";
 import { getConduitCached } from "@/services/conduits";
@@ -84,8 +85,20 @@ const ALLOWED_DROPS: Partial<Record<ColumnId, ColumnId[]>> = {
   done: ["todo", "in_progress"],
 };
 
+function tasksStructuralEqual(a: Task[], b: Task[]) {
+  if (a.length !== b.length) return false;
+  return a.every((t, i) => {
+    const tb = b[i];
+    return t === tb || (
+      t.name === tb.name &&
+      t.column === tb.column &&
+      t.projectId === tb.projectId
+    );
+  });
+}
+
 export function Kanban() {
-  const tasks = useTaskStore((s) => s.tasks);
+  const tasks = useStoreWithEqualityFn(useTaskStore, (s) => s.tasks, tasksStructuralEqual);
   const [selectedName, setSelectedName] = useState<string | undefined>();
   const [addOpen, setAddOpen] = useState(false);
   const [editTask, setEditTask] = useState<Task | undefined>();
