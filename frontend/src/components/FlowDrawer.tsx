@@ -149,11 +149,11 @@ export function FlowDrawer({
   childRuns,
 }: FlowDrawerProps) {
   const logsRef = useRef<HTMLDivElement>(null);
+  const flatLogsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (logsRef.current) {
-      logsRef.current.scrollTop = logsRef.current.scrollHeight;
-    }
+    const el = flatLogsRef.current ?? logsRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [logLines?.length]);
 
   return (
@@ -199,7 +199,7 @@ export function FlowDrawer({
               {logLines && logLines.length > 0 && (
                 <LogsSection
                   logLines={logLines}
-                  logsRef={logsRef}
+                  logsRef={flatLogsRef}
                   startedAt={startedAt}
                   duration={duration}
                 />
@@ -217,7 +217,7 @@ export function FlowDrawer({
             logLines && logLines.length > 0 ? (
               <LogsSection
                 logLines={logLines}
-                logsRef={logsRef}
+                logsRef={flatLogsRef}
                 startedAt={startedAt}
                 duration={duration}
               />
@@ -602,15 +602,22 @@ function HitlSection({
       : [{ name: "response", description: hitl.comment || "Your response" }];
 
   const [values, setValues] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<string[]>([]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed: Record<string, string> = {};
+    const empty: string[] = [];
     for (const f of fields) {
       const v = (values[f.name] ?? "").trim();
-      if (!v) return;
+      if (!v) { empty.push(f.name); continue; }
       trimmed[f.name] = v;
     }
+    if (empty.length > 0) {
+      setErrors(empty);
+      return;
+    }
+    setErrors([]);
     onRespond?.(trimmed);
     setValues({});
   };
@@ -636,28 +643,44 @@ function HitlSection({
       )}
       {onRespond && (
         <form onSubmit={submit} className="mt-2.5 space-y-3">
-          {fields.map((f) => (
-            <div key={f.name} className="space-y-1">
-              <label
-                htmlFor={`hitl-${f.name}`}
-                className="block font-mono text-[9px] uppercase tracking-[0.12em] text-orange-400"
-              >
-                {f.name}
-              </label>
-              <div className="font-mono text-[11px] text-muted-foreground">
-                {f.description}
+          {fields.map((f) => {
+            const isError = errors.includes(f.name);
+            return (
+              <div key={f.name} className="space-y-1">
+                <label
+                  htmlFor={`hitl-${f.name}`}
+                  className="block font-mono text-[9px] uppercase tracking-[0.12em] text-orange-400"
+                >
+                  {f.name}
+                </label>
+                <div className="font-mono text-[11px] text-muted-foreground">
+                  {f.description}
+                </div>
+                <input
+                  id={`hitl-${f.name}`}
+                  value={values[f.name] ?? ""}
+                  onChange={(e) => {
+                    setValues((v) => ({ ...v, [f.name]: e.target.value }));
+                    if (isError) setErrors((prev) => prev.filter((n) => n !== f.name));
+                  }}
+                  placeholder="Type your response…"
+                  className={`w-full border-0 border-b bg-transparent pb-1.5 font-mono text-[11px] text-foreground outline-none focus:border-orange-500 ${
+                    isError ? "border-destructive" : "border-border"
+                  }`}
+                />
+                {isError && (
+                  <div className="font-mono text-[10px] text-destructive">
+                    {f.name} is required
+                  </div>
+                )}
               </div>
-              <input
-                id={`hitl-${f.name}`}
-                value={values[f.name] ?? ""}
-                onChange={(e) =>
-                  setValues((v) => ({ ...v, [f.name]: e.target.value }))
-                }
-                placeholder="Type your response…"
-                className="w-full border-0 border-b border-border bg-transparent pb-1.5 font-mono text-[11px] text-foreground outline-none focus:border-orange-500"
-              />
+            );
+          })}
+          {errors.length > 0 && (
+            <div className="font-mono text-[10px] text-destructive">
+              Please fill in the required fields above.
             </div>
-          ))}
+          )}
           <div className="flex gap-1.5">
             <Button type="submit" size="sm" className="flex-1 text-[9px]">
               resume

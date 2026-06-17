@@ -27,6 +27,7 @@ export interface ConduitTask {
 export interface CreateConduitRequest {
   name: string;
   description: string;
+  inputs: Record<string, string | InputSpec>;
   timeout?: number;
   maxConcurrency?: number;
   tasks: ConduitTask[];

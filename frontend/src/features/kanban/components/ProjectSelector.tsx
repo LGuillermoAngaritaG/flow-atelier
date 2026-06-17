@@ -9,7 +9,7 @@ export function ProjectSelector({ projects, selectedId, onChange, readOnly, noHi
   return (
     <div className="grid grid-cols-[140px_1fr] items-start gap-4">
       <div>
-        <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-foreground">
+        <div id="project-select-label" className="font-mono text-[11px] uppercase tracking-[0.12em] text-foreground">
           project
         </div>
         {!noHint && <div className="mt-0.5 text-[11px] text-muted-foreground">assign to project</div>}
@@ -20,8 +20,10 @@ export function ProjectSelector({ projects, selectedId, onChange, readOnly, noHi
         </div>
       ) : (
         <select
+          id="project-select"
           value={selectedId}
           onChange={(e) => onChange(e.target.value)}
+          aria-labelledby="project-select-label"
           className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
         >
           {projects.map((p) => (

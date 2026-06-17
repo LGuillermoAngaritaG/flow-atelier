@@ -136,7 +136,12 @@ export function Designer() {
     const pos = positionRef.current?.(task.tool) ?? task.position ?? { x: 80, y: 140 };
     setConduit((prev) => {
       // Generate a unique temp name if empty to avoid id collisions in ReactFlow
-      const name = task.name || `task_${(prev.tasks.length + 1)}`;
+      const name = task.name || (() => {
+        const existing = new Set(prev.tasks.map((t) => t.name));
+        let n = 1;
+        while (existing.has(`task_${n}`)) n++;
+        return `task_${n}`;
+      })();
       const positioned = { ...task, name, position: pos };
       setSelectedName(name);
       return {
@@ -239,6 +244,7 @@ export function Designer() {
     const payload = {
       name: conduit.name,
       description: conduit.description,
+      inputs: conduit.inputs,
       timeout: conduit.timeout,
       maxConcurrency: conduit.maxConcurrency,
       tasks: conduit.tasks,

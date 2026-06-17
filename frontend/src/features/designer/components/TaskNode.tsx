@@ -34,7 +34,7 @@ export function TaskNode({ data, selected }: NodeProps) {
         selected && "border-primary shadow-[0_0_0_1px_var(--color-primary)]",
       )}
     >
-      {d.repeat && (
+      {d.repeat != null && d.repeat > 1 && (
         <div className="absolute -top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-full border border-green-600/60 bg-green-500/10 px-2 py-0.5">
           <Repeat className="size-3 text-green-600" />
           <span className="font-mono text-[9px] text-green-600">×{d.repeat}</span>

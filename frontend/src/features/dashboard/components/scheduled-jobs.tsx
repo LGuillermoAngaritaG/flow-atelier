@@ -103,6 +103,7 @@ export function ScheduledJobs({ jobs, onDelete, onAdd }: Props) {
                   <Button
                     variant="ghost"
                     size="icon"
+                    aria-label={`delete schedule ${job.schedule.name || job.conduitName}`}
                     className="ml-auto h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive"
                     onClick={() => setPendingDelete(job)}
                   >

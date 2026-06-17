@@ -65,6 +65,7 @@ describe("mockCreateConduit", () => {
     const created = mockCreateConduit({
       name: "new_conduit",
       description: "A new one",
+      inputs: {},
       tasks: [],
     });
     expect(created.name).toBe("new_conduit");
@@ -78,6 +79,7 @@ describe("mockCreateConduit", () => {
       mockCreateConduit({
         name: "release_notes",
         description: "Duplicate",
+        inputs: {},
         tasks: [],
       }),
     ).toThrow('Conduit "release_notes" already exists');

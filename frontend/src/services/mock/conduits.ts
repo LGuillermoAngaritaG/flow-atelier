@@ -297,7 +297,7 @@ export function mockCreateConduit(req: CreateConduitRequest): Conduit {
     timeout: req.timeout,
     maxConcurrency: req.maxConcurrency,
     runPath: "",
-    inputs: {},
+    inputs: req.inputs ?? {},
     tasks: req.tasks,
   };
   conduits.push(created);
@@ -313,6 +313,7 @@ export function mockUpdateConduit(req: CreateConduitRequest): Conduit {
     description: req.description,
     timeout: req.timeout,
     maxConcurrency: req.maxConcurrency,
+    inputs: req.inputs ?? conduits[idx].inputs,
     tasks: req.tasks,
   };
   return conduits[idx];

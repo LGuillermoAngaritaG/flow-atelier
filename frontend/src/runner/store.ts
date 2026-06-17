@@ -5,6 +5,8 @@ import { TASKS_KEY } from "@/constants/kanban";
 import { USE_MOCK } from "@/services/client";
 import type { Task, ColumnId } from "@/types/task";
 
+const selectByColumnCache = new Map<ColumnId, Task[]>();
+
 export interface TaskStoreState {
   tasks: Task[];
   setTasks: (next: Task[]) => void;
@@ -56,7 +58,9 @@ export const useTaskStore = create<TaskStoreState>()(
     {
       name: TASKS_KEY,
       version: 1,
-      partialize: (s) => ({ tasks: s.tasks }),
+      partialize: (s) => ({
+        tasks: s.tasks.map((t) => ({ ...t, flow: undefined })),
+      }),
       migrate: (persisted, version) => {
         // Clear stale mock seed data when switching to API mode
         if (!USE_MOCK && version === 0) return { tasks: [] };
@@ -69,8 +73,15 @@ export const useTaskStore = create<TaskStoreState>()(
 export const selectRunningCount = (s: TaskStoreState) =>
   s.tasks.filter((t) => t.column === "in_progress").length;
 
-export const selectByColumn = (col: ColumnId) => (s: TaskStoreState) =>
-  s.tasks.filter((t) => t.column === col);
+export const selectByColumn = (col: ColumnId) => (s: TaskStoreState) => {
+  const result = s.tasks.filter((t) => t.column === col);
+  const cached = selectByColumnCache.get(col);
+  if (cached && cached.length === result.length && cached.every((t, i) => t === result[i])) {
+    return cached;
+  }
+  selectByColumnCache.set(col, result);
+  return result;
+};
 
 export const selectByName = (name: string) => (s: TaskStoreState) =>
   s.tasks.find((t) => t.name === name);
