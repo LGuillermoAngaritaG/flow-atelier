@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { AppFrame } from "@/layout/AppFrame";
 import { ConduitProvider } from "@/services/ConduitProvider";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Toaster } from "@/components/ui/toaster";
 import Dashboard from "@/pages/dashboard";
 import Designer from "@/pages/Designer";
@@ -23,12 +24,14 @@ export default function App() {
       <ConduitProvider>
         <BrowserRouter>
           <AppFrame>
-            <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/designer" element={<Designer />} />
-              <Route path="/kanban" element={<Kanban />} />
-            </Routes>
+            <ErrorBoundary>
+              <Routes>
+                <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/designer" element={<Designer />} />
+                <Route path="/kanban" element={<Kanban />} />
+              </Routes>
+            </ErrorBoundary>
           </AppFrame>
           <Toaster />
         </BrowserRouter>
