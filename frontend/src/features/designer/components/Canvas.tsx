@@ -83,8 +83,11 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
     };
   }, []);
 
-  // Expose a position helper so the parent can place new nodes relative to the viewport
-  if (positionRef) {
+  // Expose a position helper so the parent can place new nodes relative to the
+  // viewport. Assigned in an effect (not during render) so React can safely
+  // discard/replay renders without capturing stale values.
+  useEffect(() => {
+    if (!positionRef) return;
     positionRef.current = (_tool: string) => {
       const { x: vx, y: vy, zoom: z } = rf.getViewport();
       const el = document.querySelector('[data-testid="designer-canvas"]');
@@ -99,7 +102,7 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
       const offset = existing.length * 40;
       return { x: Math.round(cx - NODE_W / 2 + offset), y: Math.round(cy - NODE_H / 2) };
     };
-  }
+  }, [positionRef, rf]);
 
   const toNodes = (c: Conduit): Node<TaskNodeData>[] =>
     c.tasks.map((t, i) => ({

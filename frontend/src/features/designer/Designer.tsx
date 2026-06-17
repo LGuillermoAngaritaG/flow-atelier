@@ -9,6 +9,7 @@ import {
   clearDraftConduit,
 } from "@/services/storage/draft-conduit";
 import type { Conduit, ConduitTask } from "@/types/conduit";
+import { escapeRegExp } from "@/utils/regex";
 import { Canvas } from "./components/Canvas";
 import { ToolPanel } from "./components/ToolPanel";
 import { Inspector } from "./components/Inspector";
@@ -158,7 +159,8 @@ export function Designer() {
   const removeInput = useCallback(
     (name: string) => {
       const ref = `{{inputs.${name}}}`;
-      const refRe = new RegExp(`\\$\\{inputs\\.${name}\\}|\\{\\{inputs\\.${name}\\}\\}`, "g");
+      const esc = escapeRegExp(name);
+      const refRe = new RegExp(`\\$\\{inputs\\.${esc}\\}|\\{\\{inputs\\.${esc}\\}\\}`, "g");
       setConduit((prev) => {
         const { [name]: _, ...rest } = prev.inputs;
         return {

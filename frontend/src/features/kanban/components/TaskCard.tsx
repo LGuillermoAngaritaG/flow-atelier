@@ -30,14 +30,20 @@ export function TaskCard({ task, selected, onClick }: Props) {
     <>
     <article
       ref={setNodeRef}
-      {...listeners}
-      {...attributes}
       data-testid="task-card"
       data-task-id={task.name}
       data-selected={selected || undefined}
+      role="button"
+      tabIndex={0}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick?.();
+        }
+      }}
       className={cn(
-        "group h-[80px] border bg-card px-3 py-2.5 transition-colors hover:border-border/90",
+        "group h-[80px] border bg-card px-3 py-2.5 transition-colors hover:border-border/90 focus-visible:outline-2 focus-visible:outline-primary",
         hitl ? "border-orange-500 border-2 bg-orange-500/5" : "border-border",
         selected && "border-primary shadow-[0_0_0_1px_var(--color-primary)]",
         task.column === "done" && "bg-transparent",
@@ -49,6 +55,17 @@ export function TaskCard({ task, selected, onClick }: Props) {
           {task.name}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            {...listeners}
+            {...attributes}
+            onClick={(e) => e.stopPropagation()}
+            data-testid="drag-handle"
+            aria-label={`Drag task ${task.name}`}
+            className="cursor-grab font-mono text-[11px] leading-none text-foreground/40 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            ⠿
+          </button>
           {(task.column === "todo" || task.column === "done") && (
             <button
               type="button"

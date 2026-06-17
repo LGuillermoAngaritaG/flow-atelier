@@ -31,7 +31,17 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    fetchSchedules().then(setScheduledJobs).catch(() => toast.error("Failed to load schedules"));
+    let ignore = false;
+    fetchSchedules()
+      .then((jobs) => {
+        if (!ignore) setScheduledJobs(jobs);
+      })
+      .catch(() => {
+        if (!ignore) toast.error("Failed to load schedules");
+      });
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   useEffect(() => {

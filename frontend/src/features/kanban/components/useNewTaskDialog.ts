@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useConduits, getConduitSync } from "@/services/ConduitProvider";
+import { useTaskStore } from "@/runner";
 import { createTask, updateTaskData, startTask } from "@/runner/engine";
 import { loadProjects } from "@/services/storage/projects";
 import type { ConduitTask, ToolType } from "@/types/conduit";
@@ -28,7 +29,7 @@ export function useNewTaskDialog({ open, onOpenChange, editTask, projectId }: Us
   const [selectedProjectId, setSelectedProjectId] = useState(projectId);
   const [runPrompt, setRunPrompt] = useState("");
   const [nodes, setNodes] = useState<ConduitTask[]>([]);
-  const [, setEditNodeIdx] = useState<number | null>(null);
+  const [editNodeIdx, setEditNodeIdx] = useState<number | null>(null);
   const [selectedTool, setSelectedTool] = useState<ToolType>("tool:bash");
   const [nodeForm, setNodeForm] = useState({ name: "", description: "", task: "", runPath: "" });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -124,17 +125,48 @@ export function useNewTaskDialog({ open, onOpenChange, editTask, projectId }: Us
     if (!nodeForm.description.trim()) errors.description = "Description is required";
     if (Object.keys(errors).length) { setFieldErrors(errors); return; }
     setFieldErrors({});
-    createTask({
+
+    const node: ConduitTask = {
       name: nodeForm.name.trim(),
+      tool: selectedTool,
       description: nodeForm.description,
-      prompt: nodeForm.task || undefined,
+      task: nodeForm.task,
+      dependsOn: [],
+    };
+    const backing = {
+      name: node.name,
+      description: node.description,
+      prompt: node.task || undefined,
       tool: selectedTool,
       runPath: runPath || undefined,
       projectId: selectedProjectId,
       inputs: {},
-    });
-    onOpenChange(false);
-    reset();
+    };
+
+    if (editNodeIdx !== null) {
+      // Editing an existing pipeline node: replace it in place instead of
+      // spawning a duplicate. Rename has to drop the stale backing task.
+      const prev = nodes[editNodeIdx];
+      setNodes((arr) => arr.map((n, i) => (i === editNodeIdx ? node : n)));
+      if (prev && prev.name !== node.name) {
+        useTaskStore.getState().remove(prev.name);
+        createTask(backing);
+      } else {
+        updateTaskData(node.name, {
+          description: node.description,
+          prompt: node.task || undefined,
+          tool: selectedTool,
+          runPath: runPath || undefined,
+        });
+      }
+    } else {
+      createTask(backing);
+      setNodes((arr) => [...arr, node]);
+    }
+
+    setNodeForm({ name: "", description: "", task: "", runPath: "" });
+    setEditNodeIdx(null);
+    setStep("task-nodes");
   };
 
   const editNode = (idx: number) => {

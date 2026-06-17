@@ -62,7 +62,17 @@ export function FlowHistory({
   const [rowHeight, setRowHeight] = useState(0);
 
   useEffect(() => {
-    fetchFlows().then(setPriorFlows).catch(() => toast.error("Failed to load flows"));
+    let ignore = false;
+    fetchFlows()
+      .then((flows) => {
+        if (!ignore) setPriorFlows(flows);
+      })
+      .catch(() => {
+        if (!ignore) toast.error("Failed to load flows");
+      });
+    return () => {
+      ignore = true;
+    };
   }, [refreshKey]);
 
   // ── Row list ──────────────────────────────────────────────────────────────
@@ -152,13 +162,20 @@ export function FlowHistory({
 
   useEffect(() => {
     if (selectedFlowId && !selectedLiveRun) {
+      let ignore = false;
       fetchFlowLogs(selectedFlowId)
         .then(({ logs, tasks, runPath }) => {
+          if (ignore) return;
           setFlowLogs(logs);
           setPriorTasks(tasks as FlowDrawerTask[]);
           setPriorRunPath(runPath);
         })
-        .catch(() => toast.error("Failed to load flow logs"));
+        .catch(() => {
+          if (!ignore) toast.error("Failed to load flow logs");
+        });
+      return () => {
+        ignore = true;
+      };
     } else {
       setFlowLogs([]);
       setPriorTasks([]);

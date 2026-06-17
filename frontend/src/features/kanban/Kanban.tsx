@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from "react";
 import {
   DndContext,
   PointerSensor,
+  KeyboardSensor,
   useSensor,
   useSensors,
   DragOverlay,
@@ -116,6 +117,7 @@ export function Kanban() {
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor),
   );
 
   const [activeTask, setActiveTask] = useState<Task | null>(null);
