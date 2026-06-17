@@ -40,14 +40,19 @@ A `.env` file in the project root (gitignored) is optional — the app runs with
 | Variable             | Description                              | Default                  |
 |----------------------|------------------------------------------|--------------------------|
 | `VITE_USE_MOCK_API`  | `"true"` for simulated backend data      | `true`                   |
-| `VITE_BACKEND_URL`   | Base URL for the backend API             | `http://localhost:8080`  |
+| `VITE_BACKEND_URL`   | Base URL for the backend API             | serving origin (same as the UI) |
 | `VITE_API_TOKEN`     | Bearer token sent to the backend         | `secret-key`             |
+
+When the UI is served by `atelier serve` (the bundled SPA), `VITE_BACKEND_URL`
+defaults to the page's own origin, so the frontend automatically targets
+whatever host:port the server runs on — no URL to keep in sync. Set it only when
+the UI runs on a separate origin (e.g. the Vite dev server on `:5173`).
 
 Mock mode is on by default. To hit a real backend, disable mock mode and point at it:
 
 ```
 VITE_USE_MOCK_API=false
-VITE_BACKEND_URL=http://localhost:8080
+VITE_BACKEND_URL=http://localhost:8000
 VITE_API_TOKEN=your-token
 ```
 

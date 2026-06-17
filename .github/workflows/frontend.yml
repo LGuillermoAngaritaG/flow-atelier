@@ -50,8 +50,10 @@ jobs:
         run: npm ci
 
       - name: Build
-        # For a production bundle set VITE_USE_MOCK_API / VITE_BACKEND_URL via
-        # repo variables or secrets; left unset, the build ships mock data.
+        # Left unset, VITE_USE_MOCK_API defaults off (real backend) and
+        # VITE_BACKEND_URL resolves to the serving origin at runtime, so the
+        # bundle targets whatever host:port `atelier serve` runs on. Set either
+        # via repo variables/secrets only to override that default.
         run: npm run build
 
       - name: Sync build output to flow_atelier/dist
