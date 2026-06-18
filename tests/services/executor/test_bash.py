@@ -5,9 +5,35 @@ import time
 
 import pytest
 
+import flow_atelier.services.executor.bash as bash_mod
 from flow_atelier.schemas.conduit import TaskDefinition, ToolType
 from flow_atelier.services.executor.base import FlowContext
-from flow_atelier.services.executor.bash import BashExecutor
+from flow_atelier.services.executor.bash import BashExecutor, to_bash_path
+
+
+@pytest.mark.parametrize(
+    ("ns", "src", "expected"),
+    [
+        # POSIX host: every path passes through untouched.
+        ("posix", "/mnt/d/autonomous-projects", "/mnt/d/autonomous-projects"),
+        ("posix", r"D:\foo\bar", r"D:\foo\bar"),
+        # WSL bash: Windows drive path -> /mnt/<drive>/...; backslashes gone.
+        ("wsl", r"D:\autonomous-projects\.atelier\conduits\ap",
+         "/mnt/d/autonomous-projects/.atelier/conduits/ap"),
+        ("wsl", "C:/foo/bar", "/mnt/c/foo/bar"),
+        ("wsl", r"D:\\", "/mnt/d"),
+        # git-bash/MSYS: Windows drive path -> /<drive>/...
+        ("msys", r"D:\foo\bar", "/d/foo/bar"),
+        # Idempotency guard: an already-POSIX value is never re-translated,
+        # even when the resolved bash is WSL.
+        ("wsl", "/mnt/d/autonomous-projects", "/mnt/d/autonomous-projects"),
+        ("msys", "/d/foo", "/d/foo"),
+    ],
+)
+def test_to_bash_path(monkeypatch, ns: str, src: str, expected: str) -> None:
+    """to_bash_path translates only real Windows drive paths, per bash namespace."""
+    monkeypatch.setattr(bash_mod, "_bash_namespace", lambda: ns)
+    assert to_bash_path(src) == expected
 
 
 def _task(cmd: str) -> TaskDefinition:

@@ -7,7 +7,7 @@ import path from "node:path";
 
 export default defineConfig(({ command }) => {
   // Mirror the env resolution in src/config/env.ts. A build warns loudly when it
-  // would ship mock data or target a localhost backend, since either silently
+  // would ship mock data or pin the backend to localhost, since either silently
   // breaks a real deployment.
   const env = loadEnv(
     command === "build" ? "production" : "development",
@@ -15,8 +15,12 @@ export default defineConfig(({ command }) => {
     "VITE_",
   );
   const useMock = (env.VITE_USE_MOCK_API ?? "false") === "true";
-  const baseUrl = env.VITE_BACKEND_URL ?? "http://localhost:8080";
-  const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/.test(baseUrl);
+  // An unset VITE_BACKEND_URL means same-origin (the SPA is served by the
+  // backend), which is correct for a deployed build — so only warn when an
+  // explicit override pins the backend to localhost.
+  const baseUrl = env.VITE_BACKEND_URL;
+  const isLocalhost =
+    !!baseUrl && /^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/.test(baseUrl);
 
   if (command === "build" && useMock) {
     console.warn(
@@ -29,7 +33,7 @@ export default defineConfig(({ command }) => {
     console.warn(
       `\n⚠️  BUILD WARNING: VITE_BACKEND_URL is ${baseUrl} (localhost).\n` +
         "   A deployed build can't reach the machine it was built on.\n" +
-        "   Set VITE_BACKEND_URL to the real backend before deploying.\n",
+        "   Leave VITE_BACKEND_URL unset to use the serving origin, or point it at the real backend.\n",
     );
   }
 

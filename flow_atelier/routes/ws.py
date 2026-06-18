@@ -238,15 +238,19 @@ def _wire_atelier(
         )
 
     def on_flow_started(child_flow_id: str) -> None:
-        """Send a ``started`` envelope for a (possibly child) flow.
+        """Send a ``started`` envelope for a child (sub-conduit) flow.
 
-        For child flows the message includes ``parent_flow_id`` and
-        ``parent_task`` so the frontend can nest the display.
+        The top-level flow's ``started`` is already emitted by
+        :func:`_drive_lifecycle`, so this only fires for child flows, whose
+        message carries ``parent_flow_id``/``parent_task`` for nested display.
+        Emitting it for the top-level too produced a duplicate ``started`` that
+        the frontend rendered as a spurious "flow resumed" on fresh runs.
 
-        :param child_flow_id: the flow id of the flow that just started.
+        :param child_flow_id: the flow id of the child flow that just started.
         """
-        if child_flow_id != flow_id:
-            broker.register_flow(child_flow_id)
+        if child_flow_id == flow_id:
+            return
+        broker.register_flow(child_flow_id)
         cname = ""
         try:
             cname, _, _ = parse_flow_id(child_flow_id)
@@ -258,7 +262,7 @@ def _wire_atelier(
                 {
                     "type": "started",
                     "flow_id": child_flow_id,
-                    "parent_flow_id": flow_id if child_flow_id != flow_id else None,
+                    "parent_flow_id": flow_id,
                     "parent_task": parent_task,
                     "conduit_name": cname,
                 }

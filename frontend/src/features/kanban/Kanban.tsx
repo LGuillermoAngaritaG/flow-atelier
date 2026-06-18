@@ -145,6 +145,20 @@ export function Kanban() {
     }
   }, []);
 
+  // Single entry point for starting a task — shared by the drag handler and
+  // the "run" button so both follow the exact same path (startTask +, for real
+  // conduits, conduitRun). Keeping them in sync is the whole point.
+  const runTaskByName = useCallback((taskName: string) => {
+    const result = startTask(taskName);
+    if (result?.needsConduitRun) {
+      const task = useTaskStore.getState().tasks.find((t) => t.name === taskName);
+      const conduit = task ? getConduitCached(task.name) : undefined;
+      if (conduit && task) {
+        conduitRun(conduit.name, task.inputs, task.runPath ?? "");
+      }
+    }
+  }, [conduitRun]);
+
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     setActiveTask(null);
     const { active, over } = event;
@@ -158,14 +172,7 @@ export function Kanban() {
     if (!allowed?.includes(targetColumn)) return;
 
     if (targetColumn === "in_progress") {
-      const result = startTask(taskName);
-      if (result?.needsConduitRun) {
-        const task = useTaskStore.getState().tasks.find(t => t.name === taskName);
-        const conduit = task ? getConduitCached(task.name) : undefined;
-        if (conduit && task) {
-          conduitRun(conduit.name, task.inputs, task.runPath ?? "");
-        }
-      }
+      runTaskByName(taskName);
     } else {
       useTaskStore.getState().updateTask(taskName, (t) => ({
         ...t,
@@ -173,7 +180,7 @@ export function Kanban() {
         flow: undefined,
       }));
     }
-  }, []);
+  }, [runTaskByName]);
 
   const handleDragCancel = useCallback(() => setActiveTask(null), []);
 
@@ -379,7 +386,7 @@ export function Kanban() {
         onResumeRun={conduitResume}
         onRespondToHitl={conduitAnswerHITL}
       />
-      <NewTaskDialog open={addOpen} onOpenChange={closeDialog} editTask={editTask} projectId={showAllProjects ? (projects[0]?.id ?? "default") : activeProject.id} />
+      <NewTaskDialog open={addOpen} onOpenChange={closeDialog} editTask={editTask} onRun={runTaskByName} projectId={showAllProjects ? (projects[0]?.id ?? "default") : activeProject.id} />
       <NewProjectDialog open={newProjectOpen} onOpenChange={setNewProjectOpen} onCreate={handleCreateProject} />
       <DeleteProjectDialog
         open={deleteProjectOpen}

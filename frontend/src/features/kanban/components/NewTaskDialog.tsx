@@ -22,11 +22,12 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   editTask?: Task;
   projectId: string;
+  onRun?: (taskName: string) => void;
 }
 
-export function NewTaskDialog({ open, onOpenChange, editTask, projectId }: Props) {
+export function NewTaskDialog({ open, onOpenChange, editTask, projectId, onRun }: Props) {
   const { conduits } = useConduits();
-  const s = useNewTaskDialog({ open, onOpenChange, editTask, projectId });
+  const s = useNewTaskDialog({ open, onOpenChange, editTask, projectId, onRun });
 
   return (
     <Dialog open={open} onOpenChange={s.handleOpenChange}>

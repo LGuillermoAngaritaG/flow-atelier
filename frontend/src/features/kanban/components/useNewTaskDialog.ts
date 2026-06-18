@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useConduits, getConduitSync } from "@/services/ConduitProvider";
 import { useTaskStore } from "@/runner";
-import { createTask, updateTaskData, startTask } from "@/runner/engine";
+import { createTask, updateTaskData } from "@/runner/engine";
 import { loadProjects } from "@/services/storage/projects";
 import type { ConduitTask, ToolType } from "@/types/conduit";
 import type { Task } from "@/types/task";
@@ -13,9 +13,10 @@ interface UseNewTaskDialogParams {
   onOpenChange: (open: boolean) => void;
   editTask?: Task;
   projectId: string;
+  onRun?: (taskName: string) => void;
 }
 
-export function useNewTaskDialog({ open, onOpenChange, editTask, projectId }: UseNewTaskDialogParams) {
+export function useNewTaskDialog({ open, onOpenChange, editTask, projectId, onRun }: UseNewTaskDialogParams) {
   const isEditing = !!editTask;
   const { conduits } = useConduits();
 
@@ -91,23 +92,14 @@ export function useNewTaskDialog({ open, onOpenChange, editTask, projectId }: Us
     if (!editTask) return;
     const editConduit = getConduitSync(editTask.name, conduits);
     const isCustom = !editConduit;
-    const errors: Record<string, string> = {};
-    if (!runPath.trim()) errors.runPath = "Working directory is required";
-    if (isCustom) {
-      if (!runPrompt.trim()) errors.runPrompt = "Task / prompt is required";
-    } else {
-      for (const name of Object.keys(editConduit!.inputs)) {
-        if (!values[name]?.trim()) errors[name] = "Required";
-      }
-    }
-    if (Object.keys(errors).length) { setFieldErrors(errors); return; }
-    setFieldErrors({});
     updateTaskData(editTask.name, {
       inputs: isCustom ? undefined : (Object.keys(values).length > 0 ? values : undefined),
       prompt: isCustom ? runPrompt || undefined : undefined,
       runPath: runPath || undefined,
     });
-    startTask(editTask.name);
+    // Delegate the run to the kanban layer so the "run" button follows the
+    // exact same path as dragging into "in progress" (startTask + conduitRun).
+    onRun?.(editTask.name);
     onOpenChange(false);
     reset();
   };
