@@ -14,6 +14,7 @@ from flow_atelier.schemas.conduit import Conduit
 from flow_atelier.schemas.log import ExecutionResult
 from flow_atelier.schemas.progress import FlowStatus, TaskStatus
 from flow_atelier.services.executor.base import ExecutorBase
+from flow_atelier.services.executor.bash import to_bash_path
 from flow_atelier.services.executor.conduit import ConduitExecutor
 from flow_atelier.services.store.filesystem import FilesystemStore
 
@@ -365,7 +366,9 @@ async def test_conduit_dir_in_task_template_resolves(store):
     fake = _Capturing()
     engine = Engine({"tool:bash": fake}, store)
     await engine.run(conduit, {})
-    assert fake.cmd == f"echo {store.conduit_dir('test')}/x"
+    # conduit_dir is translated into the bash executor's namespace for
+    # tool:bash tasks (no-op on POSIX, /<drive>/... under git-bash on Windows).
+    assert fake.cmd == f"echo {to_bash_path(store.conduit_dir('test'))}/x"
 
 
 async def test_conduit_dir_default_resolves_at_apply_time(store):
