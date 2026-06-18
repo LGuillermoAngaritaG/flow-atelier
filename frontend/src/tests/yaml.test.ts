@@ -100,4 +100,31 @@ describe("renderConduitYaml", () => {
     const result = renderConduitYaml(fullConduit);
     expect(result).toContain("env: \"staging\"");
   });
+
+  it("quotes names/keys containing YAML-special punctuation", () => {
+    const conduit: Conduit = {
+      name: "build: prod",
+      description: "x",
+      inputs: { "time #1": "a timestamp" },
+      tasks: [
+        {
+          name: "step: one",
+          tool: "tool:bash",
+          description: "d",
+          task: "echo hi",
+          dependsOn: [],
+          inputs: { "key #2": "v" },
+        },
+      ],
+    };
+    const result = renderConduitYaml(conduit);
+    // Special names/keys are double-quoted...
+    expect(result).toContain('name: "build: prod"');
+    expect(result).toContain('"time #1": "a timestamp"');
+    expect(result).toContain('- name: "step: one"');
+    expect(result).toContain('"key #2": "v"');
+    // ...and the unquoted-but-broken forms are gone.
+    expect(result).not.toContain("name: build: prod");
+    expect(result).not.toContain("time #1: ");
+  });
 });

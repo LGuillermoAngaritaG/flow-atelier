@@ -2,13 +2,16 @@ import { useState, useCallback, useMemo } from "react";
 import {
   DndContext,
   PointerSensor,
+  KeyboardSensor,
   useSensor,
   useSensors,
   DragOverlay,
   type DragStartEvent,
   type DragEndEvent,
 } from "@dnd-kit/core";
+import { toast } from "sonner";
 import { startTask } from "@/runner/engine";
+import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useTaskStore } from "@/runner";
 import { useConduit } from "@/hooks/useConduit";
 import { getConduitCached } from "@/services/conduits";
@@ -82,8 +85,20 @@ const ALLOWED_DROPS: Partial<Record<ColumnId, ColumnId[]>> = {
   done: ["todo", "in_progress"],
 };
 
+function tasksStructuralEqual(a: Task[], b: Task[]) {
+  if (a.length !== b.length) return false;
+  return a.every((t, i) => {
+    const tb = b[i];
+    return t === tb || (
+      t.name === tb.name &&
+      t.column === tb.column &&
+      t.projectId === tb.projectId
+    );
+  });
+}
+
 export function Kanban() {
-  const tasks = useTaskStore((s) => s.tasks);
+  const tasks = useStoreWithEqualityFn(useTaskStore, (s) => s.tasks, tasksStructuralEqual);
   const [selectedName, setSelectedName] = useState<string | undefined>();
   const [addOpen, setAddOpen] = useState(false);
   const [editTask, setEditTask] = useState<Task | undefined>();
@@ -112,10 +127,12 @@ export function Kanban() {
         useTaskStore.getState().updateTask(task.name, (t) => ({ ...t, column: "done" }));
       }
     },
+    onError: (message) => toast.error(message),
   });
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor),
   );
 
   const [activeTask, setActiveTask] = useState<Task | null>(null);
@@ -168,7 +185,10 @@ export function Kanban() {
   const handleDragCancel = useCallback(() => setActiveTask(null), []);
 
   const showAllProjects = activeProjectId === ALL_PROJECTS;
-  const activeProject = projects.find((p) => p.id === activeProjectId) ?? projects[0] ?? { id: "", name: "" };
+  const activeProject = useMemo(
+    () => projects.find((p) => p.id === activeProjectId) ?? projects[0] ?? { id: "", name: "" },
+    [projects, activeProjectId],
+  );
 
   const handleProjectSwitch = useCallback((id: string) => {
     if (id === "__new__") {
@@ -249,7 +269,7 @@ export function Kanban() {
     <div className="min-h-[calc(100vh-3.5rem)] px-4 py-6 lg:px-10 lg:py-10">
       <header className="mb-6 lg:mb-10 flex items-baseline justify-between gap-4 lg:gap-10 border-b border-border pb-4 lg:pb-7">
         <h1 className="page-title">
-          Run a <em className="text-primary not-italic italic">task</em>
+          Run a <em className="text-primary not-italic">task</em>
         </h1>
       </header>
 

@@ -54,6 +54,9 @@ export class RunConduitSocket {
       doSend();
     } else if (this.ws.readyState === WebSocket.CONNECTING) {
       this.ws.addEventListener("open", doSend, { once: true });
+    } else {
+      // Closed/closing: don't swallow — surface so callers can react/reconnect.
+      throw new Error("cannot send on a closed connection");
     }
   }
 
@@ -68,8 +71,27 @@ export class RunConduitSocket {
 
   waitForOpen(): Promise<void> {
     if (this.ws.readyState === WebSocket.OPEN) return Promise.resolve();
-    return new Promise((resolve) => {
+    if (
+      this.ws.readyState === WebSocket.CLOSING ||
+      this.ws.readyState === WebSocket.CLOSED
+    ) {
+      return Promise.reject(new Error("connection closed before opening"));
+    }
+    // Settle on close/error too, otherwise a connection that never opens
+    // (server down, bad token, network blip) leaves this promise hanging and
+    // the start command is never sent.
+    return new Promise((resolve, reject) => {
       this.ws.addEventListener("open", () => resolve(), { once: true });
+      this.ws.addEventListener(
+        "error",
+        () => reject(new Error("connection failed before opening")),
+        { once: true },
+      );
+      this.ws.addEventListener(
+        "close",
+        () => reject(new Error("connection closed before opening")),
+        { once: true },
+      );
     });
   }
 }

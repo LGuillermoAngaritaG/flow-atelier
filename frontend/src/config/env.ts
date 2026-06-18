@@ -10,4 +10,12 @@ export const USE_MOCK = (env.VITE_USE_MOCK_API ?? "false") === "true";
 // the frontend in sync with any `atelier serve --port` automatically.
 // VITE_BACKEND_URL overrides this (e.g. a dev server on a separate port).
 export const BASE_URL = env.VITE_BACKEND_URL ?? window.location.origin;
-export const API_TOKEN = env.VITE_API_TOKEN ?? "secret-key";
+// No default token: a missing VITE_API_TOKEN must fail loudly, not ship a
+// guessable shared credential. Requests simply send no Authorization header.
+export const API_TOKEN = env.VITE_API_TOKEN ?? "";
+
+if (!USE_MOCK && !API_TOKEN) {
+  console.warn(
+    "[config] VITE_API_TOKEN is not set — API requests will be sent without authentication.",
+  );
+}

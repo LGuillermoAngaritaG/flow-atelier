@@ -95,3 +95,33 @@ describe("toSnakeCase", () => {
     expect(toSnakeCase({ first_name: "Ada" })).toEqual({ first_name: "Ada" });
   });
 });
+
+describe("user-controlled map keys are opaque", () => {
+  it("preserves inputs keys byte-identically through a round-trip", () => {
+    const original = {
+      conduitName: "demo",
+      inputs: { my_key: "1", runPath: "2", "weird Key": "3" },
+    };
+    const snake = toSnakeCase<typeof original>(original);
+    // fixed field converts, but the user-keyed map keys do not
+    expect(snake).toEqual({
+      conduit_name: "demo",
+      inputs: { my_key: "1", runPath: "2", "weird Key": "3" },
+    });
+    const camel = toCamelCase<typeof original>(snake);
+    expect(camel.inputs).toEqual({ my_key: "1", runPath: "2", "weird Key": "3" });
+  });
+
+  it("keeps taskStatuses map keys literal but converts their values", () => {
+    const server = {
+      task_statuses: {
+        my_task_name: { started_at: "t", exit_code: 0 },
+      },
+    };
+    const camel = toCamelCase<{ taskStatuses: Record<string, Record<string, unknown>> }>(
+      server,
+    );
+    expect(Object.keys(camel.taskStatuses)).toEqual(["my_task_name"]);
+    expect(camel.taskStatuses.my_task_name).toEqual({ startedAt: "t", exitCode: 0 });
+  });
+});

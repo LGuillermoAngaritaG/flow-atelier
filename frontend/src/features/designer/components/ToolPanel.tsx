@@ -147,6 +147,7 @@ export function ToolPanel({ conduit, conduitInputs, onAddTask, onAddInput, onRem
                 </div>
                 <button
                   type="button"
+                  aria-label={`remove input ${name}`}
                   onClick={() => onRemoveInput(name)}
                   className="shrink-0 text-muted-foreground/60 hover:text-destructive"
                 >
@@ -158,7 +159,9 @@ export function ToolPanel({ conduit, conduitInputs, onAddTask, onAddInput, onRem
         )}
         {isCreatingInput ? (
           <div className="space-y-2 border border-border/60 p-2">
+            <label htmlFor="toolpanel-input-name" className="sr-only">input name</label>
             <input
+              id="toolpanel-input-name"
               placeholder="name"
               value={newInputName}
               onChange={(e) => setNewInputName(e.target.value)}
@@ -167,7 +170,9 @@ export function ToolPanel({ conduit, conduitInputs, onAddTask, onAddInput, onRem
               }}
               className="w-full border-0 border-b border-border bg-transparent pb-1 font-mono text-[11px] text-foreground outline-none focus:border-primary"
             />
+            <label htmlFor="toolpanel-input-desc" className="sr-only">input description</label>
             <input
+              id="toolpanel-input-desc"
               placeholder="description"
               value={newInputHint}
               onChange={(e) => setNewInputHint(e.target.value)}

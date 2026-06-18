@@ -21,7 +21,7 @@ export function RemoveTaskDialog({ open, onOpenChange, taskName, onConfirm }: Pr
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>
-            remove <em className="text-primary not-italic italic">{taskName}</em>?
+            remove <em className="text-primary not-italic">{taskName}</em>?
           </DialogTitle>
           <DialogDescription>
             Are you sure you want to remove this task? This cannot be undone.

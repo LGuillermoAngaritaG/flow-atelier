@@ -57,7 +57,7 @@ export default defineConfig(({ command }) => {
       },
     },
     test: {
-      include: ["src/**/*.test.ts"],
+      include: ["src/**/*.test.{ts,tsx}"],
     },
     server: {
       port: 5173,

@@ -1,4 +1,4 @@
-import { useReducer, useRef, useCallback } from "react";
+import { useReducer, useRef, useCallback, useEffect } from "react";
 import { RunConduitSocket } from "@/services/api/run-conduit";
 import type {
   ServerWsMessage,
@@ -30,6 +30,7 @@ export interface LiveRun {
 interface UseConduitOptions {
   onFlowStarted?: (flowId: string, conduitName: string) => void;
   onFlowComplete?: (flowId: string) => void;
+  onError?: (message: string) => void;
 }
 
 // ── Translation helpers ───────────────────────────────────────────────────
@@ -283,8 +284,14 @@ export function reducer(state: State, action: Action): State {
 
 // ── Hook ──────────────────────────────────────────────────────────────────
 
-// Track what we've sent so we can route the `started` response
-// back to the right conduitName. FIFO — messages arrive in order.
+// Track what we've sent so we can route the `started` response back to the
+// right conduitName/runPath/inputs.
+// ponytail: FIFO correlation — assumes the server replies in send order. Robust
+// for a single active run. Proper per-run correlation is blocked on the backend:
+// RunMessage uses extra="forbid" (schemas/ws.py) so a client-generated run_id is
+// rejected, and the `started` reply (routes/ws.py) echoes no client id. Upgrade
+// path: add an optional run_id to RunMessage + StartedMessage on the server, then
+// key `pendingRef` by that id instead of array order.
 interface PendingRun {
   conduitName: string;
   runPath: string;
@@ -303,7 +310,19 @@ export function useConduit(opts: UseConduitOptions = {}) {
   const onFlowCompleteRef = useRef(opts.onFlowComplete);
   onFlowCompleteRef.current = opts.onFlowComplete;
 
+  const onErrorRef = useRef(opts.onError);
+  onErrorRef.current = opts.onError;
+
   const pendingRef = useRef<PendingRun[]>([]);
+
+  // Close the live-run socket when the consumer unmounts so navigating between
+  // screens doesn't leave idle connections receiving messages in the background.
+  useEffect(() => {
+    return () => {
+      socketRef.current?.close();
+      socketRef.current = null;
+    };
+  }, []);
 
   const liveRuns = Array.from(state.runs.values());
 
@@ -399,12 +418,22 @@ export function useConduit(opts: UseConduitOptions = {}) {
   const run = useCallback(
     (conduitName: string, inputs: Record<string, string>, runPath: string) => {
       // Stash metadata so we can build the LiveRun when `started` arrives
-      pendingRef.current.push({ conduitName, runPath, inputs });
+      const pending: PendingRun = { conduitName, runPath, inputs };
+      pendingRef.current.push(pending);
 
       const sock = getOrCreateSocket();
-      sock.waitForOpen().then(() => {
-        sock.send({ type: "run", conduitName, inputs, runPath });
-      });
+      sock
+        .waitForOpen()
+        .then(() => {
+          sock.send({ type: "run", conduitName, inputs, runPath });
+        })
+        .catch((err) => {
+          const i = pendingRef.current.indexOf(pending);
+          if (i >= 0) pendingRef.current.splice(i, 1);
+          onErrorRef.current?.(
+            err instanceof Error ? err.message : "failed to start run",
+          );
+        });
     },
     [getOrCreateSocket],
   );
@@ -413,7 +442,14 @@ export function useConduit(opts: UseConduitOptions = {}) {
     (flowId: string) => {
       dispatch({ type: "CANCEL", flowId });
       const sock = socketRef.current;
-      if (sock) sock.send({ type: "cancel", flowId });
+      if (!sock) return;
+      try {
+        sock.send({ type: "cancel", flowId });
+      } catch (err) {
+        onErrorRef.current?.(
+          err instanceof Error ? err.message : "failed to cancel run",
+        );
+      }
     },
     [],
   );
@@ -422,9 +458,16 @@ export function useConduit(opts: UseConduitOptions = {}) {
     (flowId: string, conduitName?: string) => {
       dispatch({ type: "RESUME", flowId, conduitName });
       const sock = getOrCreateSocket();
-      sock.waitForOpen().then(() => {
-        sock.send({ type: "resume", flowId });
-      });
+      sock
+        .waitForOpen()
+        .then(() => {
+          sock.send({ type: "resume", flowId });
+        })
+        .catch((err) => {
+          onErrorRef.current?.(
+            err instanceof Error ? err.message : "failed to resume run",
+          );
+        });
     },
     [getOrCreateSocket],
   );
@@ -433,7 +476,14 @@ export function useConduit(opts: UseConduitOptions = {}) {
     (flowId: string, answers: Record<string, string>) => {
       dispatch({ type: "ANSWER_HITL", flowId, answers });
       const sock = socketRef.current;
-      if (sock) sock.send({ type: "hitl_answer", flowId, answers });
+      if (!sock) return;
+      try {
+        sock.send({ type: "hitl_answer", flowId, answers });
+      } catch (err) {
+        onErrorRef.current?.(
+          err instanceof Error ? err.message : "failed to send answer",
+        );
+      }
     },
     [],
   );

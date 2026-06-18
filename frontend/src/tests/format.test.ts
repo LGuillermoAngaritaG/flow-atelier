@@ -53,6 +53,12 @@ describe("fmtDuration", () => {
   it("renders 1h30m with minutes", () => {
     expect(fmtDuration(HR + 30 * MIN)).toBe("1h30m");
   });
+
+  it("returns fallback for NaN and negative input", () => {
+    expect(fmtDuration(NaN)).toBe("-");
+    expect(fmtDuration(-1)).toBe("-");
+    expect(fmtDuration(Infinity)).toBe("-");
+  });
 });
 
 describe("fmtRelative", () => {
@@ -145,5 +151,21 @@ describe("fmtMSS", () => {
 
   it("formats multi-hour", () => {
     expect(fmtMSS(7_384_000)).toBe("2:03:04");
+  });
+
+  it("returns fallback for NaN and negative input", () => {
+    expect(fmtMSS(NaN)).toBe("-");
+    expect(fmtMSS(-1)).toBe("-");
+  });
+});
+
+describe("formatter guards", () => {
+  it("fmtClock returns fallback for bad input", () => {
+    expect(fmtClock(NaN)).toBe("-");
+    expect(fmtClock(-1)).toBe("-");
+  });
+
+  it("fmtRelative returns fallback for non-finite input", () => {
+    expect(fmtRelative(NaN)).toBe("-");
   });
 });

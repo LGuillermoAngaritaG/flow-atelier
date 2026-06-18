@@ -7,7 +7,9 @@ export function loadProjects(): Project[] {
   try {
     const raw = localStorage.getItem(PROJECTS_KEY);
     if (!raw) return [DEFAULT_PROJECT];
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [DEFAULT_PROJECT];
+    return parsed;
   } catch {
     return [DEFAULT_PROJECT];
   }

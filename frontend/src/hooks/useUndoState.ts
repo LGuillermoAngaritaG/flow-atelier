@@ -11,6 +11,7 @@ export function useUndoState<T>(initial: T | (() => T)) {
   const [state, setStateRaw] = useState(initial);
 
   const history = useRef<T[]>([]);
+  const future = useRef<T[]>([]);
   const pending = useRef<T | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
 
@@ -30,6 +31,8 @@ export function useUndoState<T>(initial: T | (() => T)) {
             ? (value as (p: T) => T)(prev)
             : value;
 
+        future.current = [];
+
         // First mutation in a burst captures the pre-mutation state
         if (pending.current === null) pending.current = structuredClone(prev);
 
@@ -45,8 +48,23 @@ export function useUndoState<T>(initial: T | (() => T)) {
     clearTimeout(timer.current);
     pending.current = null;
     if (history.current.length === 0) return;
-    setStateRaw(history.current.pop()!);
+    setStateRaw((prev) => {
+      future.current.push(prev);
+      return history.current.pop()!;
+    });
   }, []);
 
-  return [state, setState, undo] as const;
+  const redo = useCallback(() => {
+    if (future.current.length === 0) return;
+    clearTimeout(timer.current);
+    pending.current = null;
+    setStateRaw((prev) => {
+      const next = future.current.pop()!;
+      history.current.push(prev);
+      if (history.current.length > MAX_HISTORY) history.current.shift();
+      return next;
+    });
+  }, []);
+
+  return [state, setState, undo, redo] as const;
 }

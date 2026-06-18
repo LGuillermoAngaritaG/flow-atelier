@@ -34,7 +34,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreate }: Props) {
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>
-            <em className="text-primary not-italic italic">new project</em>
+            <em className="text-primary not-italic">new project</em>
           </DialogTitle>
           <DialogDescription>create a new project to organize your tasks</DialogDescription>
         </DialogHeader>

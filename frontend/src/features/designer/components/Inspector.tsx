@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import type { Conduit, ConduitTask, InputSpec } from "@/types/conduit";
 import { hintStr, slugifyTaskName } from "@/types/conduit";
 import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 
 const TOOL_COLORS: Record<string, string> = {
   "tool:bash": "oklch(0.80 0.12 200)",
@@ -29,20 +30,6 @@ export function Inspector({ task, conduit, conduits, onUpdateTask, conduitInputs
   const [repeatCustom, setRepeatCustom] = useState(false);
   const [conduitPickerOpen, setConduitPickerOpen] = useState(false);
 
-  useEffect(() => {
-    if (!repeatOpen) return;
-    const close = () => setRepeatOpen(false);
-    document.addEventListener("click", close);
-    return () => document.removeEventListener("click", close);
-  }, [repeatOpen]);
-
-  useEffect(() => {
-    if (!conduitPickerOpen) return;
-    const close = () => setConduitPickerOpen(false);
-    document.addEventListener("click", close);
-    return () => document.removeEventListener("click", close);
-  }, [conduitPickerOpen]);
-
   const [inputsOpen, setInputsOpen] = useState(false);
   const [isCreatingInput, setIsCreatingInput] = useState(false);
   const [newInputName, setNewInputName] = useState("");
@@ -50,13 +37,6 @@ export function Inspector({ task, conduit, conduits, onUpdateTask, conduitInputs
   const taskRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => setDraft(task), [task]);
-
-  useEffect(() => {
-    if (!inputsOpen) return;
-    const close = () => setInputsOpen(false);
-    document.addEventListener("click", close);
-    return () => document.removeEventListener("click", close);
-  }, [inputsOpen]);
 
   if (!task || !draft) {
     return (
@@ -169,7 +149,7 @@ export function Inspector({ task, conduit, conduits, onUpdateTask, conduitInputs
         </div>
         <div
           className="mt-1 font-mono text-[13px] font-bold leading-tight"
-          style={{ color: TOOL_COLORS[task.tool] ?? "text-foreground" }}
+          style={{ color: TOOL_COLORS[task.tool] ?? "var(--color-foreground)" }}
         >
           {task.tool}
         </div>
@@ -201,51 +181,43 @@ export function Inspector({ task, conduit, conduits, onUpdateTask, conduitInputs
         </Field>
         {draft.tool !== "tool:conduit" && (
         <Field label="inputs">
-          <div className="relative">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setInputsOpen(!inputsOpen);
-              }}
-              className="flex w-full items-center justify-between border border-border/60 bg-transparent px-2 py-1.5 text-left font-mono text-[11px] text-foreground hover:border-primary"
-            >
-              <span>
-                {Object.keys(conduitInputs).length === 0
-                  ? "create new input"
-                  : "select input…"}
-              </span>
-              <span className="text-muted-foreground">▾</span>
-            </button>
-            {inputsOpen && (
-              <div className="absolute left-0 right-0 top-full z-10 mt-1 border border-border bg-card shadow-md">
-                {Object.keys(conduitInputs).map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleInsertInput(name);
-                    }}
-                    className="w-full px-2 py-1.5 text-left font-mono text-[11px] text-foreground hover:bg-muted"
-                  >
-                    {name}
-                  </button>
-                ))}
+          <Popover open={inputsOpen} onOpenChange={setInputsOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between border border-border/60 bg-transparent px-2 py-1.5 text-left font-mono text-[11px] text-foreground hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"
+              >
+                <span>
+                  {Object.keys(conduitInputs).length === 0
+                    ? "create new input"
+                    : "select input…"}
+                </span>
+                <span className="text-muted-foreground">▾</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
+              {Object.keys(conduitInputs).map((name) => (
                 <button
+                  key={name}
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setInputsOpen(false);
-                    setIsCreatingInput(true);
-                  }}
-                  className="w-full border-t border-border/60 px-2 py-1.5 text-left font-mono text-[11px] text-primary hover:bg-muted"
+                  onClick={() => handleInsertInput(name)}
+                  className="w-full px-2 py-1.5 text-left font-mono text-[11px] text-foreground hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
                 >
-                  + create new input
+                  {name}
                 </button>
-              </div>
-            )}
-          </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  setInputsOpen(false);
+                  setIsCreatingInput(true);
+                }}
+                className="w-full border-t border-border/60 px-2 py-1.5 text-left font-mono text-[11px] text-primary hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+              >
+                + create new input
+              </button>
+            </PopoverContent>
+          </Popover>
           {isCreatingInput && (
             <div className="mt-2 space-y-2 border border-border/60 p-2">
               <input
@@ -279,50 +251,48 @@ export function Inspector({ task, conduit, conduits, onUpdateTask, conduitInputs
         )}
         <Field label={draft.tool === "tool:conduit" ? "conduit" : "task"}>
           {draft.tool === "tool:conduit" ? (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setConduitPickerOpen(!conduitPickerOpen);
-                }}
-                className="flex w-full items-center justify-between border border-border/60 bg-transparent px-2 py-1.5 text-left font-mono text-[11px] text-foreground hover:border-primary"
+            <Popover open={conduitPickerOpen} onOpenChange={setConduitPickerOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between border border-border/60 bg-transparent px-2 py-1.5 text-left font-mono text-[11px] text-foreground hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"
+                >
+                  <span className={draft.task ? "text-foreground" : "text-muted-foreground"}>
+                    {draft.task || "select conduit…"}
+                  </span>
+                  <span className="text-muted-foreground">▾</span>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                className="max-h-[240px] w-[var(--radix-popover-trigger-width)] overflow-auto p-0"
               >
-                <span className={draft.task ? "text-foreground" : "text-muted-foreground"}>
-                  {draft.task || "select conduit…"}
-                </span>
-                <span className="text-muted-foreground">▾</span>
-              </button>
-              {conduitPickerOpen && (
-                <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-[240px] overflow-auto border border-border bg-card shadow-md">
-                  {conduits.map((c) => (
-                    <button
-                      key={c.name}
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        commit({ task: c.name });
-                        setConduitPickerOpen(false);
-                      }}
-                      className={`w-full px-2 py-1.5 text-left hover:bg-muted ${
-                        draft.task === c.name ? "bg-primary/8" : ""
-                      }`}
-                    >
-                      <div className={`font-mono text-[11px] leading-tight ${
-                        draft.task === c.name ? "text-primary" : "text-foreground"
-                      }`}>
-                        {c.name}
+                {conduits.map((c) => (
+                  <button
+                    key={c.name}
+                    type="button"
+                    onClick={() => {
+                      commit({ task: c.name });
+                      setConduitPickerOpen(false);
+                    }}
+                    className={`w-full px-2 py-1.5 text-left hover:bg-muted focus-visible:bg-muted focus-visible:outline-none ${
+                      draft.task === c.name ? "bg-primary/8" : ""
+                    }`}
+                  >
+                    <div className={`font-mono text-[11px] leading-tight ${
+                      draft.task === c.name ? "text-primary" : "text-foreground"
+                    }`}>
+                      {c.name}
+                    </div>
+                    {c.description && (
+                      <div className="mt-0.5 truncate text-[10px] leading-snug text-muted-foreground">
+                        {c.description}
                       </div>
-                      {c.description && (
-                        <div className="mt-0.5 truncate text-[10px] leading-snug text-muted-foreground">
-                          {c.description}
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+                    )}
+                  </button>
+                ))}
+              </PopoverContent>
+            </Popover>
           ) : (
             <textarea
               ref={taskRef}
@@ -431,32 +401,34 @@ export function Inspector({ task, conduit, conduits, onUpdateTask, conduitInputs
           </Field>
         )}
         <Field label="repeat">
-          <div className="relative">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setRepeatOpen(!repeatOpen);
-                setRepeatCustom(false);
+          <div>
+            <Popover
+              open={repeatOpen}
+              onOpenChange={(o) => {
+                setRepeatOpen(o);
+                if (o) setRepeatCustom(false);
               }}
-              className="flex w-full items-center justify-between border border-border/60 bg-transparent px-2 py-1.5 text-left font-mono text-[11px] text-foreground hover:border-primary"
             >
-              <span>{draft.repeat ? `×${draft.repeat}` : "off"}</span>
-              <span className="text-muted-foreground">▾</span>
-            </button>
-            {repeatOpen && (
-              <div className="absolute left-0 right-0 top-full z-10 mt-1 border border-border bg-muted shadow-md">
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between border border-border/60 bg-transparent px-2 py-1.5 text-left font-mono text-[11px] text-foreground hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"
+                >
+                  <span>{draft.repeat ? `×${draft.repeat}` : "off"}</span>
+                  <span className="text-muted-foreground">▾</span>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] bg-muted p-0">
                 {[undefined, 2, 3, 4, 5].map((n) => (
                   <button
                     key={n ?? "off"}
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
+                    onClick={() => {
                       commit({ repeat: n });
                       setRepeatOpen(false);
                       setRepeatCustom(false);
                     }}
-                    className={`w-full px-2 py-1.5 text-left font-mono text-[11px] hover:bg-muted ${
+                    className={`w-full px-2 py-1.5 text-left font-mono text-[11px] hover:bg-muted focus-visible:bg-muted focus-visible:outline-none ${
                       draft.repeat === n ? "text-primary" : "text-foreground"
                     }`}
                   >
@@ -465,16 +437,16 @@ export function Inspector({ task, conduit, conduits, onUpdateTask, conduitInputs
                 ))}
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
+                  onClick={() => {
                     setRepeatCustom(true);
+                    setRepeatOpen(false);
                   }}
-                  className="w-full border-t border-border/60 px-2 py-1.5 text-left font-mono text-[11px] text-primary hover:bg-muted"
+                  className="w-full border-t border-border/60 px-2 py-1.5 text-left font-mono text-[11px] text-primary hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
                 >
                   custom…
                 </button>
-              </div>
-            )}
+              </PopoverContent>
+            </Popover>
             {repeatCustom && (
               <input
                 autoFocus
