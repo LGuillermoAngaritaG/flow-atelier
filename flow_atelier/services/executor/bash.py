@@ -2,13 +2,71 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
+import re
 import shutil
 import signal
+import subprocess
+from pathlib import Path
 
 from flow_atelier.schemas.conduit import TaskDefinition
 from flow_atelier.schemas.log import ExecutionResult
 from flow_atelier.services.executor.base import ExecutorBase, FlowContext
+
+# Windows drive-rooted path, e.g. ``D:\foo`` or ``C:/bar``. Engine-computed
+# path variables (``{{conduit_dir}}``) are the only values that arrive in this
+# flavor; bash-computed ones (``pwd -P``) are already POSIX.
+_WIN_DRIVE_RE = re.compile(r"^([A-Za-z]):[\\/]")
+
+
+@functools.cache
+def _bash_namespace() -> str:
+    """Path namespace the resolved ``bash`` expects: ``posix`` | ``wsl`` | ``msys``.
+
+    On non-Windows hosts ``bash`` is native, so host paths are already POSIX.
+    On Windows, ``shutil.which("bash")`` may be WSL bash (wants
+    ``/mnt/<drive>/...``) or git-bash/MSYS (wants ``/<drive>/...``). These need
+    different translations, so probe the actual bash for ``wslpath`` rather than
+    guessing from its path. Cached: the answer can't change within a run.
+    """
+    if os.name != "nt":
+        return "posix"
+    bash = shutil.which("bash")
+    if bash is None:
+        return "posix"
+    try:
+        probe = subprocess.run(
+            [bash, "-c", "command -v wslpath >/dev/null 2>&1 && echo wsl || echo msys"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "msys"  # ponytail: assume git-bash if the probe can't run
+    return "wsl" if probe.stdout.strip() == "wsl" else "msys"
+
+
+def to_bash_path(path: Path | str) -> str:
+    """Render a host path in the namespace the resolved ``bash`` expects.
+
+    No-op on POSIX hosts and on any value that isn't a Windows drive path — the
+    ``^[A-Za-z]:[\\/]`` guard keeps this idempotent (``wslpath -u`` is not:
+    ``wslpath -u /mnt/d/x`` returns ``/mnt/d/mnt/d/x``). A Windows drive path
+    becomes ``/mnt/<drive>/...`` under WSL bash or ``/<drive>/...`` under
+    git-bash/MSYS, so it survives the backslash-eating shell intact.
+
+    :param path: host path (or already-POSIX string) to translate.
+    :returns: the path in the bash executor's namespace.
+    """
+    text = str(path)
+    m = _WIN_DRIVE_RE.match(text)
+    if m is None or _bash_namespace() == "posix":
+        return text
+    drive = m.group(1).lower()
+    rest = text[2:].replace("\\", "/").lstrip("/")
+    prefix = f"/mnt/{drive}" if _bash_namespace() == "wsl" else f"/{drive}"
+    return f"{prefix}/{rest}" if rest else prefix
 
 
 class BashExecutor(ExecutorBase):
