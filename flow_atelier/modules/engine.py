@@ -52,6 +52,7 @@ from flow_atelier.schemas.flow import parse_flow_id
 from flow_atelier.schemas.log import ExecutionResult, LogEntry, TaskEvent
 from flow_atelier.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
 from flow_atelier.services.executor.base import ExecutorBase, FlowContext
+from flow_atelier.services.executor.bash import to_bash_path
 from flow_atelier.services.store.base import StoreBase
 
 TaskEventCallback = Callable[[TaskEvent], None]
@@ -611,13 +612,22 @@ class Engine:
                 loop_history: list[str] = list(prior_iterations.get(t.name, []))
                 start_iteration = min(len(loop_history) + 1, t.repeat)
 
+                # {{conduit_dir}} is engine-computed in the host namespace; a
+                # tool:bash body may run under WSL/git-bash (Windows), where a
+                # raw `D:\...` path is mangled. Translate it to the resolved
+                # bash's namespace for bash tasks only — harness/nested tasks
+                # run native on the host and want the host path unchanged.
+                task_conduit_dir: Path | str | None = conduit_dir
+                if conduit_dir is not None and t.tool == ToolType.bash:
+                    task_conduit_dir = to_bash_path(conduit_dir)
+
                 def _resolve_task() -> str:
                     return resolve(
                         t.task, runtime_inputs, outputs,
                         unavailable_tasks=unavailable, loop_history=loop_history,
                         loop_history_limit=self.loop_history_limit,
                         loop_history_entry_chars=self.loop_history_entry_chars,
-                        conduit_dir=conduit_dir,
+                        conduit_dir=task_conduit_dir,
                     )
 
                 try:

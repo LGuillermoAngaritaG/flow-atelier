@@ -139,7 +139,7 @@ def resolve(
     loop_history: list[str] | None = None,
     loop_history_limit: int = 0,
     loop_history_entry_chars: int = 0,
-    conduit_dir: Path | None = None,
+    conduit_dir: Path | str | None = None,
 ) -> str:
     """Resolve `{{...}}` expressions in ``template``.
 
