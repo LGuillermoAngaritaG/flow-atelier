@@ -1,6 +1,7 @@
 """CLI tests for `atelier add` — install a package from a local path."""
 from __future__ import annotations
 
+import builtins
 import json
 import os
 
@@ -63,7 +64,7 @@ def env(tmp_path, monkeypatch):
     (skill / "SKILL.md").write_text("# idea\n")
     (pkg / "atelier-package.yaml").write_text(MANIFEST_YAML)
 
-    return {"home": home, "global": global_dir, "pkg": pkg}
+    return {"home": home, "global": global_dir, "proj": proj, "pkg": pkg}
 
 
 def test_add_installs_conduit_skills_and_lockfile(env):
@@ -77,6 +78,54 @@ def test_add_installs_conduit_skills_and_lockfile(env):
     assert lock["demo-pkg"]["conduits"] == ["demo"]
     assert lock["demo-pkg"]["skills"] == ["idea"]
     assert "atelier run demo" in result.output
+
+
+def test_add_project_flag_installs_into_project_store(env):
+    """`add --project` installs the conduit into ./.atelier, not global."""
+    result = CliRunner().invoke(app, ["add", str(env["pkg"]), "--project"])
+    assert result.exit_code == 0, result.output
+    assert (env["proj"] / ".atelier" / "conduits" / "demo" / "conduit.yaml").exists()
+    assert not (env["global"] / "conduits" / "demo").exists()
+
+
+def test_add_no_project_flag_installs_global(env):
+    """`add --no-project` installs into the global store."""
+    result = CliRunner().invoke(app, ["add", str(env["pkg"]), "--no-project"])
+    assert result.exit_code == 0, result.output
+    assert (env["global"] / "conduits" / "demo" / "conduit.yaml").exists()
+
+
+def test_add_no_flag_non_tty_defaults_global_without_prompt(env):
+    """No flag on a non-TTY stdin (CliRunner) installs global, no prompt shown."""
+    result = CliRunner().invoke(app, ["add", str(env["pkg"])])
+    assert result.exit_code == 0, result.output
+    assert (env["global"] / "conduits" / "demo" / "conduit.yaml").exists()
+    assert "globally" not in result.output  # interactive prompt text absent
+
+
+def test_add_no_flag_tty_prompts_and_p_installs_project(env, monkeypatch):
+    """No flag on a TTY prompts; answering 'p' installs into the project store."""
+    import types
+
+    # CliRunner swaps the real sys.stdin, so rebind the name the command reads.
+    fake_sys = types.SimpleNamespace(stdin=types.SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("flow_atelier.cli.commands.add.sys", fake_sys)
+    monkeypatch.setattr(builtins, "input", lambda prompt="": "p")
+    result = CliRunner().invoke(app, ["add", str(env["pkg"])])
+    assert result.exit_code == 0, result.output
+    assert (env["proj"] / ".atelier" / "conduits" / "demo" / "conduit.yaml").exists()
+    assert not (env["global"] / "conduits" / "demo").exists()
+
+
+def test_prompt_scope_resolves_answers_and_reasks(monkeypatch):
+    """g/empty -> global (False), p -> project (True); invalid input re-asks."""
+    from flow_atelier.cli.commands.add import _prompt_scope
+
+    answers = iter(["", "g", "x", "p"])
+    monkeypatch.setattr(builtins, "input", lambda prompt="": next(answers))
+    assert _prompt_scope() is False  # empty -> global
+    assert _prompt_scope() is False  # g -> global
+    assert _prompt_scope() is True  # x (re-ask) then p -> project
 
 
 def test_add_collision_skips_without_force_exit_zero(env):

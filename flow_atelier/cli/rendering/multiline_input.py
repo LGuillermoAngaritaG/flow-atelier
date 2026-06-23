@@ -1,6 +1,6 @@
 """Multi-line terminal input using prompt_toolkit.
 
-Enter inserts a newline; Alt+Enter (Escape then Enter) submits.
+Enter submits; Alt+Enter (Escape then Enter) inserts a newline.
 Falls back to ``builtins.input()`` when stdin is not a TTY.
 """
 from __future__ import annotations
@@ -14,16 +14,24 @@ from prompt_toolkit.key_binding import KeyBindings
 
 
 def _make_key_bindings() -> KeyBindings:
-    """Alt+Enter submits; Enter inserts newline."""
+    """Enter submits; Alt+Enter inserts a newline."""
     kb = KeyBindings()
 
-    @kb.add("escape", "enter")
+    @kb.add("enter")
     def _submit(event):
-        """Submit the current buffer when Alt+Enter is pressed.
+        """Submit the current buffer when Enter is pressed.
 
         :param event: prompt_toolkit key event whose buffer is submitted.
         """
         event.current_buffer.validate_and_handle()
+
+    @kb.add("escape", "enter")
+    def _newline(event):
+        """Insert a newline when Alt+Enter (Escape then Enter) is pressed.
+
+        :param event: prompt_toolkit key event whose buffer gets the newline.
+        """
+        event.current_buffer.insert_text("\n")
 
     return kb
 

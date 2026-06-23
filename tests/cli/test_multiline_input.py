@@ -64,7 +64,7 @@ class TestMultilineInputTTY:
         monkeypatch.setattr(
             "flow_atelier.cli.rendering.multiline_input.PromptSession", FakeSession
         )
-        result = await multiline_input("› ", hint="Alt+Enter to submit")
+        result = await multiline_input("› ", hint="Enter to submit · Alt+Enter for newline")
         assert result == "multiline text\nsecond line"
 
     async def test_hint_printed_on_tty(self, monkeypatch, capsys):
@@ -96,6 +96,21 @@ class TestMultilineInputTTY:
         monkeypatch.setattr(
             "flow_atelier.cli.rendering.multiline_input.PromptSession", FakeSession
         )
-        await multiline_input("› ", hint="Alt+Enter to submit")
+        await multiline_input("› ", hint="Enter to submit · Alt+Enter for newline")
         captured = capsys.readouterr()
-        assert "Alt+Enter to submit" in captured.out
+        assert "Enter to submit" in captured.out
+
+
+class TestKeyBindings:
+    """Enter submits; Alt+Enter inserts a newline."""
+
+    def test_enter_submits_and_alt_enter_inserts_newline(self):
+        """Verify the flipped bindings are registered for Enter and Alt+Enter."""
+        from prompt_toolkit.keys import Keys
+
+        from flow_atelier.cli.rendering.multiline_input import _make_key_bindings
+
+        # prompt_toolkit aliases "enter" to ControlM (c-m).
+        keysets = {tuple(b.keys) for b in _make_key_bindings().bindings}
+        assert (Keys.ControlM,) in keysets  # Enter submits
+        assert (Keys.Escape, Keys.ControlM) in keysets  # Alt+Enter newline
