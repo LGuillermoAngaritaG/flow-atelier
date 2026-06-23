@@ -1,6 +1,8 @@
 """`atelier add` command — install a conduit package from a repo or path."""
 from __future__ import annotations
 
+import sys
+
 import typer
 from rich.markup import escape
 
@@ -44,6 +46,21 @@ def _print_report(report: InstallReport) -> None:
         )
 
 
+def _prompt_scope() -> bool:
+    """Ask where to install; g/empty -> global, p -> project. Re-ask on bad input.
+
+    :returns: ``True`` for the project store, ``False`` for global.
+    """
+    while True:
+        ans = input(
+            "Install globally (~/.atelier) or in this project (./.atelier)? [g/p] "
+        ).strip().lower()
+        if ans in ("", "g"):
+            return False
+        if ans == "p":
+            return True
+
+
 @app.command("add", help="Install a conduit package from a git repo or local path.")
 def add_cmd(
     source: str = typer.Argument(
@@ -52,8 +69,10 @@ def add_cmd(
     force: bool = typer.Option(
         False, "--force", help="Overwrite existing conduits/skills on collision."
     ),
-    project: bool = typer.Option(
-        False, "--project", help="Install conduits into the project store, not global."
+    project: bool | None = typer.Option(
+        None,
+        "--project/--no-project",
+        help="Install conduits into the project store, not global.",
     ),
     ref: str = typer.Option(
         None, "--ref", help="git branch/tag/commit to check out."
@@ -63,9 +82,12 @@ def add_cmd(
 
     :param source: git URL, ``owner/repo`` shorthand, or a local path.
     :param force: overwrite colliding conduits/skills instead of skipping.
-    :param project: install conduits into the project store rather than global.
+    :param project: install conduits into the project store rather than global;
+        ``None`` resolves via an interactive prompt on a TTY, else global.
     :param ref: optional git ref to check out.
     """
+    if project is None:
+        project = _prompt_scope() if sys.stdin.isatty() else False
     try:
         report = Atelier().install_package(
             source, ref=ref, project=project, force=force

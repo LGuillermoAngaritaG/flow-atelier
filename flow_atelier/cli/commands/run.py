@@ -238,7 +238,7 @@ def run_cmd(
             for key in missing:
                 value = multiline_input_sync(
                     f"  {key} ({conduit.inputs[key].description}): ",
-                    hint="Alt+Enter to submit",
+                    hint="Enter to submit · Alt+Enter for newline",
                 )
                 inputs[key] = value
         except KeyboardInterrupt:
