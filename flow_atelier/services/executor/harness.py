@@ -123,12 +123,12 @@ def _pick_permissive_mode(state: SessionModeState | None) -> str | None:
 CLAUDE_ACP_LAUNCH = [
     "npx",
     "-y",
-    "@agentclientprotocol/claude-agent-acp@0.37.0",
+    "@agentclientprotocol/claude-agent-acp@0.52.0",
 ]
 CODEX_ACP_LAUNCH = [
     "npx",
     "-y",
-    "@zed-industries/codex-acp@0.14.0",
+    "@zed-industries/codex-acp@0.16.0",
 ]
 OPENCODE_ACP_LAUNCH = ["opencode", "acp"]
 COPILOT_ACP_LAUNCH = ["copilot", "--acp"]
