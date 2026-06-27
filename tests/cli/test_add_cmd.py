@@ -48,8 +48,8 @@ def env(tmp_path, monkeypatch):
     for k in list(os.environ):
         if k.startswith("ATELIER_"):
             monkeypatch.delenv(k, raising=False)
-    # Redirect Path.home() on both POSIX (HOME) and Windows (USERPROFILE),
-    # else skills install to the real user profile and tests pollute each other.
+    # Redirect Path.home() on both POSIX (HOME) and Windows (USERPROFILE) so the
+    # "no skills written" assertions check an isolated home, never the real one.
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("ATELIER_GLOBAL_ATELIER_DIR", str(global_dir))
@@ -67,16 +67,17 @@ def env(tmp_path, monkeypatch):
     return {"home": home, "global": global_dir, "proj": proj, "pkg": pkg}
 
 
-def test_add_installs_conduit_skills_and_lockfile(env):
-    """`add <local>` populates conduit + both skill dirs + installed.json."""
+def test_add_installs_conduit_and_lockfile(env):
+    """`add <local>` populates the conduit + installed.json, ignoring skills."""
     result = CliRunner().invoke(app, ["add", str(env["pkg"])])
     assert result.exit_code == 0, result.output
     assert (env["global"] / "conduits" / "demo" / "conduit.yaml").exists()
-    assert (env["home"] / ".claude" / "skills" / "idea" / "SKILL.md").exists()
-    assert (env["home"] / ".agents" / "skills" / "idea" / "SKILL.md").exists()
+    # The manifest's `skills:` key is ignored: nothing is copied to the user.
+    assert not (env["home"] / ".claude" / "skills" / "idea").exists()
+    assert not (env["home"] / ".agents" / "skills" / "idea").exists()
     lock = json.loads((env["global"] / "installed.json").read_text())
     assert lock["demo-pkg"]["conduits"] == ["demo"]
-    assert lock["demo-pkg"]["skills"] == ["idea"]
+    assert "skills" not in lock["demo-pkg"]
     assert "atelier run demo" in result.output
 
 
@@ -138,34 +139,22 @@ def test_add_collision_skips_without_force_exit_zero(env):
 
 
 def test_add_force_overwrites(env):
-    """`add --force` overwrites an existing skill."""
+    """`add --force` overwrites an existing conduit."""
     assert CliRunner().invoke(app, ["add", str(env["pkg"])]).exit_code == 0
-    user_skill = env["home"] / ".claude" / "skills" / "idea" / "SKILL.md"
-    user_skill.write_text("# changed\n")
+    installed = env["global"] / "conduits" / "demo" / "conduit.yaml"
+    installed.write_text("# clobbered\n")
     result = CliRunner().invoke(app, ["add", str(env["pkg"]), "--force"])
     assert result.exit_code == 0, result.output
-    assert user_skill.read_text() == "# idea\n"
+    assert installed.read_text() == CONDUIT_YAML
 
 
 def test_remove_deletes_recorded_dirs(env):
-    """`remove` deletes exactly the recorded conduit and skill dirs."""
+    """`remove` deletes exactly the recorded conduit dir."""
     assert CliRunner().invoke(app, ["add", str(env["pkg"])]).exit_code == 0
     result = CliRunner().invoke(app, ["remove", "demo-pkg"])
     assert result.exit_code == 0, result.output
     assert not (env["global"] / "conduits" / "demo").exists()
-    assert not (env["home"] / ".claude" / "skills" / "idea").exists()
-    assert not (env["home"] / ".agents" / "skills" / "idea").exists()
     assert json.loads((env["global"] / "installed.json").read_text()) == {}
-
-
-def test_remove_preserves_collision_skipped_skill(env):
-    """A skill skipped on collision is the user's, so `remove` leaves it."""
-    user_skill = env["home"] / ".claude" / "skills" / "idea"
-    user_skill.mkdir(parents=True)
-    (user_skill / "SKILL.md").write_text("# user's own\n")
-    assert CliRunner().invoke(app, ["add", str(env["pkg"])]).exit_code == 0
-    assert CliRunner().invoke(app, ["remove", "demo-pkg"]).exit_code == 0
-    assert (user_skill / "SKILL.md").read_text() == "# user's own\n"
 
 
 def test_remove_unknown_package_errors(env):
@@ -192,12 +181,11 @@ def test_update_force_propagates_source_change(env):
 
 
 def test_update_without_force_preserves_lockfile_ownership(env):
-    """`update` without --force keeps conduits/skills owned in the lockfile."""
+    """`update` without --force keeps conduits owned in the lockfile."""
     assert CliRunner().invoke(app, ["add", str(env["pkg"])]).exit_code == 0
     assert CliRunner().invoke(app, ["update", "demo-pkg"]).exit_code == 0
     lock = json.loads((env["global"] / "installed.json").read_text())
     assert lock["demo-pkg"]["conduits"] == ["demo"]
-    assert lock["demo-pkg"]["skills"] == ["idea"]
 
 
 def test_update_unknown_package_errors(env):

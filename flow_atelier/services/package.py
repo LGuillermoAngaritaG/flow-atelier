@@ -1,9 +1,9 @@
 """Package install machinery for ``atelier add`` — source, fetch, manifest.
 
 A package is a git repo (or local dir) with an ``atelier-package.yaml`` at its
-root describing the conduits and skills to install. This module resolves a
-source string, fetches it into the cache, and parses the manifest (falling back
-to directory discovery, with a warning, when the manifest is absent).
+root describing the conduits to install. This module resolves a source string,
+fetches it into the cache, and parses the manifest (falling back to directory
+discovery, with a warning, when the manifest is absent).
 """
 from __future__ import annotations
 
@@ -156,20 +156,6 @@ def _discover_conduits(repo_dir: Path) -> list[str]:
     )
 
 
-def _discover_skills(repo_dir: Path) -> list[str]:
-    """List skill dir names under ``skills/`` that contain a SKILL.md.
-
-    :param repo_dir: package root directory.
-    """
-    root = repo_dir / "skills"
-    if not root.exists():
-        return []
-    return sorted(
-        p.name for p in root.iterdir()
-        if p.is_dir() and (p / "SKILL.md").exists()
-    )
-
-
 def read_package(repo_dir: Path) -> PackageManifest:
     """Load the package manifest, or fall back to directory discovery.
 
@@ -188,33 +174,26 @@ def read_package(repo_dir: Path) -> PackageManifest:
         except (yaml.YAMLError, ValueError) as e:
             raise PackageError(f"invalid atelier-package.yaml: {e}") from e
     conduits = _discover_conduits(repo_dir)
-    skills = _discover_skills(repo_dir)
     logger.warning(
-        "no atelier-package.yaml in %s; discovered %d conduit(s) and %d skill(s) "
-        "by directory scan",
-        repo_dir, len(conduits), len(skills),
+        "no atelier-package.yaml in %s; discovered %d conduit(s) by directory scan",
+        repo_dir, len(conduits),
     )
-    return PackageManifest(
-        name=repo_dir.name, version=1, conduits=conduits, skills=skills
-    )
+    return PackageManifest(name=repo_dir.name, version=1, conduits=conduits)
 
 
 @dataclass
 class InstallReport:
     """What an install actually wrote vs. skipped.
 
-    ``*_installed`` are package-owned (safe for ``remove`` to delete);
-    ``*_skipped`` pre-existed and were left untouched (not owned).
+    ``conduits_installed`` are package-owned (safe for ``remove`` to delete);
+    ``conduits_skipped`` pre-existed and were left untouched (not owned).
     """
 
     name: str
     scope: str
     conduit_root: Path
-    skill_roots: list[Path]
     conduits_installed: list[str] = field(default_factory=list)
     conduits_skipped: list[str] = field(default_factory=list)
-    skills_installed: list[str] = field(default_factory=list)
-    skills_skipped: list[str] = field(default_factory=list)
 
 
 def install_package(
@@ -222,28 +201,24 @@ def install_package(
     manifest: PackageManifest,
     *,
     conduit_root: Path,
-    skill_roots: list[Path],
     scope: str,
     force: bool = False,
 ) -> InstallReport:
-    """Copy declared conduits and skills into their install targets.
+    """Copy declared conduits into their install target.
 
     Copies each conduit's *whole directory* (so picker.py / templates travel),
-    after confirming its ``conduit.yaml`` parses. Skills are copied into every
-    root in ``skill_roots``. On collision (target exists), skip-and-warn unless
-    ``force``; skipped items are not recorded as owned.
+    after confirming its ``conduit.yaml`` parses. On collision (target exists),
+    skip-and-warn unless ``force``; skipped items are not recorded as owned.
 
     :param repo_dir: the fetched package directory.
     :param manifest: the parsed package manifest.
     :param conduit_root: the ``conduits/`` dir to install conduits into.
-    :param skill_roots: skill destination roots (e.g. ~/.claude/skills).
     :param scope: ``"global"`` or ``"project"`` (recorded in the report).
-    :param force: overwrite colliding conduits/skills instead of skipping.
-    :raises PackageError: a declared conduit/skill is missing or invalid.
+    :param force: overwrite colliding conduits instead of skipping.
+    :raises PackageError: a declared conduit is missing or invalid.
     """
     report = InstallReport(
-        name=manifest.name, scope=scope,
-        conduit_root=conduit_root, skill_roots=skill_roots,
+        name=manifest.name, scope=scope, conduit_root=conduit_root,
     )
     src_conduits = repo_dir / ".atelier" / "conduits"
     for name in manifest.conduits:
@@ -265,23 +240,6 @@ def install_package(
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(src, dest)
         report.conduits_installed.append(name)
-
-    src_skills = repo_dir / "skills"
-    for name in manifest.skills:
-        src = src_skills / name
-        if not (src / "SKILL.md").exists():
-            raise PackageError(f"declared skill missing SKILL.md: {name}")
-        dests = [root / name for root in skill_roots]
-        if any(d.exists() for d in dests) and not force:
-            logger.warning("skill %s already exists, skipping (use --force)", name)
-            report.skills_skipped.append(name)
-            continue
-        for root, dest in zip(skill_roots, dests, strict=True):
-            if dest.exists():
-                shutil.rmtree(dest)
-            root.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(src, dest)
-        report.skills_installed.append(name)
     return report
 
 
@@ -291,7 +249,6 @@ class RemoveReport:
 
     name: str
     conduits_removed: list[str] = field(default_factory=list)
-    skills_removed: list[str] = field(default_factory=list)
 
 
 def read_lockfile(path: Path) -> dict:

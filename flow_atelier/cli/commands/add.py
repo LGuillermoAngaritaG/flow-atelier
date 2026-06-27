@@ -24,19 +24,8 @@ def _print_report(report: InstallReport) -> None:
         console.print(
             f"  [yellow]~[/yellow] {escape(name)}   (exists, skipped — use --force)"
         )
-    roots = ", ".join(str(r) for r in report.skill_roots)
-    console.print(f"skills → {escape(roots)}")
-    for name in report.skills_installed:
-        console.print(f"  [green]+[/green] {escape(name)}")
-    for name in report.skills_skipped:
-        console.print(
-            f"  [yellow]~[/yellow] {escape(name)}   (exists, skipped — use --force)"
-        )
-    n_skipped = len(report.conduits_skipped) + len(report.skills_skipped)
-    summary = (
-        f"installed {len(report.conduits_installed)} conduits, "
-        f"{len(report.skills_installed)} skills"
-    )
+    n_skipped = len(report.conduits_skipped)
+    summary = f"installed {len(report.conduits_installed)} conduits"
     if n_skipped:
         summary += f" ({n_skipped} skipped)"
     console.print(f"[green]{summary}[/green]")
@@ -67,7 +56,7 @@ def add_cmd(
         ..., help="git URL, owner/repo, or a local path."
     ),
     force: bool = typer.Option(
-        False, "--force", help="Overwrite existing conduits/skills on collision."
+        False, "--force", help="Overwrite existing conduits on collision."
     ),
     project: bool | None = typer.Option(
         None,
@@ -78,10 +67,10 @@ def add_cmd(
         None, "--ref", help="git branch/tag/commit to check out."
     ),
 ) -> None:
-    """Fetch a package and install its conduits + skills.
+    """Fetch a package and install its conduits.
 
     :param source: git URL, ``owner/repo`` shorthand, or a local path.
-    :param force: overwrite colliding conduits/skills instead of skipping.
+    :param force: overwrite colliding conduits instead of skipping.
     :param project: install conduits into the project store rather than global;
         ``None`` resolves via an interactive prompt on a TTY, else global.
     :param ref: optional git ref to check out.
@@ -105,11 +94,8 @@ def _print_remove_report(report: RemoveReport) -> None:
     """
     for name in report.conduits_removed:
         console.print(f"  [red]-[/red] {escape(name)}")
-    for name in report.skills_removed:
-        console.print(f"  [red]-[/red] {escape(name)}")
     console.print(
-        f"[green]removed {len(report.conduits_removed)} conduits, "
-        f"{len(report.skills_removed)} skills[/green]"
+        f"[green]removed {len(report.conduits_removed)} conduits[/green]"
     )
 
 
@@ -117,13 +103,13 @@ def _print_remove_report(report: RemoveReport) -> None:
 def update_cmd(
     name: str = typer.Argument(..., help="Installed package name."),
     force: bool = typer.Option(
-        False, "--force", help="Overwrite existing conduits/skills on collision."
+        False, "--force", help="Overwrite existing conduits on collision."
     ),
 ) -> None:
     """Re-fetch and re-install a package from its recorded source.
 
     :param name: installed package name (lockfile key).
-    :param force: overwrite colliding conduits/skills instead of skipping.
+    :param force: overwrite colliding conduits instead of skipping.
     """
     try:
         report = Atelier().update_package(name, force=force)
@@ -133,11 +119,11 @@ def update_cmd(
     _print_report(report)
 
 
-@app.command("remove", help="Uninstall a package's conduits and skills.")
+@app.command("remove", help="Uninstall a package's conduits.")
 def remove_cmd(
     name: str = typer.Argument(..., help="Installed package name."),
 ) -> None:
-    """Delete exactly the conduit and skill dirs a package installed.
+    """Delete exactly the conduit dirs a package installed.
 
     :param name: installed package name (lockfile key).
     """
