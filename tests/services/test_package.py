@@ -53,8 +53,8 @@ def _make_repo(root, *, manifest=True):
 
 
 def _manifest():
-    """Return the demo manifest (one conduit, one skill)."""
-    return PackageManifest(name="demo-pkg", conduits=["demo"], skills=["idea"])
+    """Return the demo manifest (one conduit)."""
+    return PackageManifest(name="demo-pkg", conduits=["demo"])
 
 
 def test_resolve_owner_repo_to_github_url():
@@ -127,7 +127,6 @@ def test_read_package_declared_manifest(tmp_path):
     assert isinstance(manifest, PackageManifest)
     assert manifest.name == "demo-pkg"
     assert manifest.conduits == ["demo"]
-    assert manifest.skills == ["idea"]
 
 
 def test_read_package_fallback_discovers_and_warns(tmp_path, caplog):
@@ -136,59 +135,22 @@ def test_read_package_fallback_discovers_and_warns(tmp_path, caplog):
     with caplog.at_level("WARNING"):
         manifest = read_package(repo)
     assert manifest.conduits == ["demo"]
-    assert manifest.skills == ["idea"]
     assert any("atelier-package.yaml" in r.message for r in caplog.records)
 
 
 # ------------------------------------------------------------------ install
 
 
-def test_install_copies_whole_conduit_dir_and_skills(tmp_path):
-    """install_package copies the whole conduit dir and skills into all roots."""
+def test_install_copies_whole_conduit_dir(tmp_path):
+    """install_package copies the whole conduit dir into the conduit root."""
     repo = _make_repo(tmp_path / "pkgsrc")
     conduit_root = tmp_path / "global" / "conduits"
-    roots = [tmp_path / "claude" / "skills", tmp_path / "agents" / "skills"]
     report = install_package(
-        repo, _manifest(), conduit_root=conduit_root,
-        skill_roots=roots, scope="global",
+        repo, _manifest(), conduit_root=conduit_root, scope="global",
     )
     assert report.conduits_installed == ["demo"]
-    assert report.skills_installed == ["idea"]
     assert (conduit_root / "demo" / "conduit.yaml").exists()
     assert (conduit_root / "demo" / "picker.py").exists()
-    for root in roots:
-        assert (root / "idea" / "SKILL.md").exists()
-
-
-def test_install_skips_existing_skill_and_does_not_own_it(tmp_path):
-    """A pre-existing skill in any root is skipped and not recorded as owned."""
-    repo = _make_repo(tmp_path / "pkgsrc")
-    conduit_root = tmp_path / "global" / "conduits"
-    roots = [tmp_path / "claude" / "skills", tmp_path / "agents" / "skills"]
-    (roots[0] / "idea").mkdir(parents=True)
-    (roots[0] / "idea" / "SKILL.md").write_text("# user's own\n")
-    report = install_package(
-        repo, _manifest(), conduit_root=conduit_root,
-        skill_roots=roots, scope="global",
-    )
-    assert report.skills_skipped == ["idea"]
-    assert report.skills_installed == []
-    assert (roots[0] / "idea" / "SKILL.md").read_text() == "# user's own\n"
-
-
-def test_install_force_overwrites_existing_skill(tmp_path):
-    """--force overwrites a colliding skill and records it as owned."""
-    repo = _make_repo(tmp_path / "pkgsrc")
-    conduit_root = tmp_path / "global" / "conduits"
-    roots = [tmp_path / "claude" / "skills", tmp_path / "agents" / "skills"]
-    (roots[0] / "idea").mkdir(parents=True)
-    (roots[0] / "idea" / "SKILL.md").write_text("# user's own\n")
-    report = install_package(
-        repo, _manifest(), conduit_root=conduit_root,
-        skill_roots=roots, scope="global", force=True,
-    )
-    assert report.skills_installed == ["idea"]
-    assert (roots[0] / "idea" / "SKILL.md").read_text() == "# idea\n"
 
 
 def test_install_invalid_conduit_yaml_raises(tmp_path):
@@ -200,7 +162,7 @@ def test_install_invalid_conduit_yaml_raises(tmp_path):
     with pytest.raises(PackageError, match="invalid conduit.yaml"):
         install_package(
             repo, _manifest(), conduit_root=tmp_path / "g" / "conduits",
-            skill_roots=[tmp_path / "s"], scope="global",
+            scope="global",
         )
 
 

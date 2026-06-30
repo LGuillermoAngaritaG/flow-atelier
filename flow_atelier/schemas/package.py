@@ -5,13 +5,13 @@ import re
 
 from pydantic import BaseModel, field_validator
 
-# Manifest name and each conduit/skill entry become a single filesystem path
+# Manifest name and each conduit entry become a single filesystem path
 # component, so they must reject separators and dot-traversal on install.
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class PackageManifest(BaseModel):
-    """A conduit package's ``atelier-package.yaml`` (conduits + skills).
+    """A conduit package's ``atelier-package.yaml`` (conduits).
 
     Schedules are intentionally absent (D7): a shipped schedule carries
     machine-specific state and cannot travel, so the installer never reads one.
@@ -20,7 +20,6 @@ class PackageManifest(BaseModel):
     name: str
     version: int = 1
     conduits: list[str] = []
-    skills: list[str] = []
 
     @field_validator("name")
     @classmethod
@@ -34,12 +33,12 @@ class PackageManifest(BaseModel):
             raise ValueError(f"unsafe package name: {value!r}")
         return value
 
-    @field_validator("conduits", "skills")
+    @field_validator("conduits")
     @classmethod
     def _validate_entries(cls, values: list[str]) -> list[str]:
-        """Reject conduit/skill entries that aren't safe path components.
+        """Reject conduit entries that aren't safe path components.
 
-        :param values: declared conduit or skill directory names.
+        :param values: declared conduit directory names.
         :returns: the list unchanged when every entry is safe.
         """
         for v in values:
