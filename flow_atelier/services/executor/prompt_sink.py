@@ -144,9 +144,13 @@ class TerminalPromptSink:
         # tool column. A running max rather than a precomputed width: the
         # sink is handed steps, never the conduit.
         self._task_width = 0
-        # Tool calls seen since the last non-tool step, tallied so a long
-        # run of them collapses to one summary line.
-        self._tool_burst: Counter[str] = Counter()
+        # Tool calls seen since each task's last non-tool step, tallied so a
+        # long run of them collapses to one summary line. Keyed by owning task:
+        # one sink is shared by every executor, and `max_concurrency` defaults
+        # to 3, so a single shared counter would pool calls from tasks running
+        # in parallel and bill the whole tally to whichever task happened to
+        # flush it.
+        self._tool_bursts: dict[str, Counter[str]] = {}
 
     async def display(self, text: str) -> None:
         """Stream ``text`` to the output verbatim.
@@ -206,10 +210,16 @@ class TerminalPromptSink:
             self._console.print(f"[green]›[/green] {escape(answer)}")
         return answer
 
-    def _tag(self, timestamp: str | None = None) -> tuple[Text, str]:
+    def _tag(
+        self, timestamp: str | None = None, task: str | None = None
+    ) -> tuple[Text, str]:
         """Return the timestamp prefix and padded task tag for one line.
 
         :param timestamp: ISO timestamp to stamp, or ``None`` for now.
+        :param task: owning task name; defaults to the engine ContextVar.
+            Passed explicitly when the line describes work that finished
+            earlier (a burst tally), so it is labelled with the task that
+            actually did it rather than whoever is current at flush time.
         :returns: tuple of the stamped prefix and the padded task name.
         """
         from datetime import datetime
@@ -225,31 +235,41 @@ class TerminalPromptSink:
             if timestamp
             else datetime.now().astimezone().strftime("%H:%M")
         )
-        task = current_task()
-        self._task_width = max(self._task_width, len(task))
+        name = current_task() if task is None else task
+        self._task_width = max(self._task_width, len(name))
         return (
             Text(f"{clock} ", style="dim"),
-            task.ljust(self._task_width),
+            name.ljust(self._task_width),
         )
 
-    async def _flush_tool_burst(self) -> None:
-        """Emit the tally for the run of tool calls just finished, if any."""
-        if not self._tool_burst:
+    async def _flush_tool_burst(self, task: str) -> None:
+        """Emit the tally for ``task``'s run of tool calls, if it has one.
+
+        Only that task's burst: tasks running concurrently each keep their
+        own tally, so one task reaching a turn boundary never closes out —
+        or takes credit for — another's in-flight calls.
+
+        :param task: owning task name whose burst should be closed.
+        """
+        counts = self._tool_bursts.pop(task, None)
+        if not counts:
             return
         from flow_atelier.cli.rendering.render import render_tool_burst_summary
 
-        counts, self._tool_burst = self._tool_burst, Counter()
-        prefix, task = self._tag()
-        prefix.append(render_tool_burst_summary(counts, task=task))
+        prefix, tag = self._tag(task=task)
+        prefix.append(render_tool_burst_summary(counts, task=tag))
         self._console.print(prefix)
 
     async def flush_steps(self) -> None:
-        """Close out any open tool burst at a turn boundary.
+        """Close out the current task's open tool burst at a turn boundary.
 
-        Called by the harness driver after each prompt round so a task that
-        ends mid-burst still reports how many tools it used.
+        Called by the harness driver after each prompt round, inside the
+        owning task's context, so a task that ends mid-burst still reports
+        how many tools it used without disturbing its peers.
         """
-        await self._flush_tool_burst()
+        from flow_atelier.modules.engine import current_task
+
+        await self._flush_tool_burst(current_task())
 
     async def display_message(self, text: str) -> None:
         """Show a preview of what the agent said.
@@ -258,10 +278,11 @@ class TerminalPromptSink:
         """
         from flow_atelier.cli._shared import mark_activity
         from flow_atelier.cli.rendering.render import render_agent_message
+        from flow_atelier.modules.engine import current_task
 
         if not text.strip():
             return
-        await self._flush_tool_burst()
+        await self._flush_tool_burst(current_task())
         mark_activity()
         prefix, task = self._tag()
         prefix.append(render_agent_message(text, task=task))
@@ -291,22 +312,26 @@ class TerminalPromptSink:
             _render_step,
             render_tool_burst_start,
         )
+        from flow_atelier.modules.engine import current_task
         from flow_atelier.schemas.log import StepKind
 
         if step.kind == StepKind.tool_result and step.tool_status != "failed":
             return
         mark_activity()
+        owner = current_task()
 
         if step.kind == StepKind.tool_call:
-            if not self._tool_burst:
+            burst = self._tool_bursts.get(owner)
+            if burst is None:
+                burst = self._tool_bursts[owner] = Counter()
                 prefix, task = self._tag(step.timestamp)
                 prefix.append(render_tool_burst_start(task=task))
                 self._console.print(prefix)
-            self._tool_burst[step.tool_name or "tool"] += 1
+            burst[step.tool_name or "tool"] += 1
             return
 
-        # Anything else ends the burst and gets rendered normally.
-        await self._flush_tool_burst()
+        # Anything else ends this task's burst and gets rendered normally.
+        await self._flush_tool_burst(owner)
         prefix, task = self._tag(step.timestamp)
         prefix.append(_render_step(step, task=task))
         self._console.print(prefix)

@@ -351,16 +351,24 @@ class _BufferingClient:
         await self._record(IntermediateStep(kind=StepKind.thinking, text=text))
 
     async def _flush_message(self) -> None:
-        """Emit any buffered agent message chunks as one preview block.
+        """Emit any buffered agent message chunks as one block.
+
+        The block is handed over unstripped. Chunks are flushed every
+        :data:`MESSAGE_FLUSH_CHARS` or on a newline, so stripping each one
+        would delete exactly the blank lines and leading indentation that
+        separate an agent's prose from the code it is quoting — and a
+        message that streams sets ``live_streamed``, suppressing the result
+        panel that held the pristine copy. Only an all-whitespace block is
+        dropped.
 
         No-op when the buffer is empty or contains only whitespace.
         """
         if not self._pending_message:
             return
-        text = "".join(self._pending_message).replace(self._done_marker, "").strip()
+        text = "".join(self._pending_message).replace(self._done_marker, "")
         self._pending_message.clear()
         self._pending_message_len = 0
-        if not text:
+        if not text.strip():
             return
         if hasattr(self._sink, "display_message"):
             await self._sink.display_message(text)

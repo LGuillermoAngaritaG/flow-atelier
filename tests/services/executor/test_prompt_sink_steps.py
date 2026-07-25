@@ -178,3 +178,109 @@ class TestFullMessages:
 
         for fragment in ("Summary:", "fixed A", "fixed B", "shipped C"):
             assert fragment in output
+
+    async def test_indentation_survives_verbatim(self) -> None:
+        """Continuation lines must not be re-indented to the tag column.
+
+        Padding them looks tidier but rewrites the content: a four-space
+        code block becomes a nine-space one, and what is on screen is what
+        a reader copies out. `live_streamed` suppresses the result panel
+        that would otherwise hold the pristine copy, so this rendering is
+        the only one the terminal ever sees.
+        """
+        sink, buf = _make_sink()
+        await sink.display_message("Here:\n    def f():\n        return 1")
+        output = buf.getvalue()
+
+        assert "\n    def f():\n" in output
+        assert "\n        return 1" in output
+
+    async def test_interior_blank_lines_survive(self) -> None:
+        """Blank lines separating prose from code must reach the terminal.
+
+        Chunks flush on a newline, so the separator rides at the end of a
+        block; stripping each block deleted it.
+        """
+        sink, buf = _make_sink()
+        await sink.display_message("Here is the fix:\n\n")
+        await sink.display_message("def f():\n    return 1\n")
+        output = buf.getvalue()
+
+        assert "Here is the fix:\n\n" in output
+        assert "\n    return 1" in output
+
+
+class TestConcurrentTaskAttribution:
+    async def test_bursts_are_tracked_per_task(self) -> None:
+        """Parallel tasks must not pool their tool calls into one tally.
+
+        One sink is shared by every executor and `max_concurrency` defaults
+        to 3, so a single shared counter billed every concurrent task's
+        calls to whichever task happened to flush first — the exact
+        attribution this rendering exists to provide.
+        """
+        import asyncio
+
+        from flow_atelier.modules.engine import _current_task_ctx
+
+        sink, buf = _make_sink()
+
+        def _call(name: str) -> IntermediateStep:
+            """Build a pending tool-call step for ``name``.
+
+            :param name: tool name to record.
+            :returns: the step.
+            """
+            return IntermediateStep(
+                kind=StepKind.tool_call, tool_name=name, tool_status="pending"
+            )
+
+        async def _run(task: str, tools: list[str]) -> None:
+            """Emit ``tools`` as one task's burst, then close it out.
+
+            :param task: owning task name.
+            :param tools: tool names to emit in order.
+            """
+            _current_task_ctx.set(task)
+            for name in tools:
+                await sink.display_step(_call(name))
+                await asyncio.sleep(0)
+            await sink.flush_steps()
+
+        await asyncio.gather(
+            _run("build", ["Bash", "Read"]),
+            _run("deploy", ["Grep", "Write"]),
+        )
+        output = buf.getvalue()
+
+        assert "build     used 2 tools (Bash, Read)" in output
+        assert "deploy    used 2 tools (Grep, Write)" in output
+        # Each task announces its own burst rather than riding on a peer's.
+        assert output.count("using tools") == 2
+        for line in output.splitlines():
+            if "deploy" in line:
+                assert "Bash" not in line and "Read" not in line
+
+    async def test_one_task_turn_boundary_leaves_a_peer_burst_open(self) -> None:
+        """`flush_steps` closes only the calling task's burst.
+
+        The harness driver calls it per task after every prompt round; it
+        must not close out — or take credit for — a peer's in-flight calls.
+        """
+        from flow_atelier.modules.engine import _current_task_ctx
+
+        sink, buf = _make_sink()
+        _current_task_ctx.set("slow")
+        await sink.display_step(
+            IntermediateStep(
+                kind=StepKind.tool_call, tool_name="Bash", tool_status="pending"
+            )
+        )
+        _current_task_ctx.set("fast")
+        await sink.flush_steps()
+
+        assert "used" not in buf.getvalue(), "peer's burst was closed by another task"
+
+        _current_task_ctx.set("slow")
+        await sink.flush_steps()
+        assert "slow    used 1 tool (Bash)" in buf.getvalue()

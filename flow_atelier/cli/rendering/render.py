@@ -40,6 +40,14 @@ _TOOL_ARG_KEYS: tuple[str, ...] = (
 
 _STEP_ARG_CHARS = 90
 
+# Backstop on a single result panel. Task output is printed in full — it is the
+# product of the run and the reader may be an agent that cannot go and fetch
+# what an ellipsis dropped — but the producer is unbounded: `BashExecutor`
+# accumulates stdout with no cap, so `cat big.log` would otherwise wedge the
+# terminal and force Rich to word-wrap the whole thing. Set far above any real
+# task output, and the store always keeps the untruncated text.
+PANEL_MAX_CHARS = 100_000
+
 
 def _condense(text: str, limit: int = _STEP_ARG_CHARS) -> str:
     """Collapse whitespace and truncate for single-line display.
@@ -127,8 +135,14 @@ def render_agent_message(text: str, task: str = "") -> Text:
     because which tool ran is cheap to summarize; what the agent actually
     said is the payload.
 
-    Continuation lines are indented under the marker so multi-line answers
-    stay visually attached to their task tag.
+    Continuation lines are emitted verbatim, not re-indented under the
+    marker. Padding them to the tag column looks tidier but rewrites the
+    content: it turns a four-space code block into a nine-space one, and
+    what is on screen is what a reader — human or agent — copies out. The
+    text is not stripped either, so interior blank lines and leading
+    indentation survive. This matters because ``ExecutionResult`` sets
+    ``live_streamed`` once a message has streamed, which suppresses the
+    result panel that would otherwise carry the pristine copy.
 
     :param text: agent message text.
     :param task: owning task name, prefixed when given.
@@ -136,11 +150,10 @@ def render_agent_message(text: str, task: str = "") -> Text:
     t = Text()
     t.append(f"  {task} " if task else "  ", style="cyan")
     t.append("💬 ", style="white")
-    lines = text.strip().splitlines() or [""]
+    lines = text.splitlines() or [""]
     t.append(lines[0])
-    indent = " " * (len(task) + 6) if task else " " * 5
     for line in lines[1:]:
-        t.append(f"\n{indent}{line}")
+        t.append(f"\n{line}")
     return t
 
 
@@ -237,6 +250,28 @@ def render_heartbeat(elapsed_by_task: dict[str, float]) -> Text:
     return t
 
 
+def _bounded(text: str) -> Text:
+    """Return ``text`` as Rich :class:`Text`, capped at :data:`PANEL_MAX_CHARS`.
+
+    Keeps the tail, which is where a failing task's diagnostic lives, and
+    names both how much was dropped and where the whole thing still is. Real
+    output is never near the cap; this only fires on a runaway producer.
+
+    :param text: raw body text to render.
+    :returns: the text, prefixed with a truncation notice when over the cap.
+    """
+    if len(text) <= PANEL_MAX_CHARS:
+        return Text(text)
+    body = Text()
+    body.append(
+        f"… ({len(text) - PANEL_MAX_CHARS} characters truncated — "
+        f"full output in `atelier logs`)\n",
+        style="dim italic",
+    )
+    body.append(text[-PANEL_MAX_CHARS:])
+    return body
+
+
 def _build_failure_body(stdout: str, stderr: str) -> Text:
     """Render a failure body that always surfaces stderr, in full.
 
@@ -245,9 +280,10 @@ def _build_failure_body(stdout: str, stderr: str) -> Text:
     - Both populated → labelled sections so the diagnostic stderr is
       visible alongside the stdout context.
 
-    Nothing is elided. A failing task's output is the whole reason anyone
-    is reading this panel, and the reader may be another agent that cannot
-    go and fetch the dropped lines from the store.
+    Nothing is elided short of :data:`PANEL_MAX_CHARS`. A failing task's
+    output is the whole reason anyone is reading this panel, and the reader
+    may be another agent that cannot go and fetch the dropped lines from the
+    store.
 
     :param stdout: captured stdout text from the failed task.
     :param stderr: captured stderr text from the failed task.
@@ -257,15 +293,15 @@ def _build_failure_body(stdout: str, stderr: str) -> Text:
     if not has_stdout and not has_stderr:
         return Text("(empty)")
     if has_stdout and not has_stderr:
-        return Text(stdout)
+        return _bounded(stdout)
     if has_stderr and not has_stdout:
-        return Text(stderr)
+        return _bounded(stderr)
     body = Text()
     body.append("stdout:\n", style="dim bold")
-    body.append(stdout)
+    body.append(_bounded(stdout))
     body.append("\n\n")
     body.append("stderr:\n", style="bold red")
-    body.append(stderr)
+    body.append(_bounded(stderr))
     return body
 
 
@@ -373,7 +409,7 @@ def render_task_event(event: TaskEvent, console: Console) -> None:
         body_text = Text()
         if summary:
             body_text.append(f"{summary}\n", style="dim")
-        body_text.append(body_source)
+        body_text.append(_bounded(body_source))
     else:
         border_style = "red"
         title = Text(f"✗ {title_core}", style="bold red")

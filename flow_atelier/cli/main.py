@@ -43,9 +43,13 @@ class AtelierTyper(typer.Typer):
 
             :param fn: the command handler being registered.
             """
-            if kwargs.get("help") is None and fn.__doc__:
-                kwargs["help"] = _help_from_doc(fn.__doc__)
-            return super(AtelierTyper, self).command(*args, **kwargs)(fn)
+            # Copy rather than mutate: `kwargs` is captured from the enclosing
+            # call, so writing to it would leak the first function's help text
+            # onto every later one if a decorator object is reused.
+            cmd_kwargs = dict(kwargs)
+            if cmd_kwargs.get("help") is None and fn.__doc__:
+                cmd_kwargs["help"] = _help_from_doc(fn.__doc__)
+            return super(AtelierTyper, self).command(*args, **cmd_kwargs)(fn)
 
         return decorator
 
