@@ -118,6 +118,64 @@ def _render_step(step: IntermediateStep, task: str = "") -> Text:
     return t
 
 
+_MESSAGE_PREVIEW_CHARS = 160
+
+
+def render_agent_message(text: str, task: str = "") -> Text:
+    """Render a preview of what the agent said.
+
+    A preview, not the message: the full text lands in the task's result
+    panel and in ``atelier logs``, so reprinting all of it live would be the
+    duplication this view exists to avoid.
+
+    :param text: agent message text to preview.
+    :param task: owning task name, prefixed when given.
+    """
+    t = Text()
+    t.append(f"  {task} " if task else "  ", style="cyan")
+    t.append("💬 ", style="white")
+    flat = " ".join(text.split())
+    if len(flat) > _MESSAGE_PREVIEW_CHARS:
+        flat = flat[:_MESSAGE_PREVIEW_CHARS] + "…"
+    t.append(flat)
+    return t
+
+
+def render_tool_burst_start(task: str = "") -> Text:
+    """Render the marker opening a run of tool calls.
+
+    :param task: owning task name, prefixed when given.
+    """
+    t = Text()
+    t.append(f"  {task} " if task else "  ", style="cyan")
+    t.append("🔧 ", style="dim")
+    t.append("using tools…", style="dim")
+    return t
+
+
+def render_tool_burst_summary(counts: Counter[str], task: str = "") -> Text:
+    """Render the tally closing a run of tool calls.
+
+    One line per burst instead of one per call: an agent that makes forty
+    tool calls in a row buries everything else on screen otherwise. The
+    per-call detail is still recorded — see ``atelier logs --show steps``.
+
+    :param counts: tool name to number of calls in this burst.
+    :param task: owning task name, prefixed when given.
+    """
+    total = sum(counts.values())
+    breakdown = ", ".join(
+        f"{name} {n}" if n > 1 else name
+        for name, n in counts.most_common()
+    )
+    t = Text()
+    t.append(f"  {task} " if task else "  ", style="cyan")
+    t.append(f"   used {total} tool{'s' if total != 1 else ''}", style="dim")
+    if breakdown:
+        t.append(f" ({breakdown})", style="dim")
+    return t
+
+
 def _render_orchestration_msg(text: str) -> Text:
     """Render an orchestration lifecycle message: ``· {text}`` in dim.
 

@@ -27,31 +27,74 @@ class TestDisplayStep:
         assert "💭" in output
         assert "Let me analyze" in output
 
-    async def test_tool_call_step_prints_tool_name(self) -> None:
-        """Verify tool_call steps render the tool name."""
-        sink, buf = _make_sink()
-        step = IntermediateStep(
-            kind=StepKind.tool_call,
-            tool_name="Read",
-            tool_kind="read",
-            locations=["/foo/bar.py"],
-        )
-        await sink.display_step(step)
-        output = buf.getvalue()
-        assert "tool" in output.lower() or "Read" in output
-        assert "Read" in output
+    async def test_tool_calls_collapse_into_a_burst(self) -> None:
+        """A run of tool calls shows one marker and one tally, not N lines.
 
-    async def test_tool_call_step_shows_location(self) -> None:
-        """Verify tool_call steps render the affected file location."""
+        A harness that makes many calls in a row would otherwise push the
+        agent's reasoning and messages off screen entirely.
+        """
         sink, buf = _make_sink()
-        step = IntermediateStep(
-            kind=StepKind.tool_call,
-            tool_name="Edit",
-            locations=["/src/main.py"],
-        )
-        await sink.display_step(step)
+        for name in ("Bash", "Read", "Read", "Grep"):
+            await sink.display_step(
+                IntermediateStep(kind=StepKind.tool_call, tool_name=name)
+            )
+        await sink.flush_steps()
         output = buf.getvalue()
-        assert "/src/main.py" in output
+
+        assert "using tools" in output
+        assert "used 4 tools" in output
+        # Names survive in the tally; per-call arguments do not.
+        assert "Read 2" in output
+        assert "Bash" in output
+        assert len([ln for ln in output.splitlines() if ln.strip()]) == 2
+
+    async def test_burst_is_closed_by_the_next_non_tool_step(self) -> None:
+        """Thinking after a burst forces the tally out before it renders."""
+        sink, buf = _make_sink()
+        await sink.display_step(
+            IntermediateStep(kind=StepKind.tool_call, tool_name="Bash")
+        )
+        await sink.display_step(
+            IntermediateStep(kind=StepKind.thinking, text="now I can summarize")
+        )
+        output = buf.getvalue()
+
+        assert output.index("used 1 tool") < output.index("now I can summarize")
+
+    async def test_failed_tool_result_still_surfaces(self) -> None:
+        """Failures must not be swallowed by the burst collapsing."""
+        sink, buf = _make_sink()
+        await sink.display_step(
+            IntermediateStep(kind=StepKind.tool_call, tool_name="Bash")
+        )
+        await sink.display_step(
+            IntermediateStep(
+                kind=StepKind.tool_result,
+                tool_status="failed",
+                tool_output="exit 1",
+            )
+        )
+        output = buf.getvalue()
+
+        assert "failed" in output
+        assert "exit 1" in output
+
+    async def test_agent_message_is_previewed(self) -> None:
+        """Non-interactive runs surface what the agent said between tools."""
+        sink, buf = _make_sink()
+        await sink.display_message("Grouped the commits into three sections.")
+        assert "Grouped the commits into three sections." in buf.getvalue()
+
+    async def test_message_closes_an_open_burst(self) -> None:
+        """The tally lands before the message that follows it."""
+        sink, buf = _make_sink()
+        await sink.display_step(
+            IntermediateStep(kind=StepKind.tool_call, tool_name="Read")
+        )
+        await sink.display_message("Done reading.")
+        output = buf.getvalue()
+
+        assert output.index("used 1 tool") < output.index("Done reading.")
 
     async def test_successful_tool_result_is_suppressed(self) -> None:
         """A successful tool result adds no information live, so it is dropped.
@@ -68,28 +111,20 @@ class TestDisplayStep:
         await sink.display_step(step)
         assert buf.getvalue() == ""
 
-    async def test_tool_call_shows_command_from_payload(self) -> None:
-        """A Bash call with no file locations still shows its command."""
-        sink, buf = _make_sink()
+    async def test_tool_arguments_remain_available_post_hoc(self) -> None:
+        """The live view drops per-call arguments; the log view keeps them.
+
+        Collapsing the live stream must not lose the detail — it moves it to
+        ``atelier logs --show steps``, which renders via ``_render_step``.
+        """
+        from flow_atelier.cli.rendering.render import _render_step
+
         step = IntermediateStep(
             kind=StepKind.tool_call,
             tool_name="Bash",
             tool_input='{"command": "pytest tests/ -x", "description": "run tests"}',
         )
-        await sink.display_step(step)
-        assert "pytest tests/ -x" in buf.getvalue()
-
-    async def test_tool_result_failed_prints_status(self) -> None:
-        """Verify tool_result steps render the failed status."""
-        sink, buf = _make_sink()
-        step = IntermediateStep(
-            kind=StepKind.tool_result,
-            tool_call_id="tc-1",
-            tool_status="failed",
-        )
-        await sink.display_step(step)
-        output = buf.getvalue()
-        assert "failed" in output
+        assert "pytest tests/ -x" in _render_step(step).plain
 
     async def test_thinking_text_truncated_for_display(self) -> None:
         """Verify long thinking text is truncated when rendered."""

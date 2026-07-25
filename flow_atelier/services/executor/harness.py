@@ -90,6 +90,10 @@ MAX_INTERACTIVE_TURNS = 20
 # grouping the UI shows one rendered line per word.
 THINKING_FLUSH_CHARS = 200
 
+# Same batching for agent message chunks on non-interactive runs, so the
+# agent's narration appears in readable blocks rather than per token.
+MESSAGE_FLUSH_CHARS = 200
+
 # Cap on a serialized tool payload kept on an IntermediateStep.
 TOOL_PAYLOAD_CHARS = 500
 
@@ -305,6 +309,8 @@ class _BufferingClient:
         self.steps: list[IntermediateStep] = []
         self._pending_thinking: list[str] = []
         self._pending_thinking_len: int = 0
+        self._pending_message: list[str] = []
+        self._pending_message_len: int = 0
         # Last per-turn token breakdown and latest cumulative session cost
         # the agent reported, if any. Both UNSTABLE/optional in ACP.
         self.usage: Usage | None = None
@@ -341,13 +347,32 @@ class _BufferingClient:
             return
         await self._record(IntermediateStep(kind=StepKind.thinking, text=text))
 
+    async def _flush_message(self) -> None:
+        """Emit any buffered agent message chunks as one preview block.
+
+        No-op when the buffer is empty or contains only whitespace.
+        """
+        if not self._pending_message:
+            return
+        text = "".join(self._pending_message).replace(self._done_marker, "").strip()
+        self._pending_message.clear()
+        self._pending_message_len = 0
+        if not text:
+            return
+        if hasattr(self._sink, "display_message"):
+            await self._sink.display_message(text)
+
     async def flush_pending(self) -> None:
-        """Flush any partial thought-chunk buffer at a turn boundary.
+        """Flush partial thinking/message buffers at a turn boundary.
 
         Called by the driver after each ``conn.prompt`` round so the last
-        group of thinking does not get stuck pending until the next update.
+        group of thinking, the last message block, and any open tool-call
+        burst are emitted instead of being stuck pending.
         """
         await self._flush_thinking()
+        await self._flush_message()
+        if hasattr(self._sink, "flush_steps"):
+            await self._sink.flush_steps()
 
     async def session_update(self, session_id: str, update, **kwargs) -> None:
         """Handle a session update notification from the ACP agent.
@@ -365,6 +390,17 @@ class _BufferingClient:
                 self.buffer.append(text)
                 if self._stream_messages:
                     await self._sink.display(text.replace(self._done_marker, ""))
+                elif self._stream_steps:
+                    # Non-interactive: batch the chunks and surface them
+                    # between tool activity, so the run reads as narration
+                    # rather than an unexplained sequence of tool calls.
+                    self._pending_message.append(text)
+                    self._pending_message_len += len(text)
+                    if (
+                        self._pending_message_len >= MESSAGE_FLUSH_CHARS
+                        or "\n" in text
+                    ):
+                        await self._flush_message()
             else:
                 self._saw_nontext_content = True
         elif isinstance(update, AgentThoughtChunk):
