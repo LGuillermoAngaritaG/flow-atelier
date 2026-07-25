@@ -67,6 +67,41 @@ describe("formatDependency", () => {
       "build.output.not_match(ok)",
     );
   });
+
+  it("restores the quote characters the pattern was parsed with", () => {
+    expect(
+      formatDependency("build", { kind: "match", pattern: "ok", quote: '"' }),
+    ).toBe('build.output.match("ok")');
+    expect(
+      formatDependency("build", { kind: "match", pattern: "ok", quote: "'" }),
+    ).toBe("build.output.match('ok')");
+  });
+});
+
+describe("quoted patterns round trip", () => {
+  // Opening a conduit in the designer and saving it must be a no-op on disk.
+  // The engine strips quotes before compiling, so the UI shows the bare
+  // pattern -- but dropping them on save rewrites YAML the user never edited.
+  it.each([
+    'code_review.output.match("VERDICT: APPROVE")',
+    "code_review.output.match('VERDICT: APPROVE')",
+    'build.output.not_match("FAIL")',
+    "build.output.match(NOQUOTES)",
+  ])("preserves %s verbatim", (dep) => {
+    const { task: source, condition } = parseDependency(dep);
+    expect(formatDependency(source, condition)).toBe(dep);
+  });
+
+  it("still exposes the bare pattern to the inspector", () => {
+    const { condition } = parseDependency('t.output.match("PASS")');
+    expect(condition?.pattern).toBe("PASS");
+    expect(condition?.quote).toBe('"');
+  });
+
+  it("survives a full wire round trip with quotes intact", () => {
+    const wire = task(['code_review.output.match("VERDICT:\\s*APPROVE")']);
+    expect(toWireTask(fromWireTask(wire)).dependsOn).toEqual(wire.dependsOn);
+  });
 });
 
 describe("wire round trip", () => {

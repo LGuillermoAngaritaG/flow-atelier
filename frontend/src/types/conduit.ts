@@ -12,6 +12,13 @@ export type ToolType =
 export interface TaskCondition {
   kind: "match" | "not_match";
   pattern: string;
+  /**
+   * Quote character the pattern was written with in `depends_on`, when it had
+   * one. The engine strips quotes before compiling, so the designer shows the
+   * bare pattern — but it puts them back on save, otherwise merely opening a
+   * conduit and saving it rewrites the author's YAML.
+   */
+  quote?: string;
 }
 
 export interface ConduitTask {

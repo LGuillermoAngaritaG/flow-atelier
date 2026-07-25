@@ -36,7 +36,12 @@ export function parseDependency(dep: string): ParsedDependency {
     const task = dep.slice(0, idx);
     const rest = dep.slice(idx + marker.length);
     if (!task || !rest.endsWith(")")) continue;
-    return { task, condition: { kind, pattern: stripSurroundingQuotes(rest.slice(0, -1)) } };
+    const raw = rest.slice(0, -1);
+    const pattern = stripSurroundingQuotes(raw);
+    const condition: TaskCondition = { kind, pattern };
+    // Remember the quoting so `formatDependency` can restore it verbatim.
+    if (pattern !== raw) condition.quote = raw[0];
+    return { task, condition };
   }
   return { task: dep };
 }
@@ -58,11 +63,18 @@ export function stripSurroundingQuotes(pattern: string): string {
   return pattern;
 }
 
-/** Render a source task plus optional condition back into a `depends_on` entry. */
+/**
+ * Render a source task plus optional condition back into a `depends_on` entry.
+ *
+ * Restores the quote characters the pattern was parsed with, so loading a
+ * conduit and saving it back is a no-op on disk rather than a silent rewrite
+ * of YAML the user never touched.
+ */
 export function formatDependency(task: string, condition?: TaskCondition): string {
   if (!condition) return task;
   const fn = condition.kind === "not_match" ? "output.not_match" : "output.match";
-  return `${task}.${fn}(${condition.pattern})`;
+  const q = condition.quote ?? "";
+  return `${task}.${fn}(${q}${condition.pattern}${q})`;
 }
 
 /**
