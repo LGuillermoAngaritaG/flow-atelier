@@ -53,8 +53,12 @@ class TestDisplayStep:
         output = buf.getvalue()
         assert "/src/main.py" in output
 
-    async def test_tool_result_step_prints_status(self) -> None:
-        """Verify tool_result steps render the completed status."""
+    async def test_successful_tool_result_is_suppressed(self) -> None:
+        """A successful tool result adds no information live, so it is dropped.
+
+        The step is still persisted and shown by ``atelier logs --show steps``;
+        only the live stream skips it to halve the per-tool-call line count.
+        """
         sink, buf = _make_sink()
         step = IntermediateStep(
             kind=StepKind.tool_result,
@@ -62,8 +66,18 @@ class TestDisplayStep:
             tool_status="completed",
         )
         await sink.display_step(step)
-        output = buf.getvalue()
-        assert "completed" in output
+        assert buf.getvalue() == ""
+
+    async def test_tool_call_shows_command_from_payload(self) -> None:
+        """A Bash call with no file locations still shows its command."""
+        sink, buf = _make_sink()
+        step = IntermediateStep(
+            kind=StepKind.tool_call,
+            tool_name="Bash",
+            tool_input='{"command": "pytest tests/ -x", "description": "run tests"}',
+        )
+        await sink.display_step(step)
+        assert "pytest tests/ -x" in buf.getvalue()
 
     async def test_tool_result_failed_prints_status(self) -> None:
         """Verify tool_result steps render the failed status."""
@@ -86,3 +100,17 @@ class TestDisplayStep:
         output = buf.getvalue()
         # Should not contain all 300 chars — truncated around 120
         assert len(output) < 350
+
+    async def test_step_is_tagged_with_current_task(self) -> None:
+        """Steps carry their owning task so parallel streams stay readable."""
+        from flow_atelier.modules.engine import _current_task_ctx
+
+        token = _current_task_ctx.set("research")
+        try:
+            sink, buf = _make_sink()
+            await sink.display_step(
+                IntermediateStep(kind=StepKind.tool_call, tool_name="Read")
+            )
+            assert "research" in buf.getvalue()
+        finally:
+            _current_task_ctx.reset(token)

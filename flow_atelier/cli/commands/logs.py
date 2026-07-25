@@ -88,7 +88,12 @@ def logs_cmd(
     if task is not None:
         entries = [e for e in entries if e.task == task]
 
-    if not entries:
+    # A task only gets a LogEntry once it returns, so a stopped, crashed or
+    # still-running task has none — its live step records are the only
+    # record of what it did.
+    orphans = _orphan_steps(atelier, flow_id, entries, task)
+
+    if not entries and not orphans:
         scope = f"task {task!r}" if task else "this flow"
         if json_mode:
             typer.echo("[]")
@@ -106,14 +111,84 @@ def logs_cmd(
         typer.echo(
             json.dumps([e.model_dump(mode="json") for e in entries], indent=2)
         )
+        if orphans:
+            # --json emits completed entries only; say so rather than let the
+            # caller believe an in-flight task simply did nothing.
+            typer.echo(
+                f"note: {len(orphans)} task iteration(s) have live steps but no "
+                f"completed log entry; run without --json to see them",
+                err=True,
+            )
         return
 
     for entry in entries:
         _render_log_entry(entry, show, console)
 
+    for (orphan_task, iteration), steps in orphans.items():
+        _render_orphan_steps(orphan_task, iteration, steps, console)
+
     total_usage = _format_usage(_flow_usage_totals(entries))
     if total_usage:
         console.print(f"[dim]run total · {total_usage}[/dim]")
+
+
+def _orphan_steps(
+    atelier: Atelier,
+    flow_id: str,
+    entries: list,
+    task: str | None,
+) -> dict[tuple[str, int], list]:
+    """Group live step records that have no matching completed log entry.
+
+    These are the iterations that were stopped, crashed, or are still
+    running — precisely the ones a post-mortem needs and the ones
+    ``logs.jsonl`` cannot have.
+
+    :param atelier: Atelier instance used to read the step records.
+    :param flow_id: full flow id to read.
+    :param entries: log entries already loaded, used to exclude completed work.
+    :param task: when set, restrict to this task name.
+    :returns: mapping of ``(task, iteration)`` to its ordered steps.
+    """
+    try:
+        records = atelier.store.read_steps(flow_id)
+    except FileNotFoundError:
+        return {}
+    logged = {(e.task, e.iteration) for e in entries}
+    grouped: dict[tuple[str, int], list] = {}
+    for record in records:
+        key = (record.task, record.iteration)
+        if key in logged or (task is not None and record.task != task):
+            continue
+        grouped.setdefault(key, []).append(record.step)
+    return grouped
+
+
+def _render_orphan_steps(task: str, iteration: int, steps: list, console) -> None:
+    """Render the step timeline of a task iteration that never completed.
+
+    :param task: task name the steps belong to.
+    :param iteration: 1-based iteration number.
+    :param steps: ordered intermediate steps recorded live.
+    :param console: Rich console to write the panel to.
+    """
+    from rich.panel import Panel
+    from rich.text import Text
+
+    from flow_atelier.cli.rendering.render import _render_steps_timeline
+
+    suffix = f" ({iteration})" if iteration > 1 else ""
+    console.print(
+        Panel(
+            _render_steps_timeline(steps),
+            title=Text(f"⏳ {task}{suffix}", style="bold yellow"),
+            title_align="left",
+            subtitle="no completed log entry — stopped, crashed, or still running",
+            subtitle_align="right",
+            border_style="yellow",
+            padding=(0, 1),
+        )
+    )
 
 
 def _follow_logs(
@@ -135,6 +210,7 @@ def _follow_logs(
     :param poll_seconds: delay between polls for new entries.
     """
     rendered = 0
+    steps_read = 0
 
     def _read() -> list:
         """Read all log entries for the flow, filtered by task when requested.
@@ -151,8 +227,27 @@ def _follow_logs(
         return entries
 
     def _drain_and_render() -> None:
-        """Render any log entries written since the last render pass."""
-        nonlocal rendered
+        """Render log entries and live steps written since the last pass.
+
+        Steps come first: they arrive while a task is still running, whereas
+        its log entry only lands once it returns. Tailing them is what makes
+        a long agent task watchable from a second terminal.
+        """
+        nonlocal rendered, steps_read
+        from flow_atelier.cli.rendering.render import _render_step
+
+        try:
+            # Skip what we already rendered: parsing, not I/O, is what makes
+            # a long flow's steps.jsonl expensive to poll.
+            fresh = atelier.store.read_steps(flow_id, skip=steps_read)
+        except FileNotFoundError:
+            fresh = []
+        steps_read += len(fresh)
+        for record in fresh:
+            if task is not None and record.task != task:
+                continue
+            console.print(_render_step(record.step, task=record.task))
+
         entries = _read()
         for entry in entries[rendered:]:
             _render_log_entry(entry, show, console)

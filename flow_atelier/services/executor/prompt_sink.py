@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Protocol, TextIO, runtime_checkable
 
 from rich.console import Console
 from rich.markup import escape
+from rich.text import Text
 
 if TYPE_CHECKING:
     from flow_atelier.schemas.log import IntermediateStep
@@ -119,6 +120,10 @@ class TerminalPromptSink:
             if console is not None
             else Console(file=self._out, soft_wrap=True)
         )
+        # Widest task name seen so far, so the step lines keep a straight
+        # tool column. A running max rather than a precomputed width: the
+        # sink is handed steps, never the conduit.
+        self._task_width = 0
 
     async def display(self, text: str) -> None:
         """Stream ``text`` to the output verbatim.
@@ -129,8 +134,11 @@ class TerminalPromptSink:
 
         :param text: text to write to the output stream.
         """
+        from flow_atelier.cli._shared import mark_activity
+
         self._out.write(text)
         self._out.flush()
+        mark_activity()
 
     async def start_agent_turn(self, label: str = "agent") -> None:
         """Print a styled rule announcing a new agent turn.
@@ -178,11 +186,31 @@ class TerminalPromptSink:
     async def display_step(self, step: IntermediateStep) -> None:
         """Render an intermediate step via the CLI step renderer.
 
+        Successful tool results are dropped: live, a ``✓ completed`` line
+        carries no information the following step doesn't already imply, and
+        it doubles the scroll rate. Failures are always shown. The full
+        sequence is still persisted and viewable via ``atelier logs --show steps``.
+
+        Lines are tagged with the owning task (via the engine ContextVar, as
+        :class:`WsPromptSink` does) so steps stay attributable when several
+        tasks run concurrently, and stamped ``HH:MM`` so a long-running call
+        is visibly long-running.
+
         :param step: the :class:`IntermediateStep` to render.
         """
+        from flow_atelier.cli._shared import _format_clock_short, mark_activity
         from flow_atelier.cli.rendering.render import _render_step
+        from flow_atelier.modules.engine import current_task
+        from flow_atelier.schemas.log import StepKind
 
-        self._console.print(_render_step(step))
+        if step.kind == StepKind.tool_result and step.tool_status != "failed":
+            return
+        mark_activity()
+        task = current_task()
+        self._task_width = max(self._task_width, len(task))
+        stamped = Text(f"{_format_clock_short(step.timestamp)} ", style="dim")
+        stamped.append(_render_step(step, task=task.ljust(self._task_width)))
+        self._console.print(stamped)
 
     async def request_permission(
         self, summary: str, options: list[PermissionOption]

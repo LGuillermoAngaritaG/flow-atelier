@@ -1,6 +1,7 @@
 """Rich rendering helpers for the CLI presentation layer."""
 from __future__ import annotations
 
+import json
 from collections import Counter
 
 import yaml
@@ -23,33 +24,96 @@ from flow_atelier.schemas.log import IntermediateStep, StepKind, TaskEvent
 from flow_atelier.schemas.progress import FlowStatus, Progress, TaskStatus
 from flow_atelier.services.scheduler import PlannedJob
 
+# Payload keys worth showing next to a tool name, most specific first.
+# Covers the common harness tools: Bash, Read/Write/Edit, Grep/Glob, Task,
+# WebFetch/WebSearch. Anything unmatched falls back to compact ``k=v`` pairs.
+_TOOL_ARG_KEYS: tuple[str, ...] = (
+    "command",
+    "pattern",
+    "query",
+    "file_path",
+    "path",
+    "url",
+    "prompt",
+    "description",
+)
 
-def _render_step(step: IntermediateStep) -> Text:
+_STEP_ARG_CHARS = 90
+
+
+def _condense(text: str, limit: int = _STEP_ARG_CHARS) -> str:
+    """Collapse whitespace and truncate for single-line display.
+
+    :param text: raw text to flatten onto one line.
+    :param limit: maximum characters to keep before eliding.
+    :returns: whitespace-collapsed text, elided with ``…`` when over ``limit``.
+    """
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[:limit] + "…"
+
+
+def _tool_arg(step: IntermediateStep) -> str:
+    """Return the one detail that says *what* a tool call is doing.
+
+    A bare ``🔧 Bash`` is unreadable; ``🔧 Bash  pytest tests/ -x`` is not.
+    Prefers an ACP-reported file location, then a known payload key, then a
+    compact rendering of the first payload fields.
+
+    :param step: a ``tool_call`` step whose argument should be summarized.
+    :returns: a single-line argument summary, or ``""`` when nothing useful.
+    """
+    if step.locations:
+        return _condense(step.locations[0])
+    if not step.tool_input:
+        return ""
+    try:
+        data = json.loads(step.tool_input)
+    except ValueError:
+        # Truncated mid-JSON (see TOOL_PAYLOAD_CHARS) or a non-JSON payload.
+        return _condense(step.tool_input)
+    if not isinstance(data, dict):
+        return _condense(str(data))
+    for key in _TOOL_ARG_KEYS:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return _condense(value)
+    return _condense(", ".join(f"{k}={v}" for k, v in list(data.items())[:2]))
+
+
+def _render_step(step: IntermediateStep, task: str = "") -> Text:
     """Render a single intermediate step as a compact Rich Text line.
 
     - Thinking: ``  💭 {text[:120]}...`` dim italic
-    - Tool call: ``  🔧 {tool_name}  {location}`` bold dim + dim
-    - Tool result: ``     ✓ status`` or ``     ✗ status`` green/red
+    - Tool call: ``  🔧 {tool_name}  {argument}`` bold dim + dim
+    - Tool result: ``     ✓ status`` or ``     ✗ status {output}`` green/red
 
     :param step: the intermediate step to render.
+    :param task: owning task name; when given it is prefixed to the line so
+        steps stay attributable while parallel tasks stream into one console.
     """
     t = Text()
+    if task:
+        t.append(f"  {task} ", style="cyan")
+    else:
+        t.append("  ")
     if step.kind == StepKind.thinking:
         truncated = step.text[:120] + ("..." if len(step.text) > 120 else "")
-        t.append("  💭 ", style="dim italic")
+        t.append("💭 ", style="dim italic")
         t.append(truncated, style="dim italic")
     elif step.kind == StepKind.tool_call:
-        loc = f"  {step.locations[0]}" if step.locations else ""
-        t.append("  🔧 ", style="dim")
+        t.append("🔧 ", style="dim")
         t.append(step.tool_name, style="bold dim")
-        if loc:
-            t.append(loc, style="dim")
+        arg = _tool_arg(step)
+        if arg:
+            t.append(f"  {arg}", style="dim")
     elif step.kind == StepKind.tool_result:
         if step.tool_status == "failed":
-            t.append("     ✗ ", style="red")
+            t.append("   ✗ ", style="red")
             t.append(step.tool_status, style="red")
+            if step.tool_output:
+                t.append(f"  {_condense(step.tool_output)}", style="red dim")
         else:
-            t.append("     ✓ ", style="green")
+            t.append("   ✓ ", style="green")
             t.append(step.tool_status, style="green")
     return t
 
@@ -61,6 +125,54 @@ def _render_orchestration_msg(text: str) -> Text:
     """
     t = Text()
     t.append(f"· {text}", style="dim")
+    return t
+
+
+def render_task_start(
+    task_name: str, tool: str, index: int, total: int, verb: str = "running"
+) -> Text:
+    """Render the banner announcing a task entering the running state.
+
+    Deliberately louder than :func:`_render_orchestration_msg`: this is the
+    heading the step lines below it belong to, so it must not look like one
+    of them. Includes ``[i/total]`` so a long flow shows how far along it is.
+
+    :param task_name: name of the task starting.
+    :param tool: tool identifier executing the task.
+    :param index: 1-based position among the tasks started so far.
+    :param total: total tasks in the conduit, or ``0`` when unknown.
+    :param verb: leading verb, e.g. ``running`` or ``resuming``.
+    """
+    t = Text()
+    t.append("▶ ", style="bold cyan")
+    if total:
+        t.append(f"[{index}/{total}] ", style="dim")
+    t.append(task_name, style="bold")
+    t.append(f"  [{tool}]", style="dim")
+    if verb != "running":
+        t.append(f"  {verb}", style="dim italic")
+    return t
+
+
+def render_heartbeat(elapsed_by_task: dict[str, float]) -> Text:
+    """Render the "still working" line shown during output silence.
+
+    A run can go quiet for minutes with nothing wrong: an ``npx`` cold
+    start before the first step, a long-running tool call, or a
+    ``tool:bash`` task that emits no steps at all. Naming the tasks and
+    their elapsed time distinguishes "still working" from "hung".
+
+    :param elapsed_by_task: running task name to seconds elapsed.
+    :returns: a dim single-line status, e.g. ``· still working — build 2m 14s``.
+    """
+    t = Text()
+    t.append("· still working", style="dim")
+    if elapsed_by_task:
+        parts = [
+            f"{name} {_format_duration_seconds(seconds)}"
+            for name, seconds in elapsed_by_task.items()
+        ]
+        t.append(f" — {' · '.join(parts)}", style="dim")
     return t
 
 
