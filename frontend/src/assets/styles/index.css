@@ -1,21 +1,72 @@
-@import "tailwindcss";
-
+/* Tailwind is imported once, by styles/globals.css. Importing it here too made
+   the engine emit preflight and the utility layer twice. */
 
 @theme {
   --font-display: "Young Serif", ui-serif, Georgia, serif;
-  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  /* "Geist Sans" is the family the bundled @fontsource package declares;
+     "Geist" keeps a locally installed copy working. */
+  --font-sans: "Geist Sans", "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
+  /* Type scale. rem, not px, so the UI honours the reader's font-size setting.
+     Values match what the app rendered before at a 16px root; the ramp is
+     deliberately tight (~1.1) because this is a dense tool, not prose. */
+  --text-micro: 0.5625rem; /*  9px — dense metadata, log lines */
+  --text-mini: 0.625rem; /* 10px — small caps labels */
+  --text-label: 0.6875rem; /* 11px — the default label size */
+  --text-body: 0.75rem; /* 12px — body copy, descriptions */
+  --text-data: 0.8125rem; /* 13px — field values, task names */
+  --text-panel: 1.125rem; /* 18px — panel headings */
+  --text-head: 1.5rem; /* 24px — section headings */
+
+  /* --- Dark theme (the default; light overrides live in globals.css) ------ */
   --color-background: oklch(0.16 0.008 60);
   --color-foreground: oklch(0.94 0.010 80);
   --color-muted: oklch(0.24 0.012 60);
   --color-muted-foreground: oklch(0.72 0.010 70);
   --color-border: oklch(0.32 0.012 60);
+  /* Decorative hairlines (`--color-border`) measure 1.53:1 here, which is fine
+     for a divider but fails WCAG 1.4.11 (3:1) for anything that *identifies* a
+     control. Inputs whose only affordance is a bottom rule use this instead. */
+  --color-border-strong: oklch(0.55 0.014 60);
   --color-primary: oklch(0.78 0.155 70);
   --color-primary-foreground: oklch(0.16 0.008 60);
   --color-ok: oklch(0.74 0.09 145);
+  --color-warning: oklch(0.79 0.14 65);
   --color-destructive: oklch(0.62 0.16 30);
   --color-card: oklch(0.19 0.010 60);
   --color-accent: oklch(0.30 0.030 70);
+  /* Graph edges. Was hard-coded `black`, which is invisible on this surface. */
+  --color-edge: oklch(0.55 0.012 60);
 
+  /* Tool identity colours. Lightness is theme-specific so every one of these
+     clears 4.5:1 as small text on its own surface; hues are the identities. */
+  --color-tool-bash: oklch(0.80 0.12 200);
+  --color-tool-hitl: oklch(0.80 0.13 60);
+  --color-tool-conduit: oklch(0.80 0.12 145);
+  --color-tool-claude-code: oklch(0.78 0.13 42);
+  --color-tool-codex: oklch(0.80 0.11 265);
+  --color-tool-opencode: oklch(0.78 0.12 170);
+  --color-tool-copilot: oklch(0.78 0.12 240);
+  --color-tool-cursor: oklch(0.78 0.13 310);
+}
+
+/* Named stacking layers. Anything that overlaps across components picks a name
+   from here instead of inventing a number, which is how 9999 gets born.
+   Purely local ordering inside one component's own stacking context still uses
+   plain z-[1]/z-[2]. */
+@utility z-dropdown {
+  z-index: 20;
+}
+@utility z-sticky {
+  z-index: 30;
+}
+@utility z-overlay {
+  z-index: 40;
+}
+@utility z-modal {
+  z-index: 50;
+}
+@utility z-toast {
+  z-index: 60;
 }

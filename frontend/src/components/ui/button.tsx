@@ -17,11 +17,17 @@ const buttonVariants = cva(
           "bg-destructive text-primary-foreground hover:brightness-110",
         link: "text-primary underline-offset-4 hover:underline bg-transparent",
       },
+      // The rest of the app builds its controls at h-11 (44px) — nav links,
+      // menu items, inputs, the mobile tools tab. These sizes used to top out
+      // at h-9, so every shared Button was the smallest target on the page and
+      // the primary action was the smallest of all. `default` now matches the
+      // app's own 44px standard; `sm` stays denser for toolbars but clears the
+      // 32px it was at.
       size: {
-        default: "h-9 px-4",
-        sm: "h-8 px-3 text-xs",
-        lg: "h-10 px-6",
-        icon: "h-9 w-9",
+        default: "h-11 px-5",
+        sm: "h-9 px-3 text-xs",
+        lg: "h-12 px-6",
+        icon: "h-11 w-11",
       },
     },
     defaultVariants: { variant: "default", size: "default" },

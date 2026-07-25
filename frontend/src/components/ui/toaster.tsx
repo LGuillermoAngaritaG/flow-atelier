@@ -14,7 +14,7 @@ export function Toaster() {
           actionButton: "!bg-primary !text-primary-foreground",
           cancelButton: "!text-muted-foreground",
           closeButton:
-            "!absolute !right-1.5 !top-1/2 !-translate-y-1/2 !left-auto !border-none !bg-transparent !text-muted-foreground/60 hover:!text-foreground !p-0 !m-0 !w-auto !h-auto [&>svg]:!size-3.5",
+            "!absolute !right-1.5 !top-1/2 !-translate-y-1/2 !left-auto !border-none !bg-transparent !text-muted-foreground hover:!text-foreground !p-0 !m-0 !w-auto !h-auto [&>svg]:!size-3.5",
         },
       }}
       closeButton

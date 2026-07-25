@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
+import { GripVertical } from "lucide-react";
 import type { Task } from "@/types/task";
 import { useConduits, getConduitSync } from "@/services/ConduitProvider";
 import { useTaskStore } from "@/runner";
-import { TOOL_COLORS } from "../toolMeta";
+import { TOOL_COLORS } from "@/constants/tools";
 import { cn } from "@/lib/cn";
 import { RemoveTaskDialog } from "./RemoveTaskDialog";
 
@@ -28,62 +29,66 @@ export function TaskCard({ task, selected, onClick }: Props) {
 
   return (
     <>
+    {/* Plain article. It used to carry role="button" + tabIndex={0} while
+        containing real <button>s — nested interactive controls, which is
+        invalid and made screen readers flatten the whole card into one
+        control. The primary action is now one button stretched over the card
+        via ::after, so click-anywhere still works while the drag and remove
+        buttons sit above it. */}
     <article
       ref={setNodeRef}
       data-testid="task-card"
       data-task-id={task.name}
       data-selected={selected || undefined}
-      role="button"
-      tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onClick?.();
-        }
-      }}
       className={cn(
-        "group h-[80px] border bg-card px-3 py-2.5 transition-colors hover:border-border/90 focus-visible:outline-2 focus-visible:outline-primary",
-        hitl ? "border-orange-500 border-2 bg-orange-500/5" : "border-border",
+        "group relative h-[80px] border bg-card px-3 py-2.5 transition-colors hover:border-border/90 focus-within:outline-2 focus-within:outline-primary",
+        hitl ? "border-warning border-2 bg-warning/5" : "border-border",
         selected && "border-primary shadow-[0_0_0_1px_var(--color-primary)]",
         task.column === "done" && "bg-transparent",
         isDragging && "opacity-40",
       )}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 font-mono text-[14px] leading-snug text-foreground  line-clamp-1">
-          {task.name}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <h3 className="min-w-0 font-mono text-data font-normal leading-snug text-foreground">
+          <button
+            type="button"
+            onClick={onClick}
+            className="block w-full truncate text-left after:absolute after:inset-0 after:content-[''] focus-visible:outline-none"
+          >
+            {task.name}
+          </button>
+        </h3>
+        {/* 24px minimum per WCAG 2.5.8; the card is 80px tall, so the 44px of
+            2.5.5 (AAA) would not fit alongside the name and description. */}
+        <div className="relative z-[1] -mt-1 flex shrink-0 items-center gap-1">
           <button
             type="button"
             {...listeners}
             {...attributes}
-            onClick={(e) => e.stopPropagation()}
             data-testid="drag-handle"
             aria-label={`Drag task ${task.name}`}
-            className="cursor-grab font-mono text-[11px] leading-none text-foreground/40 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary"
+            className="flex size-6 cursor-grab items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary"
           >
-            ⠿
+            <GripVertical className="size-3.5" aria-hidden />
           </button>
           {(task.column === "todo" || task.column === "done") && (
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); setRemoveOpen(true); }}
+              onClick={() => setRemoveOpen(true)}
               data-testid="remove-button"
               aria-label="Remove task"
-              className="opacity-0 font-mono text-[9px] uppercase tracking-[0.12em] text-foreground/50 transition-[opacity,color] group-hover:opacity-100 hover:text-destructive focus:opacity-100"
+              className="flex h-6 items-center px-1 font-mono text-micro uppercase tracking-[0.12em] text-foreground/50 opacity-0 transition-[opacity,color] group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary"
             >
               remove
             </button>
           )}
           {hitl ? (
-            <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.12em] text-orange-500">
+            <span className="shrink-0 font-mono text-micro uppercase tracking-[0.12em] text-warning">
               waiting for review
             </span>
           ) : (
             <span
-              className="shrink-0 font-mono text-[9px] uppercase tracking-[0.12em]"
+              className="shrink-0 font-mono text-micro uppercase tracking-[0.12em]"
               style={{ color: `var(--color-type-${isConduit ? "conduit" : "task"})` }}
             >
               {isConduit ? "conduit" : "task"}
@@ -92,7 +97,7 @@ export function TaskCard({ task, selected, onClick }: Props) {
         </div>
       </div>
       {desc && (
-        <div className="mt-1 text-[12px] leading-snug text-muted-foreground line-clamp-1">
+        <div className="mt-1 text-body leading-snug text-muted-foreground line-clamp-1">
           {desc}
         </div>
       )}
@@ -102,7 +107,7 @@ export function TaskCard({ task, selected, onClick }: Props) {
             className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
             style={{ backgroundColor: TOOL_COLORS[task.tool] ?? "var(--color-muted-foreground)" }}
           />
-          <span className="font-mono text-[9px] text-muted-foreground/70 truncate">{task.tool}</span>
+          <span className="font-mono text-micro text-muted-foreground truncate">{task.tool}</span>
         </div>
       )}
     </article>

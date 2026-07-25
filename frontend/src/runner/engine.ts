@@ -42,6 +42,7 @@ function baseDurationFor(tool: ToolType): number {
       return intBetween(rng, 1000, 1400);
     case "harness:claude-code":
     case "harness:codex":
+    case "harness:opencode":
     case "harness:copilot":
     case "harness:cursor":
       return intBetween(rng, 1500, 2300);
@@ -125,7 +126,7 @@ function scheduleTask(taskName: string, index: number) {
   if (!conduit) return;
 
   // Conditional skip
-  if (conduitTask.conditionalOn?.kind === "not_match") {
+  if (Object.values(conduitTask.conditions ?? {}).some((c) => c.kind === "not_match")) {
     pushLog(taskName, nowLog(`▸ ${conduitTask.name} (skipped — condition)`, "info"));
     setStatus(taskName, conduitTask.name, "skipped");
     updateFlow(taskName, (f) => ({ ...f, currentTaskIndex: index + 1 }));

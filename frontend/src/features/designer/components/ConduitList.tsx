@@ -13,7 +13,7 @@ export function ConduitList({ conduits, activeName, onSelect }: Props) {
       className="w-[220px] shrink-0 overflow-auto border-r border-border bg-background py-7"
     >
       <div className="px-5 pb-5">
-        <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+        <span className="font-mono text-micro uppercase tracking-[0.18em] text-muted-foreground">
           conduits
         </span>
       </div>
@@ -32,14 +32,14 @@ export function ConduitList({ conduits, activeName, onSelect }: Props) {
               }`}
             >
               <div
-                className={`font-mono text-[11px] leading-tight ${
+                className={`font-mono text-label leading-tight ${
                   isActive ? "text-primary" : "text-foreground"
                 }`}
               >
                 {c.name}
               </div>
               {c.description && (
-                <div className="mt-1 truncate text-[10px] leading-snug text-muted-foreground">
+                <div className="mt-1 truncate text-mini leading-snug text-muted-foreground">
                   {c.description}
                 </div>
               )}

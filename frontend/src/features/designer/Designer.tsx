@@ -34,11 +34,16 @@ import {
   SheetDescription,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { renderConduitYaml } from "@/utils/yaml";
 import { useUndoState } from "@/hooks/useUndoState";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { Menu, Undo2, Redo2 } from "lucide-react";
+import { renameConditionSource, toWireTasks } from "@/utils/conditions";
+import { Menu, Undo2, Redo2, Play } from "lucide-react";
+
+const MENU_ITEM =
+  "flex h-11 w-full items-center rounded-sm px-3 text-left font-mono text-label text-foreground hover:bg-muted";
 
 function initConduit(conduits: Conduit[]): Conduit {
   return (
@@ -121,9 +126,7 @@ export function Designer() {
           return {
             ...t,
             dependsOn: t.dependsOn.map((d) => (d === name ? newName : d)),
-            conditionalOn: t.conditionalOn?.task === name
-              ? { ...t.conditionalOn, task: newName }
-              : t.conditionalOn,
+            conditions: renameConditionSource(t.conditions, name, newName),
           };
         }),
       }));
@@ -260,7 +263,10 @@ export function Designer() {
       inputs: conduit.inputs,
       timeout: conduit.timeout,
       maxConcurrency: conduit.maxConcurrency,
-      tasks: conduit.tasks,
+      // Fold the conditions map back into `depends_on` DSL strings — the
+      // backend has no `conditional_on` field and would silently drop it,
+      // turning every gate the designer drew into a plain dependency.
+      tasks: toWireTasks(conduit.tasks),
     };
     const isExisting = allConduits.some((c) => c.name === conduit.name);
     try {
@@ -271,7 +277,9 @@ export function Designer() {
       }
       clearDraftConduit();
       toast.success(`Saved conduit ${conduit.name}`);
-      setTimeout(() => navigate("/dashboard"), 350);
+      // Navigate straight away rather than on a timer: the toast outlives the
+      // route change, and the old setTimeout could fire after unmount.
+      navigate("/dashboard");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save conduit");
     } finally {
@@ -290,7 +298,7 @@ export function Designer() {
   return (
     <div
       data-route="designer"
-      className="flex h-[calc(100vh-3.5rem)] w-full border-b border-border lg:h-[calc(100vh-3.5rem-1.75rem)]"
+      className="flex h-[calc(100dvh-3.5rem)] w-full border-b border-border"
     >
       <section className="relative flex-1">
         <Canvas
@@ -364,76 +372,80 @@ export function Designer() {
               disabled={!canSave || saving}
               data-testid="designer-save"
             >
-              ▸ save conduit
+              <Play className="size-3.5" aria-hidden />
+              save conduit
             </Button>
           </div>
         </div>
 
-        {/* Mobile: burger menu at top-left */}
-        <div className="absolute left-3 top-3 z-10 lg:hidden">
-          <button
-            type="button"
-            onClick={() => setMenuOpen(!menuOpen)}
-            className="rounded-sm border border-border bg-card/90 p-2 backdrop-blur hover:bg-muted"
-          >
-            <Menu className="size-4 text-foreground" />
-          </button>
-          {menuOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-              <div className="absolute left-0 top-full z-50 mt-1 flex min-w-[160px] flex-col gap-1 rounded-sm border border-border bg-card p-2 shadow-md">
-                <Dialog open={pickerOpen} onOpenChange={(open) => { setPickerOpen(open); if (!open) setMenuOpen(false); }}>
-                  <DialogTrigger asChild>
-                    <button type="button" className="w-full rounded-sm px-3 py-2 text-left font-mono text-[11px] text-foreground hover:bg-muted">
-                      open conduit
-                    </button>
-                  </DialogTrigger>
-                  <OpenConduitDialogContent
-                    allConduits={allConduits}
-                    currentName={conduit.name}
-                    onSelect={(name) => { handlePickerSelect(name); setMenuOpen(false); }}
-                  />
-                </Dialog>
+        {/* Mobile: menu at top-left. Radix Popover rather than a hand-rolled
+            dropdown, which had no accessible name on the trigger, no
+            aria-expanded, no Escape handling, no focus trap, and dismissed
+            only via a pointer-only backdrop div. */}
+        <div className="absolute left-3 top-3 z-dropdown lg:hidden">
+          <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                aria-label="Conduit actions"
+                className="flex size-11 items-center justify-center rounded-sm border border-border bg-card/90 backdrop-blur hover:bg-muted"
+              >
+                <Menu className="size-4 text-foreground" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="flex w-[200px] flex-col gap-1 p-2">
+              <Dialog open={pickerOpen} onOpenChange={(open) => { setPickerOpen(open); if (!open) setMenuOpen(false); }}>
+                <DialogTrigger asChild>
+                  <button type="button" className={MENU_ITEM}>
+                    open conduit
+                  </button>
+                </DialogTrigger>
+                <OpenConduitDialogContent
+                  allConduits={allConduits}
+                  currentName={conduit.name}
+                  onSelect={(name) => { handlePickerSelect(name); setMenuOpen(false); }}
+                />
+              </Dialog>
 
-                <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) setMenuOpen(false); }}>
-                  <DialogTrigger asChild>
-                    <button type="button" className="w-full rounded-sm px-3 py-2 text-left font-mono text-[11px] text-foreground hover:bg-muted">
-                      new conduit
-                    </button>
-                  </DialogTrigger>
-                  <CreateConduitDialogContent
-                    name={createName}
-                    setName={setCreateName}
-                    desc={createDesc}
-                    setDesc={setCreateDesc}
-                    timeout={createTimeout}
-                    setTimeout={setCreateTimeout}
-                    maxConcurrency={createMaxConcurrency}
-                    setMaxConcurrency={setCreateMaxConcurrency}
-                    onCreate={handleCreate}
-                  />
-                </Dialog>
+              <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) setMenuOpen(false); }}>
+                <DialogTrigger asChild>
+                  <button type="button" className={MENU_ITEM}>
+                    new conduit
+                  </button>
+                </DialogTrigger>
+                <CreateConduitDialogContent
+                  name={createName}
+                  setName={setCreateName}
+                  desc={createDesc}
+                  setDesc={setCreateDesc}
+                  timeout={createTimeout}
+                  setTimeout={setCreateTimeout}
+                  maxConcurrency={createMaxConcurrency}
+                  setMaxConcurrency={setCreateMaxConcurrency}
+                  onCreate={handleCreate}
+                />
+              </Dialog>
 
-                <Sheet open={yamlOpen} onOpenChange={(open) => { setYamlOpen(open); if (!open) setMenuOpen(false); }}>
-                  <SheetTrigger asChild>
-                    <button type="button" className="w-full rounded-sm px-3 py-2 text-left font-mono text-[11px] text-foreground hover:bg-muted">
-                      preview yaml
-                    </button>
-                  </SheetTrigger>
-                  <PreviewYamlSheetContent conduit={conduit} />
-                </Sheet>
+              <Sheet open={yamlOpen} onOpenChange={(open) => { setYamlOpen(open); if (!open) setMenuOpen(false); }}>
+                <SheetTrigger asChild>
+                  <button type="button" className={MENU_ITEM}>
+                    preview yaml
+                  </button>
+                </SheetTrigger>
+                <PreviewYamlSheetContent conduit={conduit} />
+              </Sheet>
 
-                <button
-                  type="button"
-                  onClick={() => { setMenuOpen(false); handleSave(); }}
-                  disabled={!canSave || saving}
-                  className="w-full rounded-sm px-3 py-2 text-left font-mono text-[11px] text-primary hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
-                >
-                  ▸ save conduit
-                </button>
-              </div>
-            </>
-          )}
+              <button
+                type="button"
+                onClick={() => { setMenuOpen(false); handleSave(); }}
+                disabled={!canSave || saving}
+                className={`${MENU_ITEM} gap-2 text-primary disabled:pointer-events-none disabled:opacity-40`}
+              >
+                <Play className="size-3.5" aria-hidden />
+                save conduit
+              </button>
+            </PopoverContent>
+          </Popover>
         </div>
       </section>
 
@@ -477,7 +489,7 @@ export function Designer() {
         <button
           type="button"
           onClick={() => setToolPanelOpen(true)}
-          className="fixed right-0 top-1/2 z-20 -translate-y-1/2 rounded-l-md border border-r-0 border-border bg-card/90 px-2 py-3 text-[10px] font-mono uppercase tracking-[0.1em] text-foreground shadow-sm backdrop-blur hover:bg-muted"
+          className="fixed right-0 top-1/2 z-dropdown flex min-h-11 w-11 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 border-border bg-card/90 py-3 font-mono text-mini uppercase tracking-[0.1em] text-foreground shadow-sm backdrop-blur hover:bg-muted"
         >
           tools
         </button>
@@ -522,14 +534,14 @@ function OpenConduitDialogContent({
               }`}
             >
               <div
-                className={`font-mono text-[11px] leading-tight ${
+                className={`font-mono text-label leading-tight ${
                   c.name === currentName ? "text-primary" : "text-foreground"
                 }`}
               >
                 {c.name}
               </div>
               {c.description && (
-                <div className="mt-1 truncate text-[10px] leading-snug text-muted-foreground">
+                <div className="mt-1 truncate text-mini leading-snug text-muted-foreground">
                   {c.description}
                 </div>
               )}
@@ -657,7 +669,7 @@ function PreviewYamlSheetContent({ conduit }: { conduit: Conduit }) {
       <ScrollArea className="flex-1 px-6 py-4">
         <pre
           data-testid="yaml-contents"
-          className="whitespace-pre font-mono text-[11px] leading-relaxed text-foreground"
+          className="whitespace-pre font-mono text-label leading-relaxed text-foreground"
         >
           {renderConduitYaml(conduit)}
         </pre>

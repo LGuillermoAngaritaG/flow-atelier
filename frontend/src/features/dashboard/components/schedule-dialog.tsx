@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Clock, X } from "lucide-react";
 import type { ScheduleConfig } from "@/types/schedule";
 import { hintStr } from "@/types/conduit";
 import { useConduits, getConduitSync } from "@/services/ConduitProvider";
@@ -168,14 +169,14 @@ export function ScheduleDialog({
         <div className="max-h-[60vh] overflow-y-auto space-y-5 py-2 pr-3">
           {/* Conduit picker */}
           <div className="space-y-2">
-            <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+            <label className="font-mono text-label uppercase tracking-[0.12em] text-muted-foreground">
               conduit
             </label>
             <Popover open={conduitPickerOpen} onOpenChange={setConduitPickerOpen}>
               <PopoverTrigger asChild>
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between border border-border/60 bg-transparent px-2 py-1.5 text-left font-mono text-[11px] text-foreground hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"
+                  className="flex w-full items-center justify-between border border-border/60 bg-transparent px-2 py-1.5 text-left font-mono text-label text-foreground hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"
                 >
                   <span
                     className={
@@ -203,7 +204,7 @@ export function ScheduleDialog({
                     }`}
                   >
                     <div
-                      className={`font-mono text-[11px] leading-tight ${
+                      className={`font-mono text-label leading-tight ${
                         selectedConduitName === c.name
                           ? "text-primary"
                           : "text-foreground"
@@ -212,7 +213,7 @@ export function ScheduleDialog({
                       {c.name}
                     </div>
                     {c.description && (
-                      <div className="mt-0.5 truncate text-[10px] leading-snug text-muted-foreground">
+                      <div className="mt-0.5 truncate text-mini leading-snug text-muted-foreground">
                         {c.description}
                       </div>
                     )}
@@ -224,13 +225,13 @@ export function ScheduleDialog({
 
           {/* Run path */}
           <div className="space-y-2">
-            <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+            <label className="font-mono text-label uppercase tracking-[0.12em] text-muted-foreground">
               run path
             </label>
             <input
               value={runPath}
               onChange={(e) => setRunPath(e.target.value)}
-              className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
+              className="w-full border-0 border-b border-border-strong bg-transparent pb-2 font-mono text-data text-foreground focus:border-primary"
               placeholder="/path/to/project"
             />
           </div>
@@ -239,7 +240,7 @@ export function ScheduleDialog({
           {selectedConduit &&
             Object.keys(selectedConduit.inputs).length > 0 && (
               <div className="space-y-2">
-                <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                <label className="font-mono text-label uppercase tracking-[0.12em] text-muted-foreground">
                   inputs
                 </label>
                 <div className="border-t border-border/60">
@@ -250,10 +251,10 @@ export function ScheduleDialog({
                         className="grid grid-cols-[120px_1fr] items-start gap-4 border-b border-border/50 py-3"
                       >
                         <div>
-                          <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-foreground">
+                          <div className="font-mono text-label uppercase tracking-[0.12em] text-foreground">
                             {inputName}
                           </div>
-                          <div className="mt-1 text-[10px] text-muted-foreground">
+                          <div className="mt-1 text-mini text-muted-foreground">
                             {hintStr(hint)}
                           </div>
                         </div>
@@ -262,7 +263,7 @@ export function ScheduleDialog({
                           onChange={(e) =>
                             handleInputChange(inputName, e.target.value)
                           }
-                          className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
+                          className="w-full border-0 border-b border-border-strong bg-transparent pb-2 font-mono text-data text-foreground focus:border-primary"
                           placeholder={hintStr(hint)}
                         />
                       </div>
@@ -280,7 +281,7 @@ export function ScheduleDialog({
                 type="button"
                 onClick={() => setMode(m)}
                 className={cn(
-                  "flex-1 py-2 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors",
+                  "flex-1 py-2 font-mono text-label uppercase tracking-[0.12em] transition-colors",
                   mode === m
                     ? "bg-muted text-foreground"
                     : "text-muted-foreground hover:text-foreground",
@@ -293,20 +294,20 @@ export function ScheduleDialog({
 
           {mode === "once" ? (
             <div className="space-y-2">
-              <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+              <label className="font-mono text-label uppercase tracking-[0.12em] text-muted-foreground">
                 run at
               </label>
               <input
                 type="datetime-local"
                 value={runAt}
                 onChange={(e) => setRunAt(e.target.value)}
-                className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
+                className="w-full border-0 border-b border-border-strong bg-transparent pb-2 font-mono text-data text-foreground focus:border-primary"
               />
             </div>
           ) : (
             <div className="space-y-5">
               <div className="space-y-2">
-                <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                <label className="font-mono text-label uppercase tracking-[0.12em] text-muted-foreground">
                   on days
                 </label>
                 <div className="flex justify-between gap-1">
@@ -316,7 +317,7 @@ export function ScheduleDialog({
                       type="button"
                       onClick={() => toggleDay(value)}
                       className={cn(
-                        "flex h-9 w-9 items-center justify-center rounded-full border text-[11px] font-mono uppercase transition-colors",
+                        "flex h-9 w-9 items-center justify-center rounded-full border text-label font-mono uppercase transition-colors",
                         selectedDays.includes(value)
                           ? "border-primary bg-primary text-primary-foreground"
                           : "border-border text-muted-foreground hover:border-foreground hover:text-foreground",
@@ -329,7 +330,7 @@ export function ScheduleDialog({
               </div>
 
               <div className="space-y-2">
-                <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                <label className="font-mono text-label uppercase tracking-[0.12em] text-muted-foreground">
                   at times
                 </label>
                 <div className="space-y-2">
@@ -339,15 +340,16 @@ export function ScheduleDialog({
                         type="time"
                         value={time}
                         onChange={(e) => updateTime(i, e.target.value)}
-                        className="flex-1 border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
+                        className="flex-1 border-0 border-b border-border-strong bg-transparent pb-2 font-mono text-data text-foreground focus:border-primary"
                       />
                       {times.length > 1 && (
                         <button
                           type="button"
+                          aria-label={`Remove time ${i + 1}`}
                           onClick={() => removeTime(i)}
-                          className="text-muted-foreground hover:text-destructive transition-colors text-sm leading-none"
+                          className="flex size-6 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-destructive"
                         >
-                          ×
+                          <X className="size-3.5" aria-hidden />
                         </button>
                       )}
                     </div>
@@ -366,7 +368,7 @@ export function ScheduleDialog({
 
           {/* Name */}
           <div className="space-y-2">
-            <label className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+            <label className="font-mono text-label uppercase tracking-[0.12em] text-muted-foreground">
               name
             </label>
             <input
@@ -374,7 +376,7 @@ export function ScheduleDialog({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={selectedConduitName}
-              className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none placeholder:text-muted-foreground/50 focus:border-primary"
+              className="w-full border-0 border-b border-border-strong bg-transparent pb-2 font-mono text-data text-foreground placeholder:text-muted-foreground focus:border-primary"
             />
           </div>
         </div>
@@ -388,7 +390,8 @@ export function ScheduleDialog({
             cancel
           </Button>
           <Button size="sm" onClick={handleConfirm} disabled={!isValid}>
-            ◷ schedule
+            <Clock className="size-3.5" aria-hidden />
+            schedule
           </Button>
         </DialogFooter>
       </DialogContent>

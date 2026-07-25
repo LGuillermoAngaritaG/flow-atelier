@@ -29,7 +29,7 @@ const fullConduit: Conduit = {
       description: "Review code",
       task: "Review the diff",
       dependsOn: ["build"],
-      conditionalOn: { task: "build", kind: "match", pattern: "ok" },
+      conditions: { "build": { kind: "match", pattern: "ok" } },
     },
     {
       name: "retry_step",
@@ -73,7 +73,7 @@ describe("renderConduitYaml", () => {
 
   it("renders depends_on when task has dependencies", () => {
     const result = renderConduitYaml(fullConduit);
-    expect(result).toContain("depends_on: [build]");
+    expect(result).toContain("depends_on: [\"build.output.match(ok)\"]");
   });
 
   it("omits depends_on when task has no dependencies", () => {
@@ -81,9 +81,13 @@ describe("renderConduitYaml", () => {
     expect(result).not.toContain("depends_on:");
   });
 
-  it("renders conditional_on when present", () => {
+  it("encodes a condition into the depends_on entry, not a conditional_on key", () => {
+    // `conditional_on` is not a field in the conduit schema — the engine reads
+    // conditions out of the depends_on DSL, so emitting one produced a preview
+    // the engine would silently ignore.
     const result = renderConduitYaml(fullConduit);
-    expect(result).toContain("conditional_on: { task: build, match: \"ok\" }");
+    expect(result).toContain("build.output.match(ok)");
+    expect(result).not.toContain("conditional_on");
   });
 
   it("renders repeat when present", () => {

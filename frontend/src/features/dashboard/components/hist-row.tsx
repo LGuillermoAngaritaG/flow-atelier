@@ -24,7 +24,7 @@ export const HistRow = React.forwardRef<
       data-state={row.state}
       onClick={onClick}
       className={cn(
-        "grid grid-cols-[14px_1fr_90px_80px_60px] items-center gap-4 py-3 pr-5 font-mono text-[12px]",
+        "grid grid-cols-[14px_1fr_90px_80px_60px] items-center gap-4 py-3 pr-5 font-mono text-body",
         onClick && "cursor-pointer hover:bg-muted/40 transition-colors",
       )}
     >
@@ -45,7 +45,7 @@ export const HistRow = React.forwardRef<
         </div>
         <div className="mt-0.5">
           <span
-            className="font-mono text-[9px] uppercase tracking-[0.12em]"
+            className="font-mono text-micro uppercase tracking-[0.12em]"
             style={{ color: `var(--color-type-${row.isConduit ? "conduit" : "task"})` }}
           >
             {row.isConduit ? "conduit" : "task"}
@@ -60,7 +60,7 @@ export const HistRow = React.forwardRef<
       </span>
       <span
         className={cn(
-          "text-right text-[10px] uppercase tracking-[0.14em]",
+          "text-right text-mini uppercase tracking-[0.14em]",
           running ? "text-primary" : "text-muted-foreground",
           row.state === "failed" && "text-destructive",
         )}

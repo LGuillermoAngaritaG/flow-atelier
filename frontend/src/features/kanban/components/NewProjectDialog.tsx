@@ -40,10 +40,10 @@ export function NewProjectDialog({ open, onOpenChange, onCreate }: Props) {
         </DialogHeader>
         <div className="grid grid-cols-[100px_1fr] items-start gap-4">
           <div>
-            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-foreground">
+            <div className="font-mono text-label uppercase tracking-[0.12em] text-foreground">
               name
             </div>
-            <div className="mt-0.5 text-[11px] text-muted-foreground">project name</div>
+            <div className="mt-0.5 text-label text-muted-foreground">project name</div>
           </div>
           <input
             value={name}
@@ -51,7 +51,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreate }: Props) {
             onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
             placeholder="my project"
             autoFocus
-            className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
+            className="w-full border-0 border-b border-border-strong bg-transparent pb-2 font-mono text-data text-foreground focus:border-primary"
           />
         </div>
         <DialogFooter>
