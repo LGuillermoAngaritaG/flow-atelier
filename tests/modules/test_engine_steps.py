@@ -268,7 +268,7 @@ async def test_live_steps_survive_a_killed_task(store) -> None:
     flow_id = captured[0]
     assert store.read_logs(flow_id) == [], "a killed task must not log an entry"
 
-    records = store.read_steps(flow_id)
+    records, _ = store.read_steps(flow_id)
     assert [r.step.kind for r in records] == [
         StepKind.thinking,
         StepKind.tool_call,
@@ -297,7 +297,7 @@ async def test_steps_are_persisted_as_they_arrive(store) -> None:
             await context.on_step(
                 IntermediateStep(kind=StepKind.thinking, text="mid-flight")
             )
-            seen.append(store.read_steps(context.flow_id))
+            seen.append(store.read_steps(context.flow_id)[0])
             return ExecutionResult(exit_code=0, output="done", stdout="done")
 
     conduit = _conduit(
@@ -319,4 +319,4 @@ async def test_steps_are_persisted_as_they_arrive(store) -> None:
     assert seen[0][0].task == "a"
     assert seen[0][0].step.text == "mid-flight"
     # And still readable afterwards.
-    assert len(store.read_steps(flow_id)) == 1
+    assert len(store.read_steps(flow_id)[0]) == 1

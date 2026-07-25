@@ -151,7 +151,7 @@ def _orphan_steps(
     :returns: mapping of ``(task, iteration)`` to its ordered steps.
     """
     try:
-        records = atelier.store.read_steps(flow_id)
+        records, _ = atelier.store.read_steps(flow_id)
     except FileNotFoundError:
         return {}
     logged = {(e.task, e.iteration) for e in entries}
@@ -210,7 +210,7 @@ def _follow_logs(
     :param poll_seconds: delay between polls for new entries.
     """
     rendered = 0
-    steps_read = 0
+    steps_offset = 0
 
     def _read() -> list:
         """Read all log entries for the flow, filtered by task when requested.
@@ -233,16 +233,16 @@ def _follow_logs(
         its log entry only lands once it returns. Tailing them is what makes
         a long agent task watchable from a second terminal.
         """
-        nonlocal rendered, steps_read
+        nonlocal rendered, steps_offset
         from flow_atelier.cli.rendering.render import _render_step
 
         try:
-            # Skip what we already rendered: parsing, not I/O, is what makes
-            # a long flow's steps.jsonl expensive to poll.
-            fresh = atelier.store.read_steps(flow_id, skip=steps_read)
+            # Resume from where the last poll stopped: steps.jsonl has no
+            # rotation, so re-reading it whole every poll costs more the
+            # longer the flow runs.
+            fresh, steps_offset = atelier.store.read_steps(flow_id, steps_offset)
         except FileNotFoundError:
             fresh = []
-        steps_read += len(fresh)
         for record in fresh:
             if task is not None and record.task != task:
                 continue

@@ -431,6 +431,11 @@ class FilesystemStore(StoreBase):
         Reads ``logs.jsonl``; falls back to the legacy ``logs.json`` array
         for flow dirs created before the JSONL switch.
 
+        Both are read as UTF-8 to match ``append_log``, which writes that
+        way. Falling back to the locale default decodes as cp1252 on a stock
+        Windows console and raises on the first non-ASCII character an agent
+        or a task's output happens to contain.
+
         :param flow_id: flow identifier
         :returns: parsed list of :class:`LogEntry` — empty if missing/unreadable
         """
@@ -438,7 +443,7 @@ class FilesystemStore(StoreBase):
         jsonl_path = flow_dir / "logs.jsonl"
         if jsonl_path.exists():
             entries: list[LogEntry] = []
-            lines = jsonl_path.read_text().splitlines()
+            lines = jsonl_path.read_text(encoding="utf-8").splitlines()
             last_index = len(lines) - 1
             for index, line in enumerate(lines):
                 if not line.strip():
@@ -460,7 +465,7 @@ class FilesystemStore(StoreBase):
             return entries
         legacy_path = flow_dir / "logs.json"
         try:
-            raw = json.loads(legacy_path.read_text())
+            raw = json.loads(legacy_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):
             return []
         return [LogEntry.model_validate(item) for item in raw]
@@ -486,35 +491,53 @@ class FilesystemStore(StoreBase):
         async with self._lock_for(flow_id):
             await asyncio.to_thread(_write)
 
-    def read_steps(self, flow_id: str, skip: int = 0) -> list[StepRecord]:
-        """Return live step records for ``flow_id`` in append order.
+    def read_steps(
+        self, flow_id: str, offset: int = 0
+    ) -> tuple[list[StepRecord], int]:
+        """Return live step records for ``flow_id`` from ``offset`` onward.
 
-        A truncated trailing line is expected — the file is appended to
-        while the flow runs, which is exactly when it gets read. It is
-        skipped and picked up on the next read, once complete.
+        ``offset`` is a byte position, and the matching end position comes
+        back with the records. A poller feeds the returned value into its
+        next call and reads only what was appended since, instead of pulling
+        the whole file through memory every quarter second — ``steps.jsonl``
+        has no rotation, so on a long loop conduit that file only grows.
 
-        ``skip`` exists for pollers: parsing dominates the cost here, so a
-        tailer that already rendered the first N records should skip them
-        rather than re-validate the whole file every quarter second.
+        A truncated trailing line is expected: the file is appended to while
+        the flow runs, which is exactly when it gets read. It is left
+        unconsumed and picked up once complete. A *complete* line that will
+        not parse is corruption rather than a race, so it is logged, skipped,
+        and stepped over — stopping there would hide every later step for the
+        rest of the flow's life.
 
         :param flow_id: flow identifier
-        :param skip: number of leading lines to ignore without parsing
-        :returns: parsed list of :class:`StepRecord`, empty if none recorded
+        :param offset: byte offset to resume from; ``0`` reads from the start
+        :returns: tuple of the parsed records and the byte offset just past
+            the last complete line consumed
         """
         path = self._flow_dir(flow_id) / "steps.jsonl"
         if not path.exists():
-            return []
+            return [], offset
+        with path.open("rb") as f:
+            f.seek(offset)
+            data = f.read()
+
         records: list[StepRecord] = []
-        for line in path.read_text().splitlines()[skip:]:
+        consumed = 0
+        for raw in data.splitlines(keepends=True):
+            if not raw.endswith(b"\n"):
+                break  # partial trailing write — retried on the next read
+            consumed += len(raw)
             try:
-                records.append(StepRecord.model_validate(json.loads(line)))
-            except (json.JSONDecodeError, ValueError):
-                # Stop rather than skip: the expected failure is a partial
-                # trailing write from the still-running flow, and stopping
-                # keeps len(records) an exact line count so a poller's
-                # ``skip`` never drifts. The line is retried next read.
-                break
-        return records
+                records.append(
+                    StepRecord.model_validate(json.loads(raw.decode("utf-8")))
+                )
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                logger.warning(
+                    "skipping unreadable step record in %s at byte %d",
+                    path,
+                    offset + consumed - len(raw),
+                )
+        return records, offset + consumed
 
     # ------------------------------------------------------------------ progress
 

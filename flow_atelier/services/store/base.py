@@ -137,13 +137,16 @@ class StoreBase(ABC):
         ...
 
     @abstractmethod
-    def read_steps(self, flow_id: str, skip: int = 0) -> list[StepRecord]:
+    def read_steps(
+        self, flow_id: str, offset: int = 0
+    ) -> tuple[list[StepRecord], int]:
         """Return live step records for ``flow_id`` in append order.
 
         :param flow_id: flow identifier
-        :param skip: number of leading records to ignore, for pollers that
-            have already consumed them
-        :returns: list of :class:`StepRecord` — empty if none were recorded
+        :param offset: opaque resume position from a previous call, for
+            pollers that have already consumed the records before it
+        :returns: tuple of the records (empty if none were recorded) and the
+            position to pass as ``offset`` on the next call
         """
         ...
 
