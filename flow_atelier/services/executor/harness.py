@@ -311,6 +311,9 @@ class _BufferingClient:
         self._pending_thinking_len: int = 0
         self._pending_message: list[str] = []
         self._pending_message_len: int = 0
+        # True once a message block reached the sink, so the caller knows a
+        # result panel would duplicate what already scrolled past.
+        self.streamed_message = False
         # Last per-turn token breakdown and latest cumulative session cost
         # the agent reported, if any. Both UNSTABLE/optional in ACP.
         self.usage: Usage | None = None
@@ -361,6 +364,7 @@ class _BufferingClient:
             return
         if hasattr(self._sink, "display_message"):
             await self._sink.display_message(text)
+            self.streamed_message = True
 
     async def flush_pending(self) -> None:
         """Flush partial thinking/message buffers at a turn boundary.
@@ -663,6 +667,10 @@ class AcpHarnessExecutor(ExecutorBase):
                 steps=client.steps,
                 usage=_usage_from_client(client),
             )
+        # Interactive runs stream raw chunks; non-interactive runs stream
+        # batched message blocks. Either way the output is already on screen.
+        if client.streamed_message or task.interactive:
+            result.live_streamed = True
         return _with_agent_stderr(result, agent_stderr)
 
     async def _drive_session(

@@ -118,26 +118,29 @@ def _render_step(step: IntermediateStep, task: str = "") -> Text:
     return t
 
 
-_MESSAGE_PREVIEW_CHARS = 160
-
-
 def render_agent_message(text: str, task: str = "") -> Text:
-    """Render a preview of what the agent said.
+    """Render what the agent said, in full.
 
-    A preview, not the message: the full text lands in the task's result
-    panel and in ``atelier logs``, so reprinting all of it live would be the
-    duplication this view exists to avoid.
+    Never truncated. This stream is read by other agents as well as by
+    people, and a machine reader cannot recover what an ellipsis dropped —
+    it would have to go find the flow's logs on disk. Tool *calls* collapse
+    because which tool ran is cheap to summarize; what the agent actually
+    said is the payload.
 
-    :param text: agent message text to preview.
+    Continuation lines are indented under the marker so multi-line answers
+    stay visually attached to their task tag.
+
+    :param text: agent message text.
     :param task: owning task name, prefixed when given.
     """
     t = Text()
     t.append(f"  {task} " if task else "  ", style="cyan")
     t.append("💬 ", style="white")
-    flat = " ".join(text.split())
-    if len(flat) > _MESSAGE_PREVIEW_CHARS:
-        flat = flat[:_MESSAGE_PREVIEW_CHARS] + "…"
-    t.append(flat)
+    lines = text.strip().splitlines() or [""]
+    t.append(lines[0])
+    indent = " " * (len(task) + 6) if task else " " * 5
+    for line in lines[1:]:
+        t.append(f"\n{indent}{line}")
     return t
 
 
@@ -234,48 +237,17 @@ def render_heartbeat(elapsed_by_task: dict[str, float]) -> Text:
     return t
 
 
-def _truncate_tail(text: str, max_lines: int = 20) -> tuple[str, int]:
-    """Return ``(displayed_text, dropped_line_count)``.
-
-    Keeps only the last ``max_lines`` lines of ``text``. If the input has
-    ``max_lines`` or fewer lines, returns it unchanged with a dropped count
-    of zero.
-
-    :param text: raw text to truncate from the top
-    :param max_lines: maximum number of trailing lines to keep
-    :returns: tuple of the retained text and how many lines were dropped
-    """
-    if not text:
-        return "", 0
-    lines = text.splitlines()
-    if len(lines) <= max_lines:
-        return "\n".join(lines), 0
-    dropped = len(lines) - max_lines
-    return "\n".join(lines[-max_lines:]), dropped
-
-
-def _truncated_section(text: str, max_lines: int = 20) -> Text:
-    """Truncate ``text`` to its last ``max_lines`` lines and return a
-    Rich :class:`Text` with an italic-dim header noting the dropped count.
-
-    :param text: raw text to truncate from the top.
-    :param max_lines: maximum number of trailing lines to keep.
-    """
-    displayed, dropped = _truncate_tail(text, max_lines=max_lines)
-    body = Text()
-    if dropped:
-        body.append(f"… ({dropped} lines truncated)\n", style="dim italic")
-    body.append(displayed)
-    return body
-
-
 def _build_failure_body(stdout: str, stderr: str) -> Text:
-    """Render a failure body that always surfaces stderr.
+    """Render a failure body that always surfaces stderr, in full.
 
     - Both empty → ``(empty)``.
-    - Only one populated → the existing single-body (truncated) form.
+    - Only one populated → that stream alone.
     - Both populated → labelled sections so the diagnostic stderr is
       visible alongside the stdout context.
+
+    Nothing is elided. A failing task's output is the whole reason anyone
+    is reading this panel, and the reader may be another agent that cannot
+    go and fetch the dropped lines from the store.
 
     :param stdout: captured stdout text from the failed task.
     :param stderr: captured stderr text from the failed task.
@@ -285,15 +257,15 @@ def _build_failure_body(stdout: str, stderr: str) -> Text:
     if not has_stdout and not has_stderr:
         return Text("(empty)")
     if has_stdout and not has_stderr:
-        return _truncated_section(stdout)
+        return Text(stdout)
     if has_stderr and not has_stdout:
-        return _truncated_section(stderr)
+        return Text(stderr)
     body = Text()
     body.append("stdout:\n", style="dim bold")
-    body.append(_truncated_section(stdout))
+    body.append(stdout)
     body.append("\n\n")
     body.append("stderr:\n", style="bold red")
-    body.append(_truncated_section(stderr))
+    body.append(stderr)
     return body
 
 
@@ -342,8 +314,11 @@ def render_task_event(event: TaskEvent, console: Console) -> None:
     Success with empty output → compact single-line summary (no panel)
     to avoid visual noise for echo-style tasks.
 
-    Long bodies are truncated to the last 20 lines with a dim
-    ``… (N lines truncated)`` header so the terminal stays readable.
+    Bodies are printed in full. Task output is the product of the run and
+    this stream is consumed by other agents as well as by people, so
+    eliding it would silently drop the very thing the caller came for.
+    Harness tasks whose output already streamed live are summarized to a
+    single line instead, which avoids the duplication without losing data.
 
     :param event: the task event to render.
     :param console: Rich console to write the rendered output to.
@@ -398,7 +373,7 @@ def render_task_event(event: TaskEvent, console: Console) -> None:
         body_text = Text()
         if summary:
             body_text.append(f"{summary}\n", style="dim")
-        body_text.append(_truncated_section(body_source))
+        body_text.append(body_source)
     else:
         border_style = "red"
         title = Text(f"✗ {title_core}", style="bold red")

@@ -494,7 +494,7 @@ class Engine:
                     stderr=result.stderr,
                     success=result.success,
                     status=TaskStatus.completed if result.success else TaskStatus.failed,
-                    live_streamed=t.interactive,
+                    live_streamed=result.live_streamed or t.interactive,
                     steps=result.steps,
                 )
             )

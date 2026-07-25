@@ -149,3 +149,32 @@ class TestDisplayStep:
             assert "research" in buf.getvalue()
         finally:
             _current_task_ctx.reset(token)
+
+
+class TestFullMessages:
+    async def test_long_message_is_not_truncated(self) -> None:
+        """Agent messages render whole — this stream is machine-readable.
+
+        Tool calls collapse because which tool ran is cheap to summarize.
+        What the agent said is the payload and must survive intact.
+        """
+        sink, buf = _make_sink()
+        body = " ".join(f"word{i}" for i in range(400))
+        await sink.display_message(body)
+        output = buf.getvalue()
+
+        assert "…" not in output
+        assert "word0" in output
+        assert "word399" in output
+
+    async def test_multiline_message_keeps_every_line(self) -> None:
+        """Structured answers (lists, code) must not lose their shape.
+
+        :returns: nothing.
+        """
+        sink, buf = _make_sink()
+        await sink.display_message("Summary:\n- fixed A\n- fixed B\n- shipped C")
+        output = buf.getvalue()
+
+        for fragment in ("Summary:", "fixed A", "fixed B", "shipped C"):
+            assert fragment in output

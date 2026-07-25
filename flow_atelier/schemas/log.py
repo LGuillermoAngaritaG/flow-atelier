@@ -90,6 +90,11 @@ class ExecutionResult(BaseModel):
     ``tool:conduit`` tasks when evaluating the per-iteration loop
     predicate.
     """
+    live_streamed: bool = False
+    """The executor already wrote this task's output to the user's terminal
+    as it arrived, so a result panel repeating it would be pure duplication.
+    Set by harness executors that streamed agent messages; the engine
+    forwards it to :class:`TaskEvent`."""
     last_turn_output: str | None = None
     """Text emitted by the agent on the final turn only, for interactive
     harness tasks. When set, the engine uses it instead of ``output`` when
