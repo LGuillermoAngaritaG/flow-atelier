@@ -17,6 +17,18 @@ from flow_atelier.services.api.base import get_atelier
 router = APIRouter(prefix="/conduits", tags=["conduits"])
 
 
+def _default_run_path(atelier: Atelier) -> str:
+    """Working directory a run should default to: the project `.atelier/` holds.
+
+    Matches the CLI, where `atelier run` always writes flows under the
+    `.atelier/` of the directory it was invoked from.
+
+    :param atelier: the bound facade.
+    :returns: absolute path as a string.
+    """
+    return str(atelier.settings.atelier_dir.parent)
+
+
 @router.get("", response_model=list[ConduitDTO])
 async def list_conduits(atelier: Atelier = Depends(get_atelier)) -> list[ConduitDTO]:
     """List every conduit visible to the facade (project + global).
@@ -30,7 +42,7 @@ async def list_conduits(atelier: Atelier = Depends(get_atelier)) -> list[Conduit
             conduit = atelier.store.read_conduit(name)
         except FileNotFoundError:
             continue
-        out.append(ConduitDTO.model_validate(conduit.model_dump()))
+        out.append(ConduitDTO.from_conduit(conduit, _default_run_path(atelier)))
     return out
 
 
@@ -46,7 +58,7 @@ async def get_conduit(name: str, atelier: Atelier = Depends(get_atelier)) -> Con
         conduit = atelier.store.read_conduit(name)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    return ConduitDTO.model_validate(conduit.model_dump())
+    return ConduitDTO.from_conduit(conduit, _default_run_path(atelier))
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=ConduitDTO)
@@ -65,7 +77,7 @@ async def create_conduit(
         raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return ConduitDTO.model_validate(conduit.model_dump())
+    return ConduitDTO.from_conduit(conduit, _default_run_path(atelier))
 
 
 @router.patch("/{name}", response_model=ConduitDTO)
@@ -89,7 +101,7 @@ async def update_conduit(
         raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return ConduitDTO.model_validate(conduit.model_dump())
+    return ConduitDTO.from_conduit(conduit, _default_run_path(atelier))
 
 
 @router.delete("/{name}")

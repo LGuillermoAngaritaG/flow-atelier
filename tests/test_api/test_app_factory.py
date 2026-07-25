@@ -27,7 +27,7 @@ async def test_create_app_returns_fastapi_with_liveness(atelier):
     server = FastApiServer()
     app = server.create_app(atelier)
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
         resp = await client.get("/flows")
     assert resp.status_code == 200
 
@@ -40,7 +40,7 @@ async def test_create_app_registers_cors(atelier):
     server = FastApiServer()
     app = server.create_app(atelier, cors_origins=["http://localhost:5173"])
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
         resp = await client.options(
             "/",
             headers={
@@ -63,7 +63,7 @@ async def test_create_app_default_cors_is_localhost_only(atelier):
     server = FastApiServer()
     app = server.create_app(atelier)
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
         ok = await client.options(
             "/",
             headers={
@@ -82,13 +82,47 @@ async def test_create_app_default_cors_is_localhost_only(atelier):
     assert denied.headers.get("access-control-allow-origin") is None
 
 
+async def test_forged_host_header_is_rejected(atelier):
+    """Verify a foreign Host header is refused — this is the DNS-rebinding
+    guard. CORS cannot catch it: a rebound hostname makes the attacker's page
+    same-origin, so no Origin header is sent to reject. Without the Host pin,
+    any site a user visits while `atelier serve` runs could POST /tasks/run.
+
+    :param atelier: atelier fixture.
+    """
+    server = FastApiServer()
+    app = server.create_app(atelier)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+        rebound = await client.get("/flows", headers={"host": "evil.example.com"})
+        loopback = await client.get("/flows", headers={"host": "localhost:8000"})
+    assert rebound.status_code == 400
+    assert loopback.status_code == 200
+
+
+async def test_allowed_hosts_override_is_honored(atelier):
+    """Verify an explicit allowed_hosts list replaces the loopback default —
+    `atelier serve --host <lan-ip>` has to keep reaching itself by that name.
+
+    :param atelier: atelier fixture.
+    """
+    server = FastApiServer()
+    app = server.create_app(atelier, allowed_hosts=["atelier.internal"])
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+        named = await client.get("/flows", headers={"host": "atelier.internal"})
+        other = await client.get("/flows", headers={"host": "evil.example.com"})
+    assert named.status_code == 200
+    assert other.status_code == 400
+
+
 def _client(app) -> httpx.AsyncClient:
     """Build an in-process httpx client for the given app.
 
     :param app: FastAPI instance under test.
     """
     transport = httpx.ASGITransport(app=app)
-    return httpx.AsyncClient(transport=transport, base_url="http://test")
+    return httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1")
 
 
 async def test_no_token_configured_allows_anonymous(atelier):

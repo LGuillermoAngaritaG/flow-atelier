@@ -22,6 +22,10 @@ def test_defaults(tmp_path, monkeypatch):
     assert s.codex_launch_cmd == []
     assert s.done_marker == "[ATELIER_DONE]"
     assert s.global_atelier_dir == Path.home() / ".atelier"
+    # Must stay empty. A literal default would be a published shared
+    # credential, and being truthy also suppresses the "serving without auth"
+    # warning in `atelier serve`.
+    assert s.api_token == ""
 
 
 def test_env_override(tmp_path, monkeypatch):

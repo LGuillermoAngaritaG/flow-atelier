@@ -6,7 +6,9 @@ Grammar:
     not_match:    <task_name>.output.not_match(<regex>)
 
 The regex is everything between the leftmost `(` after `.match(` / `.not_match(`
-and the *last* `)` in the string — no quoting required.
+and the *last* `)` in the string. Quotes around the regex are optional and are
+stripped when present, so `match(PASS)` and `match("PASS")` are equivalent (see
+:func:`strip_surrounding_quotes`).
 """
 from __future__ import annotations
 
@@ -23,6 +25,36 @@ _NOT_MATCH_MARKER = ".output.not_match("
 
 _OUTPUT_MATCH_PREFIX = "output.match("
 _OUTPUT_NOT_MATCH_PREFIX = "output.not_match("
+
+_QUOTE_CHARS = ('"', "'")
+
+
+def strip_surrounding_quotes(pattern: str) -> str:
+    """Drop one matching pair of wrapping quotes from a match pattern.
+
+    The DSL takes everything between the parentheses as the regex, so a quoted
+    ``output.match("PASS")`` would otherwise search for a literal ``"PASS"``
+    *including* the quotes and silently never match — a loop just runs every
+    iteration instead of breaking early. Authors write the quotes anyway
+    (they read like a string literal), so accept both spellings.
+
+    To match a real quote character, escape it: ``\\"PASS\\"`` is left alone and
+    still matches ``"PASS"`` with quotes. An empty body (``""``) is also left
+    alone, since stripping it would turn a literal into a match-everything
+    regex.
+
+    :param pattern: raw regex source extracted from between the parentheses.
+    :returns: the pattern without one wrapping quote pair.
+    """
+    if (
+        len(pattern) > 2
+        and pattern[0] in _QUOTE_CHARS
+        and pattern[-1] == pattern[0]
+        and pattern[-2] != "\\"
+    ):
+        return pattern[1:-1]
+    return pattern
+
 
 # Task names share the schema grammar: ``_TASK_NAME_RE`` is imported from
 # schemas.conduit so the two validators can't drift apart. ``.isalnum()`` would
@@ -104,7 +136,7 @@ def parse_dependency(dep: str) -> Dependency:
             raise DependencyParseError(
                 f"dependency must end with ')': {dep!r}"
             )
-        pattern = rest[:-1]
+        pattern = strip_surrounding_quotes(rest[:-1])
         try:
             re.compile(pattern)
         except re.error as e:
@@ -166,7 +198,7 @@ def parse_output_predicate(expr: str) -> tuple[re.Pattern[str], bool]:
                 raise DependencyParseError(
                     f"predicate must end with ')': {expr!r}"
                 )
-            pattern = rest[:-1]
+            pattern = strip_surrounding_quotes(rest[:-1])
             try:
                 compiled = re.compile(pattern)
             except re.error as e:

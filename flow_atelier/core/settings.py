@@ -79,7 +79,10 @@ class AtelierSettings(BaseSettings):
     )
     done_marker: str = "[ATELIER_DONE]"
     api_token: str = Field(
-        default="secret-key",
+        # Empty, never a literal: a shipped default token is a published
+        # shared credential, and a truthy default also silently disables the
+        # "serving without auth" warning in `atelier serve`.
+        default="",
         description=(
             "Optional bearer token for the HTTP/WS API (env ATELIER_API_TOKEN). "
             "When set, every REST request must send 'Authorization: Bearer "

@@ -1,11 +1,14 @@
 """Tests for flow_atelier.cli.updater — all network calls are mocked."""
 from __future__ import annotations
 
+import os
 import sys
+import time
 from unittest.mock import patch
 
 import pytest
 
+import flow_atelier.cli.updater as mod
 from flow_atelier.cli.updater import (
     _do_swap,
     _download_and_verify,
@@ -110,13 +113,46 @@ def test_do_swap_noop_when_no_pending():
 # ---------------------------------------------------------------------------
 
 
-def test_pip_install_shows_upgrade_hint(monkeypatch, capsys):
+def test_pip_install_shows_upgrade_hint(monkeypatch, tmp_path, capsys):
     """Non-frozen install prints a uv upgrade hint to stderr."""
     monkeypatch.delenv("ATELIER_NO_UPDATE_CHECK", raising=False)
+    # Redirect the throttle stamp so the test never reads or writes real HOME
+    # (and so a stamp left by a prior run can't suppress the hint).
+    monkeypatch.setattr(mod, "_STAMP_PATH", tmp_path / ".last-update-check")
     # is_frozen_binary() returns False (default in test env).
     start_background_update_check()
     captured = capsys.readouterr()
     assert "uv tool upgrade" in captured.err
+
+
+def test_upgrade_hint_throttled_to_once_per_interval(monkeypatch, tmp_path, capsys):
+    """The hint prints on the first call, then stays quiet until the interval lapses."""
+    monkeypatch.delenv("ATELIER_NO_UPDATE_CHECK", raising=False)
+    stamp = tmp_path / ".last-update-check"
+    monkeypatch.setattr(mod, "_STAMP_PATH", stamp)
+
+    start_background_update_check()
+    assert "uv tool upgrade" in capsys.readouterr().err
+
+    start_background_update_check()
+    assert capsys.readouterr().err == ""
+
+    # Age the stamp past the interval: the hint is due again.
+    old = time.time() - mod.CHECK_INTERVAL_SECONDS - 1
+    os.utime(stamp, (old, old))
+    start_background_update_check()
+    assert "uv tool upgrade" in capsys.readouterr().err
+
+
+def test_check_is_due_when_stamp_unwritable(monkeypatch, tmp_path):
+    """An unwritable stamp location fails open — check every time, not never."""
+    monkeypatch.setattr(
+        mod, "_STAMP_PATH", tmp_path / "nonexistent-file" / "stamp"
+    )
+    monkeypatch.setattr(
+        mod.Path, "mkdir", lambda *a, **k: (_ for _ in ()).throw(OSError("read-only"))
+    )
+    assert mod._due_for_check(time.time()) is True
 
 
 # ---------------------------------------------------------------------------

@@ -63,7 +63,18 @@ if [ -z "$EXPECTED" ]; then
     exit 1
 fi
 
-ACTUAL="$(sha256sum "${TMPDIR}/${ASSET}" | awk '{print $1}')"
+# Stock macOS ships `shasum`, not GNU coreutils' `sha256sum`. Pick whichever
+# exists rather than skipping verification on the platform that lacks one.
+if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL="$(sha256sum "${TMPDIR}/${ASSET}" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL="$(shasum -a 256 "${TMPDIR}/${ASSET}" | awk '{print $1}')"
+elif command -v openssl >/dev/null 2>&1; then
+    ACTUAL="$(openssl dgst -sha256 "${TMPDIR}/${ASSET}" | awk '{print $NF}')"
+else
+    echo "ERROR: no SHA-256 tool found (need sha256sum, shasum, or openssl)." >&2
+    exit 1
+fi
 if [ "$ACTUAL" != "$EXPECTED" ]; then
     echo "ERROR: SHA-256 mismatch!" >&2
     echo "  expected: ${EXPECTED}" >&2
@@ -79,20 +90,29 @@ cp "${TMPDIR}/${ASSET}" "${INSTALL_DIR}/atelier"
 chmod +x "${INSTALL_DIR}/atelier"
 
 # --- Add to PATH (idempotent, persistent) ---
-SHELL_RC=""
-if [ -n "${ZSH_VERSION:-}" ]; then
-    SHELL_RC="$HOME/.zshrc"
-elif [ -n "${BASH_VERSION:-}" ]; then
-    SHELL_RC="$HOME/.bashrc"
-fi
+# Key off the user's *login* shell ($SHELL), not the shell interpreting this
+# script. Under `curl … | bash` the interpreter is always bash, so testing
+# $BASH_VERSION would write to ~/.bashrc for every macOS user — a file zsh
+# (the macOS default since Catalina) never reads, leaving `atelier` off PATH.
+case "$(basename "${SHELL:-}")" in
+    zsh)  SHELL_RC="${ZDOTDIR:-$HOME}/.zshrc" ;;
+    bash) SHELL_RC="$HOME/.bashrc" ;;
+    fish) SHELL_RC="$HOME/.config/fish/config.fish" ;;
+    *)    SHELL_RC="$HOME/.profile" ;;
+esac
 
-if [ -n "$SHELL_RC" ]; then
-    if ! grep -qF "$INSTALL_DIR" "$SHELL_RC" 2>/dev/null; then
-        echo "" >> "$SHELL_RC"
-        echo "# Added by flow-atelier installer" >> "$SHELL_RC"
-        echo "export PATH=\"\$PATH:$INSTALL_DIR\"" >> "$SHELL_RC"
-        echo "Added ${INSTALL_DIR} to PATH in ${SHELL_RC}"
-    fi
+if ! grep -qF "$INSTALL_DIR" "$SHELL_RC" 2>/dev/null; then
+    mkdir -p "$(dirname "$SHELL_RC")"
+    {
+        echo ""
+        echo "# Added by flow-atelier installer"
+        if [ "$(basename "${SHELL:-}")" = "fish" ]; then
+            echo "set -gx PATH \$PATH $INSTALL_DIR"
+        else
+            echo "export PATH=\"\$PATH:$INSTALL_DIR\""
+        fi
+    } >> "$SHELL_RC"
+    echo "Added ${INSTALL_DIR} to PATH in ${SHELL_RC}"
 fi
 
 # --- Also update the current session so 'atelier' works immediately ---

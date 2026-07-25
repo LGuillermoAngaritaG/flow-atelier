@@ -34,7 +34,7 @@ async def fixture(tmp_path, monkeypatch):
     )
     app = FastApiServer().create_app(atelier)
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as c:
         yield c, atelier, tmp_path
 
 

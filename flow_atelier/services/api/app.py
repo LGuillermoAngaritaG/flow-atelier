@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -22,6 +23,14 @@ from flow_atelier.services.api.base import ApiServerBase
 # in the wheel and is found both from a source checkout and an installed wheel.
 _STATIC_DIR = Path(__file__).resolve().parents[2] / "dist"
 
+# Host header values that legitimately reach a loopback-bound server. CORS
+# alone cannot defend this API: in a DNS-rebinding attack the attacker's page
+# resolves its *own* hostname to 127.0.0.1, so the browser treats the request
+# as same-origin and never sends an Origin the CORS layer could reject. Pinning
+# Host is what actually closes it — without this, any page a user visits while
+# `atelier serve` runs can POST /tasks/run and execute shell commands.
+LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1"]
+
 
 class FastApiServer(ApiServerBase):
     """Default :class:`ApiServerBase` implementation."""
@@ -32,6 +41,7 @@ class FastApiServer(ApiServerBase):
         *,
         cors_origins: Iterable[str] | None = None,
         api_token: str | None = None,
+        allowed_hosts: Iterable[str] | None = None,
     ) -> FastAPI:
         """Build the FastAPI app, attach CORS, and register all routes.
 
@@ -41,10 +51,17 @@ class FastApiServer(ApiServerBase):
             wildcard would let any webpage drive it cross-origin)
         :param api_token: bearer token required on every request when set;
             ``None`` disables auth (local trust)
+        :param allowed_hosts: accepted ``Host`` header values; ``None`` means
+            loopback only. See :data:`LOOPBACK_HOSTS` for why this matters.
         """
         app = FastAPI(title="flow-atelier", version=__version__)
         app.state.atelier = atelier
         app.state.api_token = api_token or ""
+
+        app.add_middleware(
+            TrustedHostMiddleware,
+            allowed_hosts=list(allowed_hosts) if allowed_hosts else LOOPBACK_HOSTS,
+        )
 
         if cors_origins:
             app.add_middleware(

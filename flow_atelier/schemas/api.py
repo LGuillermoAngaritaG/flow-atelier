@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from flow_atelier.schemas.conduit import Conduit, TaskDefinition
+from flow_atelier.schemas.conduit import Conduit, InputSpec, TaskDefinition
 from flow_atelier.schemas.log import LogEntry
 
 _HHMM_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
@@ -32,12 +32,33 @@ class UpdateConduitInput(BaseModel):
     description: str | None = None
     timeout: int | None = None
     max_concurrency: int | None = None
-    inputs: dict[str, str] | None = None
+    # Accepts both shapes `Conduit` accepts: the plain-string shorthand and the
+    # full {description, default} object. Reads return the object form, so a
+    # string-only annotation made every edit-and-save round trip 422 for any
+    # conduit that declares inputs. `update_conduit` re-validates through
+    # `Conduit`, which normalizes either shape.
+    inputs: dict[str, InputSpec | str] | None = None
     tasks: list[TaskDefinition] | None = None
 
 
 class ConduitDTO(Conduit):
-    """Response shape for conduit reads — identical to the on-disk model."""
+    """Response shape for conduit reads — the on-disk model plus ``run_path``."""
+
+    # Response-only: never read from or written to conduit.yaml. A run needs a
+    # working directory, and the server is the only side that knows where it
+    # was started, so it hands the UI a default instead of leaving an empty box
+    # the user must hand-type an absolute path into.
+    run_path: str = ""
+
+    @classmethod
+    def from_conduit(cls, conduit: Conduit, run_path: str) -> ConduitDTO:
+        """Build a DTO from a stored conduit plus the server's default run path.
+
+        :param conduit: the conduit as read from disk.
+        :param run_path: working directory a run should default to.
+        :returns: the populated :class:`ConduitDTO`.
+        """
+        return cls.model_validate({**conduit.model_dump(), "run_path": run_path})
 
 
 class OpenPathInput(BaseModel):

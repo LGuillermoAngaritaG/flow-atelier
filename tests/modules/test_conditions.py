@@ -408,3 +408,69 @@ def test_sink_task_names_returns_undepended_tasks_in_order():
         }
     )
     assert sink_task_names(conduit) == ["b", "c"]
+
+
+
+# ------------------------------------------------------- quote stripping
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ('"PASS"', "PASS"),
+        ("'PASS'", "PASS"),
+        ("PASS", "PASS"),
+        ('"^429$"', "^429$"),
+        ('"a|b"', "a|b"),
+        # Mismatched or partial quotes are part of the regex, not a wrapper.
+        ('"PASS', '"PASS'),
+        ('PASS"', 'PASS"'),
+        ("\"PASS'", "\"PASS'"),
+        # Escaped trailing quote means the author wants a literal quote.
+        ('\\"PASS\\"', '\\"PASS\\"'),
+        # Too short to be a wrapper, and stripping "" would match everything.
+        ('""', '""'),
+        ('"', '"'),
+        ("", ""),
+    ],
+)
+def test_strip_surrounding_quotes(raw, expected):
+    """Verify only a genuine wrapping quote pair is removed.
+
+    :param raw: pattern as written between the parentheses.
+    :param expected: pattern the engine should compile.
+    """
+    from flow_atelier.modules.conditions import strip_surrounding_quotes
+
+    assert strip_surrounding_quotes(raw) == expected
+
+
+def test_quoted_dependency_regex_matches_unquoted_output():
+    """`a.output.match("PASS")` must match plain `PASS`, not a literal `"PASS"`."""
+    dep = parse_dependency('a.output.match("PASS")')
+
+    assert isinstance(dep, ConditionalDependency)
+    assert dep.pattern == "PASS"
+    assert dep.regex().search("tests: PASS") is not None
+
+
+def test_quoted_and_unquoted_predicates_are_equivalent():
+    """Both spellings of an `until` predicate compile to the same regex."""
+    from flow_atelier.modules.conditions import parse_output_predicate
+
+    quoted, negate_q = parse_output_predicate('output.match("PASS")')
+    bare, negate_b = parse_output_predicate("output.match(PASS)")
+
+    assert quoted.pattern == bare.pattern == "PASS"
+    assert negate_q is negate_b is False
+    assert quoted.search("all tests PASS") is not None
+
+
+def test_escaped_quotes_still_match_a_literal_quoted_string():
+    """The escape hatch: `\\"PASS\\"` keeps matching output that has real quotes."""
+    from flow_atelier.modules.conditions import parse_output_predicate
+
+    compiled, _ = parse_output_predicate('output.match(\\"PASS\\")')
+
+    assert compiled.search('result: "PASS"') is not None
+    assert compiled.search("result: PASS") is None
