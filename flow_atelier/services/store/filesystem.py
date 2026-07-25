@@ -30,7 +30,7 @@ import yaml
 
 from flow_atelier.schemas.conduit import Conduit
 from flow_atelier.schemas.flow import new_flow_id, parse_flow_id
-from flow_atelier.schemas.log import LogEntry
+from flow_atelier.schemas.log import LogEntry, StepRecord
 from flow_atelier.schemas.progress import Progress
 from flow_atelier.services.store.base import ConduitSource, StoreBase
 
@@ -464,6 +464,57 @@ class FilesystemStore(StoreBase):
         except (FileNotFoundError, json.JSONDecodeError):
             return []
         return [LogEntry.model_validate(item) for item in raw]
+
+    # -------------------------------------------------------------- live steps
+
+    async def append_step(self, flow_id: str, record: StepRecord) -> None:
+        """Append ``record`` to the flow's ``steps.jsonl``.
+
+        Shares the per-flow log lock so a step write cannot interleave with
+        a ``logs.jsonl`` write mid-line.
+
+        :param flow_id: flow identifier
+        :param record: step record to append
+        """
+        path = self._flow_dir(flow_id) / "steps.jsonl"
+        line = json.dumps(record.model_dump()) + "\n"
+
+        def _write() -> None:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line)
+
+        async with self._lock_for(flow_id):
+            await asyncio.to_thread(_write)
+
+    def read_steps(self, flow_id: str, skip: int = 0) -> list[StepRecord]:
+        """Return live step records for ``flow_id`` in append order.
+
+        A truncated trailing line is expected — the file is appended to
+        while the flow runs, which is exactly when it gets read. It is
+        skipped and picked up on the next read, once complete.
+
+        ``skip`` exists for pollers: parsing dominates the cost here, so a
+        tailer that already rendered the first N records should skip them
+        rather than re-validate the whole file every quarter second.
+
+        :param flow_id: flow identifier
+        :param skip: number of leading lines to ignore without parsing
+        :returns: parsed list of :class:`StepRecord`, empty if none recorded
+        """
+        path = self._flow_dir(flow_id) / "steps.jsonl"
+        if not path.exists():
+            return []
+        records: list[StepRecord] = []
+        for line in path.read_text().splitlines()[skip:]:
+            try:
+                records.append(StepRecord.model_validate(json.loads(line)))
+            except (json.JSONDecodeError, ValueError):
+                # Stop rather than skip: the expected failure is a partial
+                # trailing write from the still-running flow, and stopping
+                # keeps len(records) an exact line count so a poller's
+                # ``skip`` never drifts. The line is retried next read.
+                break
+        return records
 
     # ------------------------------------------------------------------ progress
 

@@ -4,7 +4,12 @@ import json
 import pytest
 import yaml
 
-from flow_atelier.schemas.log import LogEntry
+from flow_atelier.schemas.log import (
+    IntermediateStep,
+    LogEntry,
+    StepKind,
+    StepRecord,
+)
 from flow_atelier.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
 from flow_atelier.services.store.filesystem import FilesystemStore
 
@@ -570,3 +575,68 @@ def test_read_logs_silent_on_truncated_trailing_line(store, caplog):
         entries = store.read_logs(fid)
     assert [e.task for e in entries] == ["greet"]
     assert not any("unreadable line" in r.message for r in caplog.records)
+
+
+class TestReadSteps:
+    """Live step records must tail correctly while the flow is still writing."""
+
+    @staticmethod
+    def _record(text: str) -> StepRecord:
+        """Build a StepRecord carrying ``text`` as thinking.
+
+        :param text: thinking text to embed.
+        """
+        return StepRecord(
+            task="a",
+            iteration=1,
+            step=IntermediateStep(kind=StepKind.thinking, text=text),
+        )
+
+    async def test_skip_returns_only_new_records(self, tmp_path) -> None:
+        """``skip`` lets a poller consume only what it has not seen.
+
+        :param tmp_path: pytest temp directory fixture.
+        """
+        store = FilesystemStore(tmp_path / ".atelier")
+        flow_id = store.create_flow("c", {})
+        for i in range(3):
+            await store.append_step(flow_id, self._record(f"s{i}"))
+
+        assert [r.step.text for r in store.read_steps(flow_id)] == ["s0", "s1", "s2"]
+        assert [r.step.text for r in store.read_steps(flow_id, skip=2)] == ["s2"]
+        assert store.read_steps(flow_id, skip=3) == []
+
+    async def test_partial_trailing_line_is_retried_not_skipped(
+        self, tmp_path
+    ) -> None:
+        """A half-written final line must not desync a poller's skip count.
+
+        The file is appended to while it is being read, so a torn trailing
+        line is the normal case, not corruption. It has to be withheld until
+        complete — counting it as consumed would drop the step forever.
+
+        :param tmp_path: pytest temp directory fixture.
+        """
+        store = FilesystemStore(tmp_path / ".atelier")
+        flow_id = store.create_flow("c", {})
+        await store.append_step(flow_id, self._record("complete"))
+
+        path = tmp_path / ".atelier" / "flows" / flow_id / "steps.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write('{"task": "a", "iterat')  # torn mid-write
+
+        seen = store.read_steps(flow_id)
+        assert [r.step.text for r in seen] == ["complete"]
+
+        # The poller advances by exactly what it parsed, so once the write
+        # lands the withheld record is picked up — once, not twice.
+        with path.open("a", encoding="utf-8") as f:
+            f.write("\n")
+        path.write_text(
+            path.read_text().replace('{"task": "a", "iterat\n', "")
+            + json.dumps(self._record("late").model_dump())
+            + "\n"
+        )
+        assert [r.step.text for r in store.read_steps(flow_id, skip=len(seen))] == [
+            "late"
+        ]

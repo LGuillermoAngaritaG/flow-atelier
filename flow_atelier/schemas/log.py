@@ -41,6 +41,22 @@ class IntermediateStep(BaseModel):
     locations: list[str] = Field(default_factory=list)
 
 
+class StepRecord(BaseModel):
+    """One intermediate step, persisted the moment it arrives.
+
+    A :class:`LogEntry` is only written once its task returns, so a run that
+    is stopped, crashes, or is still in flight leaves no trace of what the
+    agent was doing. These records are appended live to ``steps.jsonl`` so
+    that history survives a kill and is readable from another terminal
+    mid-run. They are redundant with ``LogEntry.steps`` once the task
+    completes normally.
+    """
+
+    task: str
+    iteration: int = 1
+    step: IntermediateStep
+
+
 class TurnUsage(BaseModel):
     """Token counts and cost an AI harness reported for a task.
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from flow_atelier.schemas.conduit import Conduit
-from flow_atelier.schemas.log import LogEntry
+from flow_atelier.schemas.log import LogEntry, StepRecord
 from flow_atelier.schemas.progress import Progress
 
 ConduitSource = Literal["project", "global"]
@@ -120,6 +120,30 @@ class StoreBase(ABC):
 
         :param flow_id: flow identifier
         :returns: list of :class:`LogEntry` — empty if the log is missing or empty
+        """
+        ...
+
+    # --- live steps ---
+    @abstractmethod
+    async def append_step(self, flow_id: str, record: StepRecord) -> None:
+        """Append one live step record for ``flow_id``.
+
+        Written as the step happens, unlike :meth:`append_log` which only
+        runs once a task returns.
+
+        :param flow_id: flow identifier
+        :param record: the step record to append
+        """
+        ...
+
+    @abstractmethod
+    def read_steps(self, flow_id: str, skip: int = 0) -> list[StepRecord]:
+        """Return live step records for ``flow_id`` in append order.
+
+        :param flow_id: flow identifier
+        :param skip: number of leading records to ignore, for pollers that
+            have already consumed them
+        :returns: list of :class:`StepRecord` — empty if none were recorded
         """
         ...
 
