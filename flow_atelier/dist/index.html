@@ -7,8 +7,22 @@
     <!-- Fonts are bundled by the app entry (src/main.tsx), not fetched from a
          CDN — this UI must render offline. -->
     <title>flow-atelier</title>
-    <script type="module" crossorigin src="/assets/index-D03nTEm5.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-b3HoDI1g.css">
+    <!-- Applies the stored theme before first paint. ThemeContext also sets
+         this, but it does so in an effect, so a light-theme reader used to get
+         a full dark flash on every load. Kept inline and tiny on purpose: as an
+         external module it would not run before paint either. -->
+    <script>
+      try {
+        var t = localStorage.getItem("atelier.theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (e) {
+        /* storage blocked; the dark default in the html tag stands */
+      }
+    </script>
+    <script type="module" crossorigin src="/assets/index-B5s2oT7x.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-B3dKJ8J8.css">
   </head>
   <body>
     <div id="root"></div>
