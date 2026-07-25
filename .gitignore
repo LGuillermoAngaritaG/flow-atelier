@@ -30,3 +30,6 @@ frontend/coverage/
 frontend/.devtool/
 frontend/.env
 *.tsbuildinfo
+
+# Local tooling output (impeccable critiques) - not part of the project.
+.impeccable/
