@@ -168,17 +168,24 @@ def serve_cmd(
         finally:
             await daemon.stop()
 
+    # Refuse rather than warn. This API runs shell commands, so an
+    # unauthenticated bind that anything but loopback can reach is a remote
+    # code execution surface, and `api_token` now defaults to empty — a
+    # printed warning scrolls past in the same second the port opens.
     if host not in ("127.0.0.1", "localhost", "::1") and not settings.api_token:
         console.print(
-            "[yellow]warning:[/yellow] serving on a non-loopback host without "
-            "ATELIER_API_TOKEN — anyone who can reach this address can run "
-            "shell commands via the API."
+            f"[red]error:[/red] refusing to serve on non-loopback host {host!r} "
+            "without ATELIER_API_TOKEN. Anyone who can reach this address could "
+            "run shell commands via the API. Set ATELIER_API_TOKEN, or bind "
+            "127.0.0.1 (the default)."
         )
+        raise typer.Exit(1)
 
     # Pin the accepted Host header so a rebound DNS name cannot drive this API
     # (see LOOPBACK_HOSTS). A wildcard bind can be reached under any number of
-    # names we cannot enumerate here, so it accepts all of them and leans on the
-    # token warning above instead.
+    # names we cannot enumerate here, so it accepts all of them — safe only
+    # because the check above has already established that a wildcard bind
+    # carries a token.
     wildcard_bind = host in ("0.0.0.0", "::", "")
     allowed_hosts = ["*"] if wildcard_bind else sorted({host, *LOOPBACK_HOSTS})
 

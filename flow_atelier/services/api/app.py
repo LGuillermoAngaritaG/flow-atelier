@@ -8,12 +8,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import Headers
+from starlette.responses import PlainTextResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from flow_atelier import __version__
 from flow_atelier.core.atelier import Atelier
@@ -30,6 +33,67 @@ _STATIC_DIR = Path(__file__).resolve().parents[2] / "dist"
 # Host is what actually closes it — without this, any page a user visits while
 # `atelier serve` runs can POST /tasks/run and execute shell commands.
 LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1"]
+
+
+def _header_host(raw: str) -> str:
+    """Extract the hostname from a ``Host`` header value.
+
+    Strips the port and, for IPv6 literals, the surrounding brackets:
+    ``[::1]:8000`` -> ``::1``.
+
+    :param raw: raw ``Host`` header value, possibly empty.
+    :returns: the lowercased hostname, or ``""`` when unparseable.
+    """
+    try:
+        return (urlsplit(f"//{raw}").hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+class HostHeaderMiddleware:
+    """Reject requests whose ``Host`` header is not explicitly allowed.
+
+    Stands in for Starlette's ``TrustedHostMiddleware``, which parses the
+    header as ``host.split(":")[0]``. That turns ``[::1]:8000`` into ``[``,
+    so an IPv6 loopback entry can never match and the server answers every
+    request to ``http://[::1]:port`` with ``400 Invalid host header`` —
+    including the WebSocket the UI depends on. :func:`urlsplit` handles the
+    bracketed form, and does not depend on a quirk of the installed
+    Starlette.
+
+    A rejected WebSocket is closed with a policy-violation code rather than
+    handed an HTTP response, which is not valid on a ``websocket`` scope.
+    """
+
+    def __init__(self, app: ASGIApp, allowed_hosts: Iterable[str]) -> None:
+        """Wrap ``app``, admitting only ``allowed_hosts``.
+
+        :param app: the downstream ASGI application.
+        :param allowed_hosts: accepted hostnames; ``"*"`` admits everything.
+        """
+        self.app = app
+        self.allowed = {h.lower() for h in allowed_hosts}
+        self.allow_any = "*" in self.allowed
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Pass the request through when its ``Host`` is allowed, else reject.
+
+        :param scope: ASGI connection scope.
+        :param receive: ASGI receive channel.
+        :param send: ASGI send channel.
+        """
+        if self.allow_any or scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        if _header_host(Headers(scope=scope).get("host", "")) in self.allowed:
+            await self.app(scope, receive, send)
+            return
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        await PlainTextResponse("Invalid host header", status_code=400)(
+            scope, receive, send
+        )
 
 
 class FastApiServer(ApiServerBase):
@@ -59,7 +123,7 @@ class FastApiServer(ApiServerBase):
         app.state.api_token = api_token or ""
 
         app.add_middleware(
-            TrustedHostMiddleware,
+            HostHeaderMiddleware,
             allowed_hosts=list(allowed_hosts) if allowed_hosts else LOOPBACK_HOSTS,
         )
 

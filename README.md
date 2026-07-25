@@ -632,7 +632,8 @@ Flow Atelier visual frontend connects to.
 
 
 Binds to `127.0.0.1:8000` by default; pass `--host 0.0.0.0` to expose
-on the LAN. `--cors-origin` is repeatable.
+on the LAN — which requires `ATELIER_API_TOKEN`, see [Security](#security).
+`--cors-origin` is repeatable.
 
 Conduits and flows resolve exactly as they do on the CLI — `./.atelier`
 first, then `~/.atelier` — so the conduits `atelier init` created in the
@@ -659,11 +660,24 @@ other `Host` get `400 Invalid host header`.
 `ATELIER_API_TOKEN`. Every REST request then needs
 `Authorization: Bearer <token>` and WebSocket connections need `?token=<token>`;
 build the UI with a matching `VITE_API_TOKEN` so it can reach the authenticated
-API. `atelier serve` warns when you bind to a non-loopback host without one.
+API.
+
+`atelier serve` **refuses to start** on a non-loopback host when
+`ATELIER_API_TOKEN` is unset. This used to be a warning that scrolled past in
+the same second the port opened, so an existing `--host 0.0.0.0` setup with no
+token will now stop rather than serve:
+
+```console
+$ atelier serve --host 0.0.0.0
+error: refusing to serve on non-loopback host '0.0.0.0' without
+ATELIER_API_TOKEN. Anyone who can reach this address could run shell
+commands via the API. Set ATELIER_API_TOKEN, or bind 127.0.0.1 (the default).
+```
+
 Binding a specific host also adds that host to the accepted `Host` values; a
 wildcard bind (`--host 0.0.0.0`) cannot know which names reach it, so it accepts
-any `Host` and relies on the token instead. Do not run a wildcard bind without
-one.
+any `Host` and relies on the token — which is why the token is mandatory there
+rather than merely advised.
 
 **Conduits are code.** See the warning under
 [Installing conduit packages](#installing-conduit-packages): running a conduit
