@@ -641,6 +641,58 @@ directory you started the server from are the ones the UI shows.
 Schedules are the exception: they live in `~/.atelier/schedules/`, since
 one daemon serves every project.
 
+## Security
+
+The API runs shell commands on the machine hosting it, so treat reaching it as
+equivalent to a shell on that machine.
+
+**On loopback (the default).** `atelier serve` binds `127.0.0.1:8000` and needs
+no token. Two guards keep a web page you happen to visit from driving it:
+
+- **Origin.** CORS is restricted to localhost origins, never `*`.
+- **Host.** Only `localhost`, `127.0.0.1`, and `::1` are accepted as the `Host`
+header. This is what stops DNS rebinding, where an attacker's page resolves
+its own hostname to `127.0.0.1` so the browser treats the request as
+same-origin and sends no `Origin` for CORS to reject. Requests carrying any
+other `Host` get `400 Invalid host header`.
+
+**Anywhere else.** Before binding to a non-loopback address, set
+`ATELIER_API_TOKEN`. Every REST request then needs
+`Authorization: Bearer <token>` and WebSocket connections need `?token=<token>`;
+build the UI with a matching `VITE_API_TOKEN` so it can reach the authenticated
+API.
+
+`atelier serve` **refuses to start** on a non-loopback host when
+`ATELIER_API_TOKEN` is unset. This used to be a warning that scrolled past in
+the same second the port opened, so an existing `--host 0.0.0.0` setup with no
+token will now stop rather than serve:
+
+```console
+$ atelier serve --host 0.0.0.0
+error: refusing to serve on non-loopback host '0.0.0.0' without
+ATELIER_API_TOKEN. Anyone who can reach this address could run shell
+commands via the API. Set ATELIER_API_TOKEN, or bind 127.0.0.1 (the default).
+```
+
+Binding a specific host also adds that host to the accepted `Host` values; a
+wildcard bind (`--host 0.0.0.0`) cannot know which names reach it, so it accepts
+any `Host` and relies on the token — which is why the token is mandatory there
+rather than merely advised.
+
+**Tool arguments reach your terminal.** `atelier run` prints the argument that
+identifies each tool call — the bash command, the file path, the search
+pattern — so the run is readable. Credential-shaped values (`Bearer <token>`,
+`sk-`/`ghp_`/`xox`-prefixed keys, `--password`/`TOKEN=` flags) are masked as
+`***` on the way to the screen. This is a heuristic that reduces casual
+leakage, not a guarantee: it will miss a secret that does not look like one.
+The recorded logs under `.atelier/flows/<id>/` keep the **unredacted** text, so
+treat that directory as sensitive and check what you are pasting before sharing
+a terminal transcript.
+
+**Conduits are code.** See the warning under
+[Installing conduit packages](#installing-conduit-packages): running a conduit
+runs whatever shell commands it contains.
+
 ## Folder layout
 
 The `.atelier` directory lives in the working directory where

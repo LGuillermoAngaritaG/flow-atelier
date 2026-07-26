@@ -33,7 +33,7 @@ def test_ws_subscribes_to_scheduler_bus_when_attached(env):
     :param env: atelier+app+bus fixture.
     """
     atelier, app, bus = env
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1", headers={"host": "127.0.0.1"}) as client:
         with client.websocket_connect("/ws/run-conduit") as ws:
             # Broadcast a fake scheduled-run envelope through the bus.
             asyncio.run(
@@ -82,6 +82,6 @@ def test_ws_with_no_bus_attached_still_connects(tmp_path, monkeypatch):
     monkeypatch.delenv("ATELIER_GLOBAL_ATELIER_DIR", raising=False)
     atelier = Atelier(base_dir=tmp_path / ".atelier")
     app = FastApiServer().create_app(atelier)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1", headers={"host": "127.0.0.1"}) as client:
         with client.websocket_connect("/ws/run-conduit"):
             pass
