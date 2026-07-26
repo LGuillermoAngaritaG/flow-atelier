@@ -88,7 +88,10 @@ try {
     Copy-Item -Path $BinaryPath -Destination $DestPath -Force
 
     # --- Add to PATH (idempotent, user-level) ---
+    # A user with no user-level Path entry gets $null back, which would throw
+    # on .EndsWith below.
     $CurrentPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not $CurrentPath) { $CurrentPath = "" }
     if ($CurrentPath -notlike "*$InstallDir*") {
         $NewPath = if ($CurrentPath.EndsWith(";")) {
             "$CurrentPath$InstallDir"
@@ -111,7 +114,7 @@ try {
     if ($found -and $found.Source -ne $DestPath) {
         Write-Host ""
         Write-Host "WARNING: Another 'atelier' was found earlier on PATH:" -ForegroundColor Yellow
-        Write-Host "  $found.Source" -ForegroundColor Yellow
+        Write-Host "  $($found.Source)" -ForegroundColor Yellow
         Write-Host "It will take priority over the installed binary." -ForegroundColor Yellow
     }
 
