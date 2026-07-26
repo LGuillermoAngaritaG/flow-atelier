@@ -7,6 +7,16 @@ import {
   mockUpdateConduit,
 } from "@/services/mock/conduits";
 import type { Conduit, CreateConduitRequest } from "@/types/conduit";
+import { fromWireTasks } from "@/utils/conditions";
+
+/**
+ * Split conditional `depends_on` DSL into plain task names plus a conditions
+ * map. Without this the designer treats `a.output.match(X)` as a task name,
+ * finds no node with that id, and silently drops the edge.
+ */
+function withDecodedConditions(conduit: Conduit): Conduit {
+  return { ...conduit, tasks: fromWireTasks(conduit.tasks ?? []) };
+}
 
 export async function getConduits(): Promise<Conduit[]> {
   if (import.meta.env.DEV) console.log(`[${USE_MOCK ? "mock" : "api"}] GET /conduits`);
@@ -14,9 +24,10 @@ export async function getConduits(): Promise<Conduit[]> {
     return mockGetConduits();
   }
 
-  return fetchJson<Conduit[]>(`${BASE_URL}/conduits`, undefined, {
+  const conduits = await fetchJson<Conduit[]>(`${BASE_URL}/conduits`, undefined, {
     method: "GET",
   });
+  return conduits.map(withDecodedConditions);
 }
 
 export async function getConduitByName(name: string): Promise<Conduit> {
@@ -27,9 +38,10 @@ export async function getConduitByName(name: string): Promise<Conduit> {
     return c;
   }
 
-  return fetchJson<Conduit>(`${BASE_URL}/conduits/${name}`, undefined, {
+  const conduit = await fetchJson<Conduit>(`${BASE_URL}/conduits/${name}`, undefined, {
     method: "GET",
   });
+  return withDecodedConditions(conduit);
 }
 
 export async function openPath(

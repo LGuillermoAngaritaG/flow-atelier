@@ -1,4 +1,5 @@
-import { useCallback, useState, useEffect, useRef, useMemo } from "react";
+import { useCallback, useState, useEffect, useRef, useMemo, type ReactNode } from "react";
+import { MousePointer2, Hand, Maximize2, LayoutGrid } from "lucide-react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -20,6 +21,8 @@ import { DepEdge, type DepEdgeData } from "./DepEdge";
 import { CanvasRulers } from "./CanvasRulers";
 import { EdgePopupContext, type PopupInfo } from "../edge-popup-context";
 import { EdgeTypePopup, type EdgeKind } from "./EdgeTypePopup";
+import { layoutPositions } from "../layout";
+import { withoutCondition } from "@/utils/conditions";
 
 const nodeTypes = { task: TaskNode };
 const edgeTypes = { dep: DepEdge };
@@ -30,7 +33,6 @@ const NODE_W = 220;
 const NODE_H = 120;
 const GRID_GAP_X = 60;
 const GRID_GAP_Y = 60;
-const GRID_COLS = 4;
 
 interface CanvasProps {
   conduit: Conduit;
@@ -52,6 +54,7 @@ export function Canvas(props: CanvasProps) {
 
 function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask, onShowTools, positionRef }: CanvasProps) {
   const rf = useReactFlow();
+  const canvasRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(100);
   const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
   const [popup, setPopup] = useState<PopupInfo | null>(null);
@@ -90,8 +93,7 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
     if (!positionRef) return;
     positionRef.current = (_tool: string) => {
       const { x: vx, y: vy, zoom: z } = rf.getViewport();
-      const el = document.querySelector('[data-testid="designer-canvas"]');
-      const rect = el?.getBoundingClientRect();
+      const rect = canvasRef.current?.getBoundingClientRect();
       const cw = rect?.width ?? 800;
       const ch = rect?.height ?? 600;
       // Center of viewport in flow coordinates
@@ -116,7 +118,7 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
         task: t.task,
         description: t.description,
         repeat: t.repeat,
-        conditional: t.conditionalOn?.kind,
+        conditional: Object.values(t.conditions ?? {})[0]?.kind,
       },
     }));
 
@@ -146,14 +148,14 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
     for (const t of c.tasks) {
       for (const dep of t.dependsOn) {
         if (!taskNames.has(dep)) continue;
-        const conditional =
-          t.conditionalOn?.task === dep ? t.conditionalOn.kind : undefined;
+        const conditional = t.conditions?.[dep]?.kind;
         const edgeKind: EdgeKind = conditional ?? "depends_on";
+        // Was "black", which is invisible against the dark theme's background.
         const color = conditional
           ? conditional === "match"
             ? "var(--color-primary)"
             : "var(--color-destructive)"
-          : "black";
+          : "var(--color-edge)";
         out.push({
           id: `${dep}->${t.name}`,
           source: dep,
@@ -206,7 +208,7 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
 
   // Track container dimensions for dynamic minZoom
   useEffect(() => {
-    const el = document.querySelector('[data-testid="designer-canvas"]');
+    const el = canvasRef.current;
     if (!el) return;
     const ro = new ResizeObserver(([entry]) => {
       setContainerSize({
@@ -305,14 +307,11 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
       if (!task) { setPopup(null); return; }
 
       if (kind === "depends_on") {
-        if (task.conditionalOn?.task === source) {
-          onUpdateTask(target, { conditionalOn: undefined });
-        }
+        onUpdateTask(target, { conditions: withoutCondition(task, source) });
       } else {
-        const existing =
-          task.conditionalOn?.task === source ? task.conditionalOn.pattern : "";
+        const existing = task.conditions?.[source]?.pattern ?? "";
         onUpdateTask(target, {
-          conditionalOn: { task: source, kind, pattern: existing },
+          conditions: { ...task.conditions, [source]: { kind, pattern: existing } },
         });
       }
       setPopup(null);
@@ -338,6 +337,7 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
         if (!target) continue;
         onUpdateTask(edge.target, {
           dependsOn: target.dependsOn.filter((d) => d !== edge.source),
+          conditions: withoutCondition(target, edge.source),
         });
       }
     },
@@ -353,6 +353,7 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
       if (oldTarget) {
         onUpdateTask(oldEdge.target as string, {
           dependsOn: oldTarget.dependsOn.filter((d) => d !== oldEdge.source),
+          conditions: withoutCondition(oldTarget, oldEdge.source),
         });
       }
       const newTarget = conduitRef.current.tasks.find(
@@ -370,9 +371,7 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
   const onEdgeClick = useCallback(
     (_: React.MouseEvent, edge: Edge) => {
       const task = conduitRef.current.tasks.find((t) => t.name === edge.target);
-      const conditional = task?.conditionalOn?.task === edge.source
-        ? task.conditionalOn.kind
-        : undefined;
+      const conditional = task?.conditions?.[edge.source as string]?.kind;
       const edgeKind: EdgeKind = conditional ?? "depends_on";
       const rect = document
         .querySelector(`[data-id="${edge.id}"]`)
@@ -389,14 +388,18 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
   );
 
   const handleOrganize = useCallback(() => {
-    const stepX = NODE_W + GRID_GAP_X;
-    const stepY = NODE_H + GRID_GAP_Y;
-    const updated = nodes.map((node, i) => {
-      const col = i % GRID_COLS;
-      const row = Math.floor(i / GRID_COLS);
-      const pos = { x: 80 + col * stepX, y: 80 + row * stepY };
-      return { ...node, position: pos };
-    });
+    // Lay out by dependency depth, not insertion order: a fixed-width grid
+    // wraps unrelated tasks onto the same row and drops dependents to the far
+    // left, which reads as a scrambled graph rather than a pipeline.
+    const positions = layoutPositions(
+      conduitRef.current.tasks,
+      NODE_W + GRID_GAP_X,
+      NODE_H + GRID_GAP_Y,
+    );
+    const updated = nodes.map((node) => ({
+      ...node,
+      position: positions.get(node.id) ?? node.position,
+    }));
     setNodes(updated);
     for (const node of updated) {
       onUpdateTask(node.id, { position: node.position });
@@ -411,6 +414,7 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
       <div className="relative h-full w-full overflow-hidden bg-background">
         <CanvasRulers />
         <div
+          ref={canvasRef}
           data-testid="designer-canvas"
           className="relative z-[2] h-full w-full"
           style={{ "--xy-background-color": "transparent" } as React.CSSProperties}
@@ -431,7 +435,10 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
             onEdgesDelete={onEdgesDelete}
             onEdgeClick={onEdgeClick}
             onReconnect={onReconnect}
-            onMove={() => setZoom(Math.round(rf.getZoom() * 100))}
+            // onMoveEnd, not onMove: onMove fires every frame of a pan or zoom,
+            // so re-rendering the whole canvas from it just to refresh a
+            // percentage label cost a render per frame for the entire gesture.
+            onMoveEnd={() => setZoom(Math.round(rf.getZoom() * 100))}
             onNodeDragStop={onNodeDragStop}
             edgesReconnectable
             zoomOnDoubleClick={false}
@@ -448,11 +455,22 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
             translateExtent={extent}
             nodeExtent={extent}
           >
+            {/* Hidden below lg: at 200x160 it ate nearly half a phone
+                viewport. `--background` was not a token in this project
+                (`--color-background` is), so the surface fell back to
+                react-flow's own default. */}
+            {/* `--color-border` measures 1.5:1 on the card surface, so the
+                node blocks were nearly invisible and the map read as an empty
+                grey panel taking 220x160 of canvas. Muted-foreground (7.4:1
+                here) makes it legible, and the smaller footprint gives the
+                canvas back the space the map wasn't earning. */}
             <MiniMap
               pannable
               zoomable
-              style={{ backgroundColor: "var(--background)" }}
-              maskColor="rgba(0, 0, 0, 0.1)"
+              className="!hidden lg:!block"
+              style={{ backgroundColor: "var(--color-card)", width: 160, height: 110 }}
+              maskColor="color-mix(in oklch, var(--color-background) 55%, transparent)"
+              nodeColor="var(--color-muted-foreground)"
             />
           </ReactFlow>
         </div>
@@ -464,32 +482,41 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
               onClick={onShowTools}
               className="flex flex-col items-center gap-2 rounded-md border border-border px-8 py-5 text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
             >
-              <span className="text-[24px] leading-none">+</span>
-              <span className="font-mono text-[12px]">add first task</span>
+              <span className="text-head leading-none">+</span>
+              <span className="font-mono text-body">add first task</span>
             </button>
           </div>
         )}
 
+        {/* Bottom edge, not top: at lg the top strip is occupied by the
+            Designer action bar, and the two overlapped so `fit` and `organize`
+            were unreachable. The minimap holds the bottom-left corner. */}
+        {/* Grouped into one panel so that when the row wraps on a phone it
+            still reads as a single toolbar rather than loose buttons. */}
         <div
           data-testid="canvas-toolbar"
-          className="absolute inset-x-0 top-11 z-10 flex flex-wrap justify-center gap-1 lg:inset-x-auto lg:right-4 lg:top-4 lg:justify-end lg:gap-1.5"
+          className="absolute inset-x-3 bottom-3 z-dropdown flex flex-wrap items-center justify-center gap-1 rounded-sm border border-border bg-card/80 p-1 backdrop-blur lg:inset-x-auto lg:right-4 lg:bottom-4 lg:gap-1.5"
         >
           <ToolbarButton
-            label="↖ select"
+            icon={<MousePointer2 className="size-3.5" aria-hidden />}
+            label="select"
             active={mode === "select"}
             onClick={() => setMode("select")}
           />
           <ToolbarButton
-            label="✋ pan"
+            icon={<Hand className="size-3.5" aria-hidden />}
+            label="pan"
             active={mode === "pan"}
             onClick={() => setMode("pan")}
           />
           <ToolbarButton
-            label="◳ fit"
+            icon={<Maximize2 className="size-3.5" aria-hidden />}
+            label="fit"
             onClick={() => rf.fitView({ padding: 0.2, duration: 200 })}
           />
           <ToolbarButton
-            label="⊞ organize"
+            icon={<LayoutGrid className="size-3.5" aria-hidden />}
+            label="organize"
             onClick={handleOrganize}
           />
           <ToolbarButton label="+" onClick={() => rf.zoomIn({ duration: 150 })} />
@@ -512,7 +539,7 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
             if (task) {
               onUpdateTask(popup.target, {
                 dependsOn: task.dependsOn.filter((d) => d !== popup.source),
-                ...(task.conditionalOn?.task === popup.source ? { conditionalOn: undefined } : {}),
+                conditions: withoutCondition(task, popup.source),
               });
             }
             setPopup(null);
@@ -534,11 +561,16 @@ function CanvasInner({ conduit, onSelect, onInspect, onUpdateTask, onDeleteTask,
   );
 }
 
+// `icon` is decorative and aria-hidden; `label` is the accessible name. The
+// labels used to be strings like "↖ select", which put the glyph inside the
+// name — a screen reader announced "north west arrow, select".
 function ToolbarButton({
+  icon,
   label,
   onClick,
   active,
 }: {
+  icon?: ReactNode;
   label: string;
   onClick: () => void;
   active?: boolean;
@@ -548,12 +580,13 @@ function ToolbarButton({
       type="button"
       onClick={onClick}
       className={
-        "border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] lg:px-2.5 lg:tracking-[0.14em] " +
+        "flex h-11 min-w-11 items-center justify-center gap-1.5 border px-2.5 font-mono text-mini uppercase tracking-[0.12em] lg:tracking-[0.14em] " +
         (active
           ? "border-primary bg-primary/10 text-primary"
           : "border-border bg-card text-foreground hover:border-primary")
       }
     >
+      {icon}
       {label}
     </button>
   );

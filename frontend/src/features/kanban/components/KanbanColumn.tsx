@@ -34,10 +34,10 @@ export function KanbanColumn({ id, title, count, children, onAdd }: Props) {
       data-column={id}
       className={`flex min-w-0 flex-col transition-colors ${isOver ? "bg-primary/5" : ""}`}
     >
-      <header className="flex items-baseline justify-between border-b border-border pb-2 ">
-        <span className="font-mono text-[12px] uppercase tracking-[0.16em] text-muted-foreground">
+      <header className="flex items-center justify-between border-b border-border">
+        <span className="font-mono text-body uppercase tracking-[0.16em] text-muted-foreground">
           {title}
-          <span className="ml-2 tabular-nums text-muted-foreground/60">
+          <span className="ml-2 tabular-nums text-muted-foreground">
             {count.toString().padStart(2, "0")}
           </span>
         </span>
@@ -46,7 +46,7 @@ export function KanbanColumn({ id, title, count, children, onAdd }: Props) {
             type="button"
             onClick={onAdd}
             aria-label={`Add task to ${title}`}
-            className="font-mono text-[12px] uppercase tracking-[0.14em] leading-none text-muted-foreground hover:text-primary"
+            className="-mr-1 flex h-9 items-center px-1 font-mono text-body uppercase tracking-[0.14em] text-muted-foreground hover:text-primary focus-visible:outline-2 focus-visible:outline-primary"
           >
             + add
           </button>

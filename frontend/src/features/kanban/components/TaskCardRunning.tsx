@@ -3,7 +3,7 @@ import type { Task } from "@/types/task";
 import { useConduits, getConduitSync } from "@/services/ConduitProvider";
 import { useTaskStore } from "@/runner";
 import { cancelTask as cancelEngine } from "@/runner";
-import { TOOL_COLORS } from "../toolMeta";
+import { TOOL_COLORS } from "@/constants/tools";
 import { cn } from "@/lib/cn";
 
 interface Props {
@@ -49,12 +49,12 @@ export function TaskCardRunning({ task: initialTask, selected, onClick }: Props)
       onClick={onClick}
       className={cn(
         "group min-w-0 overflow-hidden cursor-pointer border bg-card px-3 py-2.5",
-        hitl ? "border-orange-500 border-2 bg-orange-500/5" : "border-border",
+        hitl ? "border-warning border-2 bg-warning/5" : "border-border",
         selected && "border-primary shadow-[0_0_0_1px_var(--color-primary)]",
       )}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 font-mono text-[14px] leading-snug text-foreground truncate">
+        <div className="min-w-0 font-mono text-data leading-snug text-foreground truncate">
           {task.name}
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -63,17 +63,17 @@ export function TaskCardRunning({ task: initialTask, selected, onClick }: Props)
             onClick={(e) => { e.stopPropagation(); cancelEngine(task.name); }}
             data-testid="cancel-button"
             aria-label="Cancel task"
-            className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground hover:text-destructive"
+            className="flex h-6 items-center px-1 font-mono text-micro uppercase tracking-[0.12em] text-muted-foreground hover:text-destructive focus-visible:outline-2 focus-visible:outline-primary"
           >
             cancel
           </button>
           {hitl ? (
-            <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.12em] text-orange-500">
+            <span className="shrink-0 font-mono text-micro uppercase tracking-[0.12em] text-warning">
               waiting for review
             </span>
           ) : (
             <span
-              className="shrink-0 font-mono text-[9px] uppercase tracking-[0.12em]"
+              className="shrink-0 font-mono text-micro uppercase tracking-[0.12em]"
               style={{ color: `var(--color-type-${isConduit ? "conduit" : "task"})` }}
             >
               {isConduit ? "conduit" : "task"}
@@ -82,7 +82,7 @@ export function TaskCardRunning({ task: initialTask, selected, onClick }: Props)
         </div>
       </div>
       {desc && (
-        <div className="mt-0.5 text-[12px] leading-snug text-muted-foreground truncate">
+        <div className="mt-0.5 text-body leading-snug text-muted-foreground truncate">
           {desc}
         </div>
       )}
@@ -92,7 +92,7 @@ export function TaskCardRunning({ task: initialTask, selected, onClick }: Props)
             className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
             style={{ backgroundColor: TOOL_COLORS[task.tool] ?? "var(--color-muted-foreground)" }}
           />
-          <span className="font-mono text-[9px] text-muted-foreground/70 truncate">{task.tool}</span>
+          <span className="font-mono text-micro text-muted-foreground truncate">{task.tool}</span>
         </div>
       )}
 
@@ -102,7 +102,7 @@ export function TaskCardRunning({ task: initialTask, selected, onClick }: Props)
           style={{ width: `${pct}%` }}
         />
       </div>
-      <div className="mt-1 flex justify-between font-mono text-[9px] text-muted-foreground">
+      <div className="mt-1 flex justify-between font-mono text-micro text-muted-foreground">
         <span>{doneCount}/{order.length}</span>
         <span className="flex items-center gap-1">
           <span className="relative flex h-1.5 w-1.5">
@@ -115,7 +115,7 @@ export function TaskCardRunning({ task: initialTask, selected, onClick }: Props)
 
       <div
         ref={logsRef}
-        className="relative mt-2 max-h-[68px] overflow-hidden border border-border/60 bg-background px-2 py-1.5 font-mono text-[9px] leading-[1.5] text-muted-foreground"
+        className="relative mt-2 max-h-[68px] overflow-hidden border border-border/60 bg-background px-2 py-1.5 font-mono text-micro leading-[1.5] text-muted-foreground"
       >
         {tail.map((line, i) => (
           <div

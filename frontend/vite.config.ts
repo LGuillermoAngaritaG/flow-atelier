@@ -58,6 +58,11 @@ export default defineConfig(({ command }) => {
     },
     test: {
       include: ["src/**/*.test.{ts,tsx}"],
+      // Without this, vitest runs in the node environment and every test that
+      // touches localStorage or the DOM throws.
+      environment: "jsdom",
+      // Restores localStorage, which Node's own experimental global shadows.
+      setupFiles: ["./vitest.setup.ts"],
     },
     server: {
       port: 5173,

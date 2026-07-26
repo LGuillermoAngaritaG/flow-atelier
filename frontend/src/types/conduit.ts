@@ -4,8 +4,22 @@ export type ToolType =
   | "tool:conduit"
   | "harness:claude-code"
   | "harness:codex"
+  | "harness:opencode"
   | "harness:copilot"
   | "harness:cursor";
+
+/** A gate on one dependency edge: run only if the source output (not) matches. */
+export interface TaskCondition {
+  kind: "match" | "not_match";
+  pattern: string;
+  /**
+   * Quote character the pattern was written with in `depends_on`, when it had
+   * one. The engine strips quotes before compiling, so the designer shows the
+   * bare pattern — but it puts them back on save, otherwise merely opening a
+   * conduit and saving it rewrites the author's YAML.
+   */
+  quote?: string;
+}
 
 export interface ConduitTask {
   name: string;
@@ -13,11 +27,12 @@ export interface ConduitTask {
   description: string;
   task: string;
   dependsOn: string[];
-  conditionalOn?: {
-    task: string;
-    kind: "match" | "not_match";
-    pattern: string;
-  };
+  /**
+   * Conditions keyed by the source task they gate, so a task can be gated on
+   * several dependencies at once. Encoded into `dependsOn` strings on the wire
+   * (see `@/utils/conditions`); this shape exists only inside the designer.
+   */
+  conditions?: Record<string, TaskCondition>;
   interactive?: boolean;
   repeat?: number;
   inputs?: Record<string, string>;

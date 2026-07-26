@@ -47,6 +47,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test
+        run: npm test
+
       - name: Build
         # Left unset, VITE_USE_MOCK_API defaults off (real backend) and
         # VITE_BACKEND_URL resolves to the serving origin at runtime, so the

@@ -32,6 +32,8 @@ interface Props {
   onDeleteJob?: (id: string) => void;
   onAddSchedule?: () => void;
   refreshKey?: number;
+  /** Flow to reveal as soon as it starts, so a run is watchable immediately. */
+  autoOpenFlowId?: string;
   /** Live runs from the current dashboard session. */
   liveRuns: LiveRun[];
   onRespondToHitl?: (flowId: string, answers: Record<string, string>) => void;
@@ -44,6 +46,7 @@ export function FlowHistory({
   onDeleteJob,
   onAddSchedule,
   refreshKey,
+  autoOpenFlowId,
   liveRuns,
   onRespondToHitl,
   onCancelRun,
@@ -60,6 +63,15 @@ export function FlowHistory({
     if (node) setRowHeight(node.offsetHeight);
   }, []);
   const [rowHeight, setRowHeight] = useState(0);
+
+  // Reveal a freshly started run without stealing focus from a drawer the user
+  // already opened. Keyed on the id, so re-renders never re-open a closed one.
+  useEffect(() => {
+    if (autoOpenFlowId) {
+      setActiveTab("flows");
+      setSelectedFlowId(autoOpenFlowId);
+    }
+  }, [autoOpenFlowId]);
 
   useEffect(() => {
     let ignore = false;
@@ -289,7 +301,7 @@ export function FlowHistory({
             type="button"
             onClick={() => setActiveTab(tab.id)}
             className={cn(
-              "mr-6 pb-2 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors border-b-2 -mb-px",
+              "mr-6 pb-2 font-mono text-label uppercase tracking-[0.12em] transition-colors border-b-2 -mb-px",
               activeTab === tab.id
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground",
@@ -303,35 +315,37 @@ export function FlowHistory({
       {activeTab === "flows" ? (
         rows.length === 0 ? (
           <div className="py-12 text-center">
-            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+            <div className="font-mono text-label uppercase tracking-[0.12em] text-muted-foreground">
               no flows yet
             </div>
-            <div className="mt-2 font-mono text-[11px] text-muted-foreground/60">
+            <div className="mt-2 font-mono text-label text-muted-foreground">
               run a conduit to see it here
             </div>
           </div>
         ) : (
         <>
-          <div className="grid grid-cols-[14px_1fr_90px_80px_60px] gap-4 border-b border-border pb-2 pr-5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+          <div className="grid grid-cols-[14px_1fr_90px_80px_60px] items-center gap-4 border-b border-border pr-5 font-mono text-mini uppercase tracking-[0.14em] text-muted-foreground">
             <span />
             {([
               { col: "flow" as SortCol, label: "flow", align: "" },
               { col: "duration" as SortCol, label: "duration", align: "" },
               { col: "started" as SortCol, label: "started", align: "" },
-              { col: "state" as SortCol, label: "state", align: "text-right" },
+              { col: "state" as SortCol, label: "state", align: "justify-end" },
             ]).map(({ col, label, align }) => (
               <button
                 key={col}
                 type="button"
                 onClick={() => toggleSort(col)}
+                aria-label={`Sort by ${label}`}
+                // h-9: the sort targets were 15px tall, under the 24px floor.
                 className={cn(
-                  "flex items-center gap-1 hover:text-foreground transition-colors",
+                  "flex h-9 items-center gap-1 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary",
                   sort.col === col && "text-foreground",
                   align,
                 )}
               >
                 {label}
-                <span className="inline-block w-2 text-[8px]">
+                <span className="inline-block w-2 text-micro">
                   {sort.col === col ? (sort.asc ? "▲" : "▼") : ""}
                 </span>
               </button>
@@ -363,7 +377,7 @@ export function FlowHistory({
             ? (() => {
                 const c = getConduitSync(selectedLiveRun.conduitName, conduits);
                 return c
-                  ? `▸ ${selectedLiveRun.conduitName} · ${c.tasks.length} tasks`
+                  ? `${selectedLiveRun.conduitName} · ${c.tasks.length} tasks`
                   : selectedLiveRun.conduitName;
               })()
             : priorFlow

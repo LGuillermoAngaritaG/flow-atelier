@@ -43,7 +43,7 @@ export function EdgeTypePopup({ x, y, current, onSelect, onRemove, onClose }: Ed
             type="button"
             onClick={() => onSelect(opt.value)}
             className={
-              "px-3 py-1.5 text-left font-mono text-[10px] uppercase tracking-[0.1em] transition-colors hover:bg-accent " +
+              "px-3 py-1.5 text-left font-mono text-mini uppercase tracking-[0.1em] transition-colors hover:bg-accent " +
               (opt.value === current ? "text-primary font-bold" : "text-foreground")
             }
           >
@@ -53,7 +53,7 @@ export function EdgeTypePopup({ x, y, current, onSelect, onRemove, onClose }: Ed
         <button
           type="button"
           onClick={() => onRemove()}
-          className="border-t border-border px-3 py-1.5 text-left font-mono text-[10px] uppercase tracking-[0.1em] text-destructive transition-colors hover:bg-accent"
+          className="border-t border-border px-3 py-1.5 text-left font-mono text-mini uppercase tracking-[0.1em] text-destructive transition-colors hover:bg-accent"
         >
           remove
         </button>

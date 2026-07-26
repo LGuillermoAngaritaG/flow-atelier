@@ -63,7 +63,7 @@ export function ScheduledJobs({ jobs, onDelete, onAdd }: Props) {
       >
         <ul className="divide-y divide-border/60">
           {jobs.length === 0 && (
-            <li className="py-8 text-center font-mono text-[12px] text-muted-foreground">
+            <li className="py-8 text-center font-mono text-body text-muted-foreground">
               no scheduled jobs
             </li>
           )}
@@ -84,12 +84,12 @@ export function ScheduledJobs({ jobs, onDelete, onAdd }: Props) {
                       : "bg-muted-foreground/50",
                   )}
                 />
-                <span className="truncate font-mono text-[12px] text-foreground">
+                <span className="truncate font-mono text-body text-foreground">
                   {job.schedule.name || job.conduitName}
                 </span>
                 <span
                   className={cn(
-                    "shrink-0 font-mono text-[9px] uppercase tracking-[0.12em]",
+                    "shrink-0 font-mono text-micro uppercase tracking-[0.12em]",
                     job.schedule.mode === "once" && job.runsCompleted > 0
                       ? "text-[color:var(--color-ok)]/60"
                       : "text-muted-foreground",
@@ -111,7 +111,7 @@ export function ScheduledJobs({ jobs, onDelete, onAdd }: Props) {
                   </Button>
                 )}
               </div>
-              <div className="mt-0.5 truncate pl-4 text-[11px] text-muted-foreground">
+              <div className="mt-0.5 truncate pl-4 text-label text-muted-foreground">
                 {fmtDays(job)}
               </div>
             </li>

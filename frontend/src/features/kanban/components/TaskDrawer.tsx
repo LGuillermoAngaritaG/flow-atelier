@@ -125,7 +125,7 @@ export function TaskDrawer({ taskName, onClose, liveRuns = [], onCancelRun, onRe
   }, [liveRun, conduit, liveChildRuns, isLive, flow, flowLogs, priorChildRuns, priorTasks]);
 
   const subtitle = conduit
-    ? `▸ ${conduit.name} · ${conduit.tasks.length} tasks`
+    ? `${conduit.name} · ${conduit.tasks.length} tasks`
     : task?.description;
 
   // Logs: store (WebSocket) for running tasks, API for completed tasks.

@@ -49,11 +49,12 @@ export function DepEdge(props: EdgeProps) {
     targetPosition,
   });
 
+  // Was "black", which is invisible against the dark theme's background.
   const color = d.conditional
     ? d.conditional === "match"
       ? "var(--color-primary)"
       : "var(--color-destructive)"
-    : "black";
+    : "var(--color-edge)";
 
   return (
     <>
@@ -91,7 +92,7 @@ export function DepEdge(props: EdgeProps) {
               border: `1px solid ${color}`,
               color,
               fontFamily: "var(--font-mono)",
-              fontSize: "9px",
+              fontSize: "10px",
               letterSpacing: "0.1em",
               textTransform: "uppercase",
               padding: "2px 6px",

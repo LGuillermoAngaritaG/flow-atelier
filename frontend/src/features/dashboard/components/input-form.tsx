@@ -3,6 +3,7 @@ import type { Conduit } from "@/types/conduit";
 import { hintStr } from "@/types/conduit";
 import type { ScheduleConfig } from "@/types/schedule";
 import { Button } from "@/components/ui/button";
+import { Play, Clock } from "lucide-react";
 import { saveConduitInputs, loadConduitInputs } from "@/services/api/conduit-inputs";
 import { loadRunPath, saveRunPath } from "@/services/api/conduit-run-path";
 import { ScheduleDialog } from "./schedule-dialog";
@@ -91,13 +92,13 @@ export function InputForm({ conduit, onRun, onSchedule }: Props) {
 
   return (
     <form onSubmit={submit} data-testid="input-form" className="mt-10">
-      <h2 className="sub-title">
-      <span className="text-primary">· run path</span>
-      </h2>
+      <h2 className="mb-3 font-display text-panel text-foreground">Run path</h2>
 
       <div className="border-t border-border/60">
-        <div className="grid grid-cols-[140px_1fr] items-start gap-6 border-b border-border/50 py-4">
-          <label htmlFor="run-path" className="font-mono text-[11px] uppercase tracking-[0.12em] text-foreground">
+        {/* The 140px label column was unconditional: at 390px it left 146px of
+            width for a filesystem path. Labels stack above the field below sm. */}
+        <div className="grid grid-cols-1 items-start gap-1 border-b border-border/50 py-4 sm:grid-cols-[140px_1fr] sm:gap-6">
+          <label htmlFor="run-path" className="flex items-center font-mono text-label uppercase tracking-[0.12em] text-foreground sm:h-11">
             working directory
           </label>
           <div>
@@ -108,31 +109,31 @@ export function InputForm({ conduit, onRun, onSchedule }: Props) {
               onBlur={(e) => handlePathBlur(e.target.value)}
               aria-invalid={!!errors.runPath}
               aria-describedby={errors.runPath ? "run-path-error" : undefined}
-              className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
+              className="h-11 w-full border-0 border-b border-border-strong bg-transparent font-mono text-data text-foreground focus:border-primary"
               placeholder="/path/to/project"
             />
-            {errors.runPath && <div id="run-path-error" className="mt-1 font-mono text-[10px] text-destructive">{errors.runPath}</div>}
+            {errors.runPath && <div id="run-path-error" className="mt-1 font-mono text-mini text-destructive">{errors.runPath}</div>}
           </div>
         </div>
       </div>
 
       {Object.keys(conduit.inputs).length > 0 && (
       <>
-        <h2 className="sub-title mt-8">
-        <span className="text-primary">· inputs</span> · {conduit.name}
+        <h2 className="mt-8 mb-3 font-display text-panel text-foreground">
+          Inputs for <span className="font-mono text-data">{conduit.name}</span>
         </h2>
 
         <div className="border-t border-border/60">
           {Object.entries(conduit.inputs).map(([name, hint]) => (
           <div
             key={name}
-            className="grid grid-cols-[140px_1fr] items-start gap-6 border-b border-border/50 py-4"
+            className="grid grid-cols-1 items-start gap-1 border-b border-border/50 py-4 sm:grid-cols-[140px_1fr] sm:gap-6"
           >
             <div>
-              <label htmlFor={`input-${name}`} className="font-mono text-[11px] uppercase tracking-[0.12em] text-foreground">
+              <label htmlFor={`input-${name}`} className="font-mono text-label uppercase tracking-[0.12em] text-foreground">
                 {name}
               </label>
-              <div className="mt-1 text-[11px] text-muted-foreground">
+              <div className="mt-1 text-label text-muted-foreground">
                 {hintStr(hint)}
               </div>
             </div>
@@ -145,30 +146,35 @@ export function InputForm({ conduit, onRun, onSchedule }: Props) {
                 onBlur={handleBlur}
                 aria-invalid={!!errors[name]}
                 aria-describedby={errors[name] ? `input-${name}-error` : undefined}
-                className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
+                className="h-11 w-full border-0 border-b border-border-strong bg-transparent font-mono text-data text-foreground focus:border-primary"
                 placeholder={hintStr(hint)}
               />
-              {errors[name] && <div id={`input-${name}-error`} className="mt-1 font-mono text-[10px] text-destructive">{errors[name]}</div>}
+              {errors[name] && <div id={`input-${name}-error`} className="mt-1 font-mono text-mini text-destructive">{errors[name]}</div>}
             </div>
           </div>
         ))}
       </div>
       </>
       )}
-      <div className="flex justify-end gap-2 pt-8">
+      {/* Glyph icons (◷ ▸) used to sit inside the accessible name, so the
+          primary action announced as "black right-pointing small triangle, run
+          conduit". lucide is already the app's icon set; these are aria-hidden.
+          Default size, not sm: this is the product's primary action. */}
+      <div className="flex flex-wrap justify-end gap-2 pt-8">
         {onSchedule && (
           <Button
             type="button"
             variant="outline"
-            size="sm"
             data-testid="schedule-conduit"
             onClick={() => setSchedulerOpen(true)}
           >
-            ◷ schedule
+            <Clock className="size-3.5" aria-hidden />
+            schedule
           </Button>
         )}
-        <Button type="submit" size="sm" data-testid="run-conduit">
-          ▸ run conduit
+        <Button type="submit" data-testid="run-conduit">
+          <Play className="size-3.5" aria-hidden />
+          run conduit
         </Button>
       </div>
 

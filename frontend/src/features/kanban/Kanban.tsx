@@ -10,6 +10,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { toast } from "sonner";
+import { Trash2 } from "lucide-react";
 import { startTask } from "@/runner/engine";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useTaskStore } from "@/runner";
@@ -32,6 +33,13 @@ import { NewTaskDialog } from "./components/NewTaskDialog";
 import { NewProjectDialog } from "./components/NewProjectDialog";
 import { DeleteProjectDialog } from "./components/DeleteProjectDialog";
 import { DateRangePicker } from "./components/DateRangePicker";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type DatePreset = "all" | "today" | "yesterday" | "week" | "month" | "custom";
 
@@ -79,6 +87,14 @@ function dateFilterRange(preset: DatePreset, customFrom?: string, customTo?: str
 }
 
 const ALL_PROJECTS = "__all__";
+
+// Each column says what to do next rather than "— empty —", which told the
+// reader nothing they could not already see.
+const EMPTY_COLUMN: Record<ColumnId, string> = {
+  todo: "Nothing queued. Use + add to set up a task or conduit run.",
+  in_progress: "Nothing running. Drag a task here, or press run on its card, to start it.",
+  done: "No finished runs yet. Completed tasks land here with their logs.",
+};
 
 const ALLOWED_DROPS: Partial<Record<ColumnId, ColumnId[]>> = {
   todo: ["in_progress"],
@@ -266,37 +282,44 @@ export function Kanban() {
   }, [showAllProjects, activeProject.id]);
 
   return (
-    <div className="min-h-[calc(100vh-3.5rem)] px-4 py-6 lg:px-10 lg:py-10">
-      <header className="mb-6 lg:mb-10 flex items-baseline justify-between gap-4 lg:gap-10 border-b border-border pb-4 lg:pb-7">
-        <h1 className="page-title">
-          Run a <em className="text-primary not-italic">task</em>
+    <div className="min-h-[calc(100dvh-3.5rem)] px-4 py-6 lg:px-10 lg:py-10">
+      {/* The 52px serif title that used to sit here repeated the active nav
+          item; the top bar's wordmark carries the brand voice now. */}
+      <header className="mx-auto mb-6 flex max-w-[1280px] items-baseline justify-between gap-4 border-b border-border pb-4 lg:mb-8">
+        <h1 className="font-mono text-label uppercase tracking-[0.14em] text-foreground">
+          run a task
         </h1>
       </header>
 
       <div className="mx-auto max-w-[1280px]">
-        {/* Toolbar: project + date dropdowns */}
+        {/* Toolbar: project + date dropdowns. These were native <select>s,
+            which rendered OS chrome in the middle of a page where every other
+            control is custom, and killed their own focus ring with
+            outline-none. ui/select.tsx already existed, unused. */}
         <div className="mb-4 flex flex-wrap items-center gap-3">
-          <select
-            value={activeProjectId}
-            onChange={(e) => handleProjectSwitch(e.target.value)}
-            className="h-7 cursor-pointer rounded border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none focus:border-primary"
-          >
-            <option value={ALL_PROJECTS}>all projects</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-            <option value="__new__">+ new project</option>
-          </select>
+          <Select value={activeProjectId} onValueChange={handleProjectSwitch}>
+            <SelectTrigger aria-label="Filter by project" className="h-9 w-auto min-w-[160px] gap-2 text-label">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_PROJECTS}>all projects</SelectItem>
+              {projects.map((p) => (
+                <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+              ))}
+              <SelectItem value="__new__">+ new project</SelectItem>
+            </SelectContent>
+          </Select>
 
-          <select
-            value={datePreset}
-            onChange={(e) => setDatePreset(e.target.value as DatePreset)}
-            className="h-7 cursor-pointer rounded border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none focus:border-primary"
-          >
-            {DATE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
+          <Select value={datePreset} onValueChange={(v) => setDatePreset(v as DatePreset)}>
+            <SelectTrigger aria-label="Filter by date" className="h-9 w-auto min-w-[140px] gap-2 text-label">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {DATE_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           {datePreset === "custom" && (
             <DateRangePicker
@@ -309,14 +332,19 @@ export function Kanban() {
             />
           )}
 
+          {/* Was a full-weight bordered button in the toolbar's top-right — the
+              most prominent control on the page was the destructive one, while
+              the primary "+ add" sits at 12px inside a column header. Demoted
+              to a quiet text action; the confirm dialog is still the guardrail. */}
           <div className="ml-auto">
             {!showAllProjects && (
               <button
                 type="button"
                 disabled={projectHasRunningTasks}
                 onClick={() => setDeleteProjectOpen(true)}
-                className="h-7 cursor-pointer rounded border border-border bg-background px-3 font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:border-destructive hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:text-muted-foreground"
+                className="flex h-9 cursor-pointer items-center gap-1.5 rounded-sm px-2 font-mono text-mini uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:text-destructive focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted-foreground"
               >
+                <Trash2 className="size-3" aria-hidden />
                 delete project
               </button>
             )}
@@ -353,9 +381,9 @@ export function Kanban() {
                   />
                 ))}
                 {colTasks.length === 0 && (
-                  <div className="font-mono text-[11px] text-muted-foreground/60">
-                    — empty —
-                  </div>
+                  <p className="border border-dashed border-border px-3 py-4 text-body leading-relaxed text-muted-foreground">
+                    {EMPTY_COLUMN[col.id]}
+                  </p>
                 )}
               </KanbanColumn>
             );
@@ -364,11 +392,11 @@ export function Kanban() {
         <DragOverlay dropAnimation={null}>
           {activeTask && (
             <div className="h-[80px] border border-primary/60 bg-card px-3 py-2.5 shadow-lg">
-              <div className="min-w-0 font-mono text-[14px] leading-snug text-foreground line-clamp-1">
+              <div className="min-w-0 font-mono text-data leading-snug text-foreground line-clamp-1">
                 {activeTask.name}
               </div>
               {activeTask.description && (
-                <div className="mt-1 text-[12px] leading-snug text-muted-foreground line-clamp-1">
+                <div className="mt-1 text-body leading-snug text-muted-foreground line-clamp-1">
                   {activeTask.description}
                 </div>
               )}

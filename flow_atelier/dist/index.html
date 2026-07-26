@@ -4,15 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Fonts are bundled by the app entry (src/main.tsx), not fetched from a
+         CDN — this UI must render offline. -->
     <title>flow-atelier</title>
-    <script type="module" crossorigin src="/assets/index-B7oo79Tt.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-HlXeaueF.css">
+    <!-- Applies the stored theme before first paint. ThemeContext also sets
+         this, but it does so in an effect, so a light-theme reader used to get
+         a full dark flash on every load. Kept inline and tiny on purpose: as an
+         external module it would not run before paint either. -->
+    <script>
+      try {
+        var t = localStorage.getItem("atelier.theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (e) {
+        /* storage blocked; the dark default in the html tag stands */
+      }
+    </script>
+    <script type="module" crossorigin src="/assets/index-BiZ93j2D.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-B3dKJ8J8.css">
   </head>
   <body>
     <div id="root"></div>

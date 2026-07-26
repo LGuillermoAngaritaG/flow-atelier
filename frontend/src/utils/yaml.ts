@@ -1,4 +1,5 @@
 import type { Conduit } from "@/types/conduit";
+import { formatDependency } from "@/utils/conditions";
 
 // Plain scalars/keys that are safe to emit unquoted. Anything with YAML-special
 // punctuation (`:`, `#`, etc.) is double-quoted via JSON.stringify so a name
@@ -26,14 +27,13 @@ export function renderConduitYaml(c: Conduit): string {
     lines.push(`    description: ${JSON.stringify(t.description)}`);
     lines.push(`    task: ${JSON.stringify(t.task)}`);
     if (t.dependsOn.length > 0) {
-      lines.push(`    depends_on: [${t.dependsOn.map(yamlScalar).join(", ")}]`);
-    }
-    if (t.conditionalOn) {
-      lines.push(
-        `    conditional_on: { task: ${yamlScalar(t.conditionalOn.task)}, ${t.conditionalOn.kind}: ${JSON.stringify(
-          t.conditionalOn.pattern,
-        )} }`,
+      // Conditions live inside the depends_on entries — there is no
+      // `conditional_on` key in the conduit schema, so emitting one produced a
+      // preview that the engine would silently ignore.
+      const deps = t.dependsOn.map((dep) =>
+        yamlScalar(formatDependency(dep, t.conditions?.[dep])),
       );
+      lines.push(`    depends_on: [${deps.join(", ")}]`);
     }
     if (t.repeat) lines.push(`    repeat: ${t.repeat}`);
     if (t.interactive) lines.push(`    interactive: true`);

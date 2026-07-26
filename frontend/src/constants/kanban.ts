@@ -8,8 +8,8 @@ export const KANBAN_COLUMNS: Array<{ id: ColumnId; title: string }> = [
 
 export const STATUS_BORDER: Record<string, string> = {
   idle: "border-border/60",
-  needs_human: "border-orange-500",
-  complete: "border-emerald-500",
+  needs_human: "border-warning",
+  complete: "border-ok",
 };
 
 export const KANBAN_SCROLL_THRESHOLD = 5;
