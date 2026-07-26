@@ -1,12 +1,19 @@
 """Filesystem store tests."""
 import json
+from unittest import mock
 
 import pytest
 import yaml
 
-from flow_atelier.schemas.log import LogEntry
+from flow_atelier.schemas.log import (
+    IntermediateStep,
+    LogEntry,
+    StepKind,
+    StepRecord,
+)
 from flow_atelier.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
 from flow_atelier.services.store.filesystem import FilesystemStore
+from flow_atelier.services.store.filesystem import logger as fs_logger
 
 CONDUIT_YAML = """
 name: hello
@@ -570,3 +577,202 @@ def test_read_logs_silent_on_truncated_trailing_line(store, caplog):
         entries = store.read_logs(fid)
     assert [e.task for e in entries] == ["greet"]
     assert not any("unreadable line" in r.message for r in caplog.records)
+
+
+class TestReadSteps:
+    """Live step records must tail correctly while the flow is still writing."""
+
+    @staticmethod
+    def _record(text: str) -> StepRecord:
+        """Build a StepRecord carrying ``text`` as thinking.
+
+        :param text: thinking text to embed.
+        """
+        return StepRecord(
+            task="a",
+            iteration=1,
+            step=IntermediateStep(kind=StepKind.thinking, text=text),
+        )
+
+    async def test_offset_returns_only_new_records(self, tmp_path) -> None:
+        """``offset`` lets a poller consume only what it has not seen.
+
+        :param tmp_path: pytest temp directory fixture.
+        """
+        store = FilesystemStore(tmp_path / ".atelier")
+        flow_id = store.create_flow("c", {})
+        for i in range(3):
+            await store.append_step(flow_id, self._record(f"s{i}"))
+
+        first, offset = store.read_steps(flow_id)
+        assert [r.step.text for r in first] == ["s0", "s1", "s2"]
+
+        # Nothing new yet.
+        assert store.read_steps(flow_id, offset) == ([], offset)
+
+        await store.append_step(flow_id, self._record("s3"))
+        fresh, offset = store.read_steps(flow_id, offset)
+        assert [r.step.text for r in fresh] == ["s3"]
+        assert store.read_steps(flow_id, offset) == ([], offset)
+
+    async def test_offset_skips_the_bytes_already_consumed(self, tmp_path) -> None:
+        """A poll resuming from ``offset`` must not re-read the earlier bytes.
+
+        ``steps.jsonl`` has no rotation, so pulling it through in full on
+        every poll gets steadily more expensive as a flow runs. Proven by
+        poisoning the consumed prefix: a reader that seeks never sees it, a
+        reader that starts from zero has to complain about it.
+
+        :param tmp_path: pytest temp directory fixture.
+        """
+        store = FilesystemStore(tmp_path / ".atelier")
+        flow_id = store.create_flow("c", {})
+        await store.append_step(flow_id, self._record("consumed"))
+        _, offset = store.read_steps(flow_id)
+        await store.append_step(flow_id, self._record("tail"))
+
+        path = tmp_path / ".atelier" / "flows" / flow_id / "steps.jsonl"
+        raw = bytearray(path.read_bytes())
+        raw[0 : offset - 1] = b"X" * (offset - 1)  # keep the newline in place
+        path.write_bytes(bytes(raw))
+
+        with mock.patch.object(fs_logger, "warning") as warned:
+            fresh, _ = store.read_steps(flow_id, offset)
+        assert [r.step.text for r in fresh] == ["tail"]
+        assert not warned.called, "resumed poll re-read the consumed prefix"
+
+        # Control: from byte zero the poisoned prefix is unmissable.
+        with mock.patch.object(fs_logger, "warning") as warned:
+            store.read_steps(flow_id)
+        assert warned.called
+
+    async def test_corrupt_line_is_skipped_not_fatal(self, tmp_path) -> None:
+        """One unreadable complete line must not hide every step after it.
+
+        Stopping at the first bad line keeps a poller's position exact, but
+        a genuinely corrupt line is never completed, so the reader would
+        stall there permanently and silently lose the rest of the flow.
+
+        :param tmp_path: pytest temp directory fixture.
+        """
+        store = FilesystemStore(tmp_path / ".atelier")
+        flow_id = store.create_flow("c", {})
+        await store.append_step(flow_id, self._record("before"))
+
+        path = tmp_path / ".atelier" / "flows" / flow_id / "steps.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write("{not json at all}\n")
+        await store.append_step(flow_id, self._record("after"))
+
+        records, offset = store.read_steps(flow_id)
+        assert [r.step.text for r in records] == ["before", "after"]
+        # And the position stepped over the bad line rather than parking on it.
+        assert offset == path.stat().st_size
+        assert store.read_steps(flow_id, offset) == ([], offset)
+
+    async def test_non_ascii_step_text_round_trips(self, tmp_path) -> None:
+        """Steps are written UTF-8, so they must be read back UTF-8.
+
+        Reading with the locale default decodes as cp1252 on a stock Windows
+        console and raises on the first smart quote an agent emits.
+
+        :param tmp_path: pytest temp directory fixture.
+        """
+        store = FilesystemStore(tmp_path / ".atelier")
+        flow_id = store.create_flow("c", {})
+        await store.append_step(flow_id, self._record("café — 你好"))
+
+        records, _ = store.read_steps(flow_id)
+        assert [r.step.text for r in records] == ["café — 你好"]
+
+    async def test_partial_trailing_line_is_retried_not_skipped(
+        self, tmp_path
+    ) -> None:
+        """A half-written final line must not desync a poller's position.
+
+        The file is appended to while it is being read, so a torn trailing
+        line is the normal case, not corruption. It has to be withheld until
+        complete — counting it as consumed would drop the step forever.
+
+        :param tmp_path: pytest temp directory fixture.
+        """
+        store = FilesystemStore(tmp_path / ".atelier")
+        flow_id = store.create_flow("c", {})
+        await store.append_step(flow_id, self._record("complete"))
+
+        path = tmp_path / ".atelier" / "flows" / flow_id / "steps.jsonl"
+        torn = json.dumps(self._record("late").model_dump())
+        head, tail = torn[:20], torn[20:]
+        with path.open("a", encoding="utf-8") as f:
+            f.write(head)  # torn mid-write
+
+        seen, offset = store.read_steps(flow_id)
+        assert [r.step.text for r in seen] == ["complete"]
+
+        # The poller advances only past complete lines, so once the rest of
+        # the write lands the withheld record is picked up — once, not twice.
+        with path.open("a", encoding="utf-8") as f:
+            f.write(tail + "\n")
+        fresh, offset = store.read_steps(flow_id, offset)
+        assert [r.step.text for r in fresh] == ["late"]
+        assert store.read_steps(flow_id, offset) == ([], offset)
+
+
+class TestLogEncoding:
+    """`logs.jsonl` is appended as UTF-8, so it must be read back as UTF-8.
+
+    Reading with the locale default decodes as cp1252 on a stock Windows
+    console and raises on the first non-ASCII byte a task's output contains.
+    """
+
+    async def test_non_ascii_log_entry_round_trips(self, tmp_path) -> None:
+        """Verify a log entry with non-ASCII output survives a write/read cycle.
+
+        :param tmp_path: pytest temp directory fixture.
+        """
+        store = FilesystemStore(tmp_path / ".atelier")
+        flow_id = store.create_flow("c", {})
+        await store.append_log(
+            flow_id,
+            LogEntry(
+                task="a",
+                tool="tool:bash",
+                command="echo",
+                exit_code=0,
+                output="café — 你好 — ✓",
+                stdout="café — 你好 — ✓",
+                stderr="",
+                started_at="2026-04-12T10:00:00Z",
+                finished_at="2026-04-12T10:00:00Z",
+            ),
+        )
+        assert [e.output for e in store.read_logs(flow_id)] == ["café — 你好 — ✓"]
+
+    def test_legacy_json_log_is_read_as_utf8(self, tmp_path) -> None:
+        """Verify the pre-JSONL fallback path also decodes as UTF-8.
+
+        :param tmp_path: pytest temp directory fixture.
+        """
+        store = FilesystemStore(tmp_path / ".atelier")
+        flow_id = store.create_flow("c", {})
+        flow_dir = tmp_path / ".atelier" / "flows" / flow_id
+        (flow_dir / "logs.jsonl").unlink()
+        (flow_dir / "logs.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "task": "a",
+                        "tool": "tool:bash",
+                        "command": "echo",
+                        "exit_code": 0,
+                        "output": "café — 你好",
+                        "stdout": "café — 你好",
+                        "stderr": "",
+                        "started_at": "2026-04-12T10:00:00Z",
+                        "finished_at": "2026-04-12T10:00:00Z",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        assert [e.output for e in store.read_logs(flow_id)] == ["café — 你好"]

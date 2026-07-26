@@ -11,6 +11,7 @@ from typing import Any
 from flow_atelier.schemas.conduit import TaskDefinition, ToolType
 from flow_atelier.services.executor.base import FlowContext
 from flow_atelier.services.executor.harness import (
+    AGENT_STDERR_LINES,
     DEFAULT_DONE_MARKER,
     AcpHarnessExecutor,
     ClaudeHarness,
@@ -994,3 +995,50 @@ async def test_text_turn_has_no_nontext_note() -> None:
     assert result.exit_code == 0
     assert result.output == "hello"
     assert result.stderr == ""
+
+
+async def test_agent_stderr_is_surfaced_on_launch_failure() -> None:
+    """A harness that dies before the handshake reports *why* it died.
+
+    The ACP transport pipes the agent's stderr; without a drain the only
+    explanation the user gets is a bare exception type.
+    """
+    executor = AcpHarnessExecutor(
+        launch_cmd=[
+            sys.executable,
+            "-c",
+            "import sys; sys.stderr.write('not authenticated: run `claude login`\\n'); "
+            "sys.exit(1)",
+        ],
+        sink=RecordingSink(),
+    )
+    result = await executor.execute(_task("hi"), "hi", _ctx(timeout=10))
+
+    assert not result.success
+    assert "not authenticated" in result.stderr
+    assert "claude login" in result.stderr
+
+
+async def test_chatty_agent_stderr_is_ring_buffered() -> None:
+    """A high-volume agent surfaces its stderr tail without unbounded growth.
+
+    Draining is what keeps the pipe from filling (undrained, an agent past
+    the ~64KB buffer blocks on write), and AGENT_STDERR_LINES is what keeps
+    the drained output from becoming the log. Here: 40k lines in, a bounded
+    tail out.
+    """
+    executor = AcpHarnessExecutor(
+        launch_cmd=[
+            sys.executable,
+            "-c",
+            "import sys; sys.stderr.write('noise\\n' * 40000); sys.exit(1)",
+        ],
+        sink=RecordingSink(),
+    )
+    result = await asyncio.wait_for(
+        executor.execute(_task("hi"), "hi", _ctx(timeout=15)), timeout=30
+    )
+
+    assert "noise" in result.stderr
+    # The bare failure line plus at most AGENT_STDERR_LINES of agent output.
+    assert len(result.stderr.splitlines()) <= AGENT_STDERR_LINES + 1

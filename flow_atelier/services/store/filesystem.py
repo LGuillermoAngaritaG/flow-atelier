@@ -30,7 +30,7 @@ import yaml
 
 from flow_atelier.schemas.conduit import Conduit
 from flow_atelier.schemas.flow import new_flow_id, parse_flow_id
-from flow_atelier.schemas.log import LogEntry
+from flow_atelier.schemas.log import LogEntry, StepRecord
 from flow_atelier.schemas.progress import Progress
 from flow_atelier.services.store.base import ConduitSource, StoreBase
 
@@ -431,6 +431,11 @@ class FilesystemStore(StoreBase):
         Reads ``logs.jsonl``; falls back to the legacy ``logs.json`` array
         for flow dirs created before the JSONL switch.
 
+        Both are read as UTF-8 to match ``append_log``, which writes that
+        way. Falling back to the locale default decodes as cp1252 on a stock
+        Windows console and raises on the first non-ASCII character an agent
+        or a task's output happens to contain.
+
         :param flow_id: flow identifier
         :returns: parsed list of :class:`LogEntry` — empty if missing/unreadable
         """
@@ -438,7 +443,7 @@ class FilesystemStore(StoreBase):
         jsonl_path = flow_dir / "logs.jsonl"
         if jsonl_path.exists():
             entries: list[LogEntry] = []
-            lines = jsonl_path.read_text().splitlines()
+            lines = jsonl_path.read_text(encoding="utf-8").splitlines()
             last_index = len(lines) - 1
             for index, line in enumerate(lines):
                 if not line.strip():
@@ -460,10 +465,89 @@ class FilesystemStore(StoreBase):
             return entries
         legacy_path = flow_dir / "logs.json"
         try:
-            raw = json.loads(legacy_path.read_text())
+            raw = json.loads(legacy_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):
             return []
         return [LogEntry.model_validate(item) for item in raw]
+
+    # -------------------------------------------------------------- live steps
+
+    async def append_step(self, flow_id: str, record: StepRecord) -> None:
+        """Append ``record`` to the flow's ``steps.jsonl``.
+
+        Shares the per-flow log lock so a step write cannot interleave with
+        a ``logs.jsonl`` write mid-line.
+
+        :param flow_id: flow identifier
+        :param record: step record to append
+        """
+        path = self._flow_dir(flow_id) / "steps.jsonl"
+        line = json.dumps(record.model_dump()) + "\n"
+
+        def _write() -> None:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line)
+
+        async with self._lock_for(flow_id):
+            await asyncio.to_thread(_write)
+
+    def read_steps(
+        self, flow_id: str, offset: int = 0
+    ) -> tuple[list[StepRecord], int]:
+        """Return live step records for ``flow_id`` from ``offset`` onward.
+
+        ``offset`` is a byte position, and the matching end position comes
+        back with the records. A poller feeds the returned value into its
+        next call and reads only what was appended since, instead of pulling
+        the whole file through memory every quarter second — ``steps.jsonl``
+        has no rotation, so on a long loop conduit that file only grows.
+
+        A truncated trailing line is expected: the file is appended to while
+        the flow runs, which is exactly when it gets read. It is left
+        unconsumed and picked up once complete. A *complete* line that will
+        not parse is corruption rather than a race, so it is logged, skipped,
+        and stepped over — stopping there would hide every later step for the
+        rest of the flow's life.
+
+        :param flow_id: flow identifier
+        :param offset: byte offset to resume from; ``0`` reads from the start
+        :returns: tuple of the parsed records and the byte offset just past
+            the last complete line consumed
+        """
+        path = self._flow_dir(flow_id) / "steps.jsonl"
+        if not path.exists():
+            return [], offset
+        with path.open("rb") as f:
+            f.seek(offset)
+            data = f.read()
+
+        records: list[StepRecord] = []
+        consumed = 0
+        corrupt = 0
+        first_corrupt_at = 0
+        for raw in data.splitlines(keepends=True):
+            if not raw.endswith(b"\n"):
+                break  # partial trailing write — retried on the next read
+            consumed += len(raw)
+            try:
+                records.append(
+                    StepRecord.model_validate(json.loads(raw.decode("utf-8")))
+                )
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                # Tallied, not logged per line: a truncated or garbled file can
+                # be corrupt for thousands of consecutive lines, and one warning
+                # per line would bury the run's real output.
+                if not corrupt:
+                    first_corrupt_at = offset + consumed - len(raw)
+                corrupt += 1
+        if corrupt:
+            logger.warning(
+                "skipped %d unreadable step record(s) in %s, first at byte %d",
+                corrupt,
+                path,
+                first_corrupt_at,
+            )
+        return records, offset + consumed
 
     # ------------------------------------------------------------------ progress
 

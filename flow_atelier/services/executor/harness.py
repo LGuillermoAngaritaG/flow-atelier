@@ -20,10 +20,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import shutil
 import sys
+from collections import deque
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -86,6 +89,79 @@ MAX_INTERACTIVE_TURNS = 20
 # Some agents (notably opencode) emit one thought chunk per token; without
 # grouping the UI shows one rendered line per word.
 THINKING_FLUSH_CHARS = 200
+
+# Same batching for agent message chunks on non-interactive runs, so the
+# agent's narration appears in readable blocks rather than per token.
+MESSAGE_FLUSH_CHARS = 200
+
+# Cap on a serialized tool payload kept on an IntermediateStep.
+TOOL_PAYLOAD_CHARS = 500
+
+# Trailing lines of agent-process stderr retained for diagnostics.
+AGENT_STDERR_LINES = 50
+
+# Grace period for the stderr drain to pick up an agent's dying words
+# before the transport tears the pipe down.
+STDERR_DRAIN_GRACE_SECONDS = 0.5
+
+
+async def _drain_agent_stderr(stream, sink: deque[str]) -> None:
+    """Continuously read the agent subprocess's stderr into ``sink``.
+
+    The ACP transport spawns the agent with ``stderr=PIPE`` but never reads
+    it. Leaving it undrained is doubly bad: the agent's own diagnostics
+    (auth failures, model errors, node tracebacks) are invisible, and once
+    the OS pipe buffer fills the agent *blocks on write* and hangs until the
+    task timeout fires. Draining fixes both.
+
+    Never raises: a failure here must not take down the task it exists to
+    diagnose.
+
+    :param stream: the subprocess ``stderr`` :class:`asyncio.StreamReader`.
+    :param sink: bounded deque collecting the most recent stderr lines.
+    """
+    with contextlib.suppress(Exception):
+        while True:
+            raw = await stream.readline()
+            if not raw:
+                return
+            sink.append(raw.decode("utf-8", errors="replace").rstrip())
+
+
+def _with_agent_stderr(result: ExecutionResult, captured: deque[str]) -> ExecutionResult:
+    """Attach captured agent stderr to a failed ``result``.
+
+    Only on failure: on success the agent's stderr is routine chatter
+    (progress bars, deprecation notices) and would bury the real output.
+
+    :param result: the execution result to annotate.
+    :param captured: recent agent stderr lines.
+    :returns: ``result``, with agent stderr appended to its ``stderr``.
+    """
+    if result.success or not captured:
+        return result
+    tail = "\n".join(captured)
+    result.stderr = f"{result.stderr}\n{tail}".strip() if result.stderr else tail
+    return result
+
+
+def _payload_snippet(value: Any) -> str:
+    """Serialize an ACP tool payload to a bounded JSON string.
+
+    JSON (not ``repr``) so renderers can parse the payload back and pull
+    out the one field worth showing — the bash command, the file path, the
+    search pattern — instead of printing a Python dict repr at the user.
+
+    :param value: the raw ``rawInput``/``rawOutput`` payload, possibly None.
+    :returns: JSON text truncated to :data:`TOOL_PAYLOAD_CHARS`, or ``""``.
+    """
+    if not value:
+        return ""
+    try:
+        text = json.dumps(value, default=str)
+    except (TypeError, ValueError):
+        text = str(value)
+    return text[:TOOL_PAYLOAD_CHARS]
 
 # Mode-id keyword tiers in descending permissiveness. Each ACP agent
 # advertises its own mode ids; we pick the most permissive one available so
@@ -211,6 +287,7 @@ class _BufferingClient:
         stream_messages: bool = False,
         stream_steps: bool = False,
         done_marker: str = DEFAULT_DONE_MARKER,
+        on_step: Callable[[IntermediateStep], Awaitable[None]] | None = None,
     ) -> None:
         """Initialize the buffering client.
 
@@ -218,11 +295,13 @@ class _BufferingClient:
         :param stream_messages: if ``True``, mirror agent message chunks to the sink.
         :param stream_steps: if ``True``, mirror intermediate steps to the sink.
         :param done_marker: token stripped from streamed text before display.
+        :param on_step: optional persistence hook called for every step.
         """
         self._sink = sink
         self._stream_messages = stream_messages
         self._stream_steps = stream_steps
         self._done_marker = done_marker
+        self._on_step = on_step
         self.buffer: list[str] = []
         # Set when an agent message chunk carried only non-text content
         # (image/resource); lets an empty-but-successful turn be flagged.
@@ -230,10 +309,32 @@ class _BufferingClient:
         self.steps: list[IntermediateStep] = []
         self._pending_thinking: list[str] = []
         self._pending_thinking_len: int = 0
+        self._pending_message: list[str] = []
+        self._pending_message_len: int = 0
+        # True once a message block reached the sink, so the caller knows a
+        # result panel would duplicate what already scrolled past.
+        self.streamed_message = False
         # Last per-turn token breakdown and latest cumulative session cost
         # the agent reported, if any. Both UNSTABLE/optional in ACP.
         self.usage: Usage | None = None
         self.cost: float | None = None
+
+    async def _record(self, step: IntermediateStep) -> None:
+        """Buffer ``step``, persist it, and mirror it to the sink.
+
+        Persistence is best-effort: a failing store must not take down the
+        task whose progress it is recording.
+
+        :param step: the step to record.
+        """
+        self.steps.append(step)
+        if self._on_step is not None:
+            try:
+                await self._on_step(step)
+            except Exception:  # noqa: BLE001
+                logger.debug("step persistence failed", exc_info=True)
+        if self._stream_steps and hasattr(self._sink, "display_step"):
+            await self._sink.display_step(step)
 
     async def _flush_thinking(self) -> None:
         """Emit any buffered thought chunks as one merged ``thinking`` step.
@@ -247,18 +348,43 @@ class _BufferingClient:
         self._pending_thinking_len = 0
         if not text:
             return
-        step = IntermediateStep(kind=StepKind.thinking, text=text)
-        self.steps.append(step)
-        if self._stream_steps and hasattr(self._sink, "display_step"):
-            await self._sink.display_step(step)
+        await self._record(IntermediateStep(kind=StepKind.thinking, text=text))
+
+    async def _flush_message(self) -> None:
+        """Emit any buffered agent message chunks as one block.
+
+        The block is handed over unstripped. Chunks are flushed every
+        :data:`MESSAGE_FLUSH_CHARS` or on a newline, so stripping each one
+        would delete exactly the blank lines and leading indentation that
+        separate an agent's prose from the code it is quoting — and a
+        message that streams sets ``live_streamed``, suppressing the result
+        panel that held the pristine copy. Only an all-whitespace block is
+        dropped.
+
+        No-op when the buffer is empty or contains only whitespace.
+        """
+        if not self._pending_message:
+            return
+        text = "".join(self._pending_message).replace(self._done_marker, "")
+        self._pending_message.clear()
+        self._pending_message_len = 0
+        if not text.strip():
+            return
+        if hasattr(self._sink, "display_message"):
+            await self._sink.display_message(text)
+            self.streamed_message = True
 
     async def flush_pending(self) -> None:
-        """Flush any partial thought-chunk buffer at a turn boundary.
+        """Flush partial thinking/message buffers at a turn boundary.
 
         Called by the driver after each ``conn.prompt`` round so the last
-        group of thinking does not get stuck pending until the next update.
+        group of thinking, the last message block, and any open tool-call
+        burst are emitted instead of being stuck pending.
         """
         await self._flush_thinking()
+        await self._flush_message()
+        if hasattr(self._sink, "flush_steps"):
+            await self._sink.flush_steps()
 
     async def session_update(self, session_id: str, update, **kwargs) -> None:
         """Handle a session update notification from the ACP agent.
@@ -276,6 +402,17 @@ class _BufferingClient:
                 self.buffer.append(text)
                 if self._stream_messages:
                     await self._sink.display(text.replace(self._done_marker, ""))
+                elif self._stream_steps:
+                    # Non-interactive: batch the chunks and surface them
+                    # between tool activity, so the run reads as narration
+                    # rather than an unexplained sequence of tool calls.
+                    self._pending_message.append(text)
+                    self._pending_message_len += len(text)
+                    if (
+                        self._pending_message_len >= MESSAGE_FLUSH_CHARS
+                        or "\n" in text
+                    ):
+                        await self._flush_message()
             else:
                 self._saw_nontext_content = True
         elif isinstance(update, AgentThoughtChunk):
@@ -288,30 +425,28 @@ class _BufferingClient:
                 await self._flush_thinking()
         elif isinstance(update, ToolCallStart):
             await self._flush_thinking()
-            step = IntermediateStep(
-                kind=StepKind.tool_call,
-                tool_call_id=update.tool_call_id,
-                tool_name=update.title,
-                tool_kind=update.kind or "",
-                tool_status=update.status or "",
-                tool_input=str(update.raw_input)[:500] if update.raw_input else "",
-                locations=[loc.path for loc in (update.locations or [])],
+            await self._record(
+                IntermediateStep(
+                    kind=StepKind.tool_call,
+                    tool_call_id=update.tool_call_id,
+                    tool_name=update.title,
+                    tool_kind=update.kind or "",
+                    tool_status=update.status or "",
+                    tool_input=_payload_snippet(update.raw_input),
+                    locations=[loc.path for loc in (update.locations or [])],
+                )
             )
-            self.steps.append(step)
-            if self._stream_steps and hasattr(self._sink, "display_step"):
-                await self._sink.display_step(step)
         elif isinstance(update, ToolCallProgress):
             if update.status in ("completed", "failed"):
                 await self._flush_thinking()
-                step = IntermediateStep(
-                    kind=StepKind.tool_result,
-                    tool_call_id=update.tool_call_id,
-                    tool_status=update.status or "",
-                    tool_output=str(update.raw_output)[:500] if update.raw_output else "",
+                await self._record(
+                    IntermediateStep(
+                        kind=StepKind.tool_result,
+                        tool_call_id=update.tool_call_id,
+                        tool_status=update.status or "",
+                        tool_output=_payload_snippet(update.raw_output),
+                    )
                 )
-                self.steps.append(step)
-                if self._stream_steps and hasattr(self._sink, "display_step"):
-                    await self._sink.display_step(step)
         elif isinstance(update, UsageUpdate):
             # Cumulative session cost — keep the latest value seen, not a sum.
             if update.cost is not None:
@@ -508,16 +643,21 @@ class AcpHarnessExecutor(ExecutorBase):
             stream_messages=task.interactive,
             stream_steps=(task.interactive or context.show_steps),
             done_marker=self.done_marker,
+            on_step=context.on_step,
         )
 
+        agent_stderr: deque[str] = deque(maxlen=AGENT_STDERR_LINES)
+
         try:
-            return await asyncio.wait_for(
-                self._drive_session(client, prompt_text, task.interactive, cwd),
+            result = await asyncio.wait_for(
+                self._drive_session(
+                    client, prompt_text, task.interactive, cwd, agent_stderr
+                ),
                 timeout=context.timeout,
             )
         except TimeoutError:
             await client.flush_pending()
-            return ExecutionResult(
+            result = ExecutionResult(
                 exit_code=124,
                 stdout="".join(client.buffer),
                 stderr=f"harness timeout after {context.timeout}s",
@@ -527,7 +667,7 @@ class AcpHarnessExecutor(ExecutorBase):
             )
         except Exception as exc:  # noqa: BLE001
             await client.flush_pending()
-            return ExecutionResult(
+            result = ExecutionResult(
                 exit_code=1,
                 stdout="".join(client.buffer),
                 stderr=f"{type(exc).__name__}: {exc}",
@@ -535,6 +675,11 @@ class AcpHarnessExecutor(ExecutorBase):
                 steps=client.steps,
                 usage=_usage_from_client(client),
             )
+        # Interactive runs stream raw chunks; non-interactive runs stream
+        # batched message blocks. Either way the output is already on screen.
+        if client.streamed_message or task.interactive:
+            result.live_streamed = True
+        return _with_agent_stderr(result, agent_stderr)
 
     async def _drive_session(
         self,
@@ -542,6 +687,7 @@ class AcpHarnessExecutor(ExecutorBase):
         initial_prompt: str,
         interactive: bool,
         cwd: str,
+        agent_stderr: deque[str],
     ) -> ExecutionResult:
         """Spawn the agent, initialize a session, and run one or many turns.
 
@@ -550,6 +696,7 @@ class AcpHarnessExecutor(ExecutorBase):
             for interactive runs).
         :param interactive: ``True`` to loop until the done marker arrives.
         :param cwd: working directory passed to the agent process.
+        :param agent_stderr: bounded deque the agent's stderr is drained into.
         :returns: :class:`ExecutionResult` from single-turn or interactive run.
         """
         cmd, *args = self.launch_cmd
@@ -567,11 +714,19 @@ class AcpHarnessExecutor(ExecutorBase):
             conn,
             proc,
         ):
-            await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
-            sess = await conn.new_session(cwd=cwd)
-            await self._maybe_switch_to_permissive_mode(conn, sess)
-
+            # Start draining before `initialize`: a harness that dies during
+            # the handshake (not authenticated, wrong version) writes its
+            # only explanation to stderr on the way out.
+            drain = (
+                asyncio.create_task(_drain_agent_stderr(proc.stderr, agent_stderr))
+                if proc.stderr is not None
+                else None
+            )
             try:
+                await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
+                sess = await conn.new_session(cwd=cwd)
+                await self._maybe_switch_to_permissive_mode(conn, sess)
+
                 if not interactive:
                     return await self._run_single_turn(
                         conn, sess.session_id, initial_prompt, client
@@ -580,6 +735,15 @@ class AcpHarnessExecutor(ExecutorBase):
                     conn, sess.session_id, initial_prompt, client
                 )
             finally:
+                if drain is not None:
+                    # A dead agent closes stderr, so the drain ends on its
+                    # own; the short wait lets those final lines land before
+                    # the transport tears the pipe down.
+                    with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+                        await asyncio.wait_for(
+                            asyncio.shield(drain), STDERR_DRAIN_GRACE_SECONDS
+                        )
+                    drain.cancel()
                 if sys.platform == "win32":
                     _close_proc_transports(proc)
 

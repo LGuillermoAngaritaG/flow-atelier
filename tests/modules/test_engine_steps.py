@@ -215,3 +215,108 @@ async def test_empty_steps_when_executor_returns_none(store) -> None:
     flow_id = await engine.run(conduit, {})
     logs = store.read_logs(flow_id)
     assert logs[0].steps == []
+
+
+class CancelMidTaskExecutor(ExecutorBase):
+    """Executor that emits live steps, then dies as a killed task would."""
+
+    async def execute(self, task, resolved_command, context):
+        """Emit two steps through ``ctx.on_step``, then raise CancelledError.
+
+        :param task: task definition being executed.
+        :param resolved_command: command string after template resolution.
+        :param context: flow context carrying the ``on_step`` hook.
+        """
+        import asyncio
+
+        await context.on_step(
+            IntermediateStep(kind=StepKind.thinking, text="halfway through")
+        )
+        await context.on_step(
+            IntermediateStep(kind=StepKind.tool_call, tool_name="Bash")
+        )
+        raise asyncio.CancelledError
+
+
+async def test_live_steps_survive_a_killed_task(store) -> None:
+    """A task killed mid-run leaves no LogEntry but keeps its step trace.
+
+    This is the whole point of steps.jsonl: `atelier stop` (or a crash) at
+    minute 18 of a 20-minute agent task used to discard everything the user
+    had just watched scroll by.
+
+    :param store: FilesystemStore fixture.
+    """
+    import asyncio
+
+    conduit = _conduit(
+        [
+            {
+                "name": "a",
+                "description": "d",
+                "task": "x",
+                "tool": "tool:bash",
+                "depends_on": [],
+            }
+        ]
+    )
+    captured: list[str] = []
+    engine = Engine({"tool:bash": CancelMidTaskExecutor()}, store)
+    with pytest.raises(asyncio.CancelledError):
+        await engine.run(conduit, {}, on_flow_started=captured.append)
+
+    flow_id = captured[0]
+    assert store.read_logs(flow_id) == [], "a killed task must not log an entry"
+
+    records, _ = store.read_steps(flow_id)
+    assert [r.step.kind for r in records] == [
+        StepKind.thinking,
+        StepKind.tool_call,
+    ]
+    assert records[0].step.text == "halfway through"
+    assert all(r.task == "a" and r.iteration == 1 for r in records)
+
+
+async def test_steps_are_persisted_as_they_arrive(store) -> None:
+    """Steps hit steps.jsonl before the task returns, not after.
+
+    :param store: FilesystemStore fixture.
+    """
+    seen: list[list] = []
+
+    class ObservingExecutor(ExecutorBase):
+        """Reads back steps.jsonl mid-task to prove the write already landed."""
+
+        async def execute(self, task, resolved_command, context):
+            """Persist a step, then read the store back before returning.
+
+            :param task: task definition being executed.
+            :param resolved_command: command string after template resolution.
+            :param context: flow context carrying the ``on_step`` hook.
+            """
+            await context.on_step(
+                IntermediateStep(kind=StepKind.thinking, text="mid-flight")
+            )
+            seen.append(store.read_steps(context.flow_id)[0])
+            return ExecutionResult(exit_code=0, output="done", stdout="done")
+
+    conduit = _conduit(
+        [
+            {
+                "name": "a",
+                "description": "d",
+                "task": "x",
+                "tool": "tool:bash",
+                "depends_on": [],
+            }
+        ]
+    )
+    engine = Engine({"tool:bash": ObservingExecutor()}, store)
+    flow_id = await engine.run(conduit, {})
+
+    # Visible mid-task, before any LogEntry existed.
+    assert len(seen[0]) == 1
+    assert seen[0][0].task == "a"
+    assert seen[0][0].step.text == "mid-flight"
+    # And still readable afterwards.
+    assert len(store.read_steps(flow_id)[0]) == 1

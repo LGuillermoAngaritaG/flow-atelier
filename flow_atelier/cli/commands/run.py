@@ -2,24 +2,117 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
+import time
 
 import typer
 import yaml
 from pydantic import ValidationError
 from rich.markup import escape
 
-from flow_atelier.cli._shared import _parse_inputs, _resolve_flow_id, console
+from flow_atelier.cli._shared import (
+    _parse_inputs,
+    _resolve_flow_id,
+    console,
+    mark_activity,
+    seconds_since_activity,
+)
 from flow_atelier.cli.main import app
 from flow_atelier.cli.rendering.render import (
     _render_orchestration_msg,
     format_conduit_error,
+    render_heartbeat,
     render_run_footer,
     render_task_event,
+    render_task_start,
 )
 from flow_atelier.core.atelier import Atelier
 from flow_atelier.schemas.flow import parse_flow_id
 from flow_atelier.schemas.log import TaskEvent
+from flow_atelier.schemas.progress import TaskStatus
+
+# How long the run stream must stay silent before the heartbeat speaks up.
+HEARTBEAT_SECONDS = 30.0
+
+# How often the heartbeat wakes to check for silence.
+_HEARTBEAT_TICK_SECONDS = 1.0
+
+
+class _RunningTasks:
+    """Tracks which tasks are in flight and since when, for the heartbeat.
+
+    ``on_task_starting`` fires once per task while task events fire once
+    per iteration, so a repeating task stays tracked until its final
+    iteration lands or it reaches a non-completed disposition.
+    """
+
+    def __init__(self) -> None:
+        """Initialize with no tasks in flight."""
+        self._started: dict[str, float] = {}
+        self.count = 0
+
+    def start(self, task_name: str) -> int:
+        """Record ``task_name`` as running and return its 1-based position.
+
+        :param task_name: name of the task entering the running state.
+        :returns: how many tasks have started so far this run.
+        """
+        self._started[task_name] = time.monotonic()
+        self.count += 1
+        return self.count
+
+    def finish(self, event: TaskEvent) -> None:
+        """Stop tracking ``event.task`` once it has no further iterations.
+
+        :param event: the task event just emitted.
+        """
+        still_looping = (
+            event.status == TaskStatus.completed and event.iteration < event.of
+        )
+        if not still_looping:
+            self._started.pop(event.task, None)
+
+    def elapsed(self) -> dict[str, float]:
+        """Return seconds elapsed for each in-flight task.
+
+        :returns: mapping of task name to seconds since it started.
+        """
+        now = time.monotonic()
+        return {name: now - started for name, started in self._started.items()}
+
+
+async def _with_heartbeat(coro, running: _RunningTasks):
+    """Await ``coro`` while emitting a periodic "still working" line.
+
+    The heartbeat only prints during genuine silence, so an actively
+    streaming run never sees it. Its job is the quiet stretches — an
+    ``npx`` cold start, a multi-minute tool call, a ``tool:bash`` task
+    that emits no steps — where the terminal is otherwise indistinguishable
+    from a hang.
+
+    :param coro: the engine coroutine to run.
+    :param running: tracker naming the in-flight tasks.
+    :returns: whatever ``coro`` returns.
+    """
+
+    async def _beat() -> None:
+        """Print a status line whenever the stream has been quiet too long."""
+        while True:
+            await asyncio.sleep(_HEARTBEAT_TICK_SECONDS)
+            if seconds_since_activity() >= HEARTBEAT_SECONDS:
+                console.print(render_heartbeat(running.elapsed()))
+                mark_activity()
+
+    beat = asyncio.create_task(_beat())
+    try:
+        return await coro
+    finally:
+        beat.cancel()
+        # Await the cancellation rather than leaving it to `asyncio.run`'s
+        # shutdown sweep, so the task is provably done before the loop closes.
+        with contextlib.suppress(asyncio.CancelledError):
+            await beat
 
 
 @app.command(
@@ -81,6 +174,12 @@ def run_cmd(
         # surface; resume_flow's own ValueError (e.g. "can only resume failed
         # or crashed flows") is unrelated and must keep its generic handling.
         resume_conduit = parse_flow_id(flow_id)[0]
+        # No `[i/total]` on resume. `_RunningTasks.count` numbers the tasks
+        # started *by this resume*, so pairing it with the conduit's full task
+        # count reads as "[1/5], just started" for a run that is finishing its
+        # last two tasks. Validate the conduit anyway — the error handling
+        # below is the point of the read.
+        total_tasks = 0
         try:
             atelier.store.read_conduit(resume_conduit)
         except FileNotFoundError:
@@ -94,26 +193,40 @@ def run_cmd(
         collected_events: list[TaskEvent] = []
         captured_flow_id: dict[str, str | None] = {"id": flow_id}
 
+        running = _RunningTasks()
+
         def _on_event(event: TaskEvent) -> None:
             collected_events.append(event)
+            running.finish(event)
+            mark_activity()
             render_task_event(event, console)
 
         def _on_started(fid: str) -> None:
             captured_flow_id["id"] = fid
 
         def _on_task_starting(task_name: str, tool: str) -> None:
-            console.print(_render_orchestration_msg(f'resuming task "{task_name}" [{tool}]'))
+            index = running.start(task_name)
+            mark_activity()
+            console.print()
+            console.print(
+                render_task_start(
+                    task_name, tool, index, total_tasks, verb="resuming"
+                )
+            )
 
         console.print(_render_orchestration_msg(f'resuming flow {flow_id}'))
         try:
             result_id = asyncio.run(
-                atelier.resume_flow(
-                    flow_id,
-                    on_task_event=_on_event,
-                    on_flow_started=_on_started,
-                    on_task_starting=_on_task_starting,
-                    show_steps=show_steps,
-                    stoppable=True,
+                _with_heartbeat(
+                    atelier.resume_flow(
+                        flow_id,
+                        on_task_event=_on_event,
+                        on_flow_started=_on_started,
+                        on_task_starting=_on_task_starting,
+                        show_steps=show_steps,
+                        stoppable=True,
+                    ),
+                    running,
                 )
             )
         except asyncio.CancelledError:
@@ -136,8 +249,9 @@ def run_cmd(
     if again_from is not None:
         flow_id = _resolve_flow_id(atelier, again_from)
         again_conduit = parse_flow_id(flow_id)[0]
+        total_tasks = 0
         try:
-            atelier.store.read_conduit(again_conduit)
+            total_tasks = len(atelier.store.read_conduit(again_conduit).tasks)
         except FileNotFoundError:
             pass
         except (yaml.YAMLError, ValidationError, ValueError) as exc:
@@ -149,9 +263,12 @@ def run_cmd(
         overrides = _parse_inputs(inputs_raw)
         collected_events = []
         captured_flow_id = {"id": None}
+        running = _RunningTasks()
 
         def _on_event(event: TaskEvent) -> None:
             collected_events.append(event)
+            running.finish(event)
+            mark_activity()
             render_task_event(event, console)
 
         def _on_started(fid: str) -> None:
@@ -159,19 +276,27 @@ def run_cmd(
             console.print(_render_orchestration_msg(f'starting flow {fid}'))
 
         def _on_task_starting(task_name: str, tool: str) -> None:
-            console.print(_render_orchestration_msg(f'running task "{task_name}" [{tool}]'))
+            index = running.start(task_name)
+            mark_activity()
+            console.print()
+            console.print(
+                render_task_start(task_name, tool, index, total_tasks)
+            )
 
         console.print(_render_orchestration_msg(f're-running flow {flow_id}'))
         try:
             result_id = asyncio.run(
-                atelier.rerun_flow(
-                    flow_id,
-                    overrides=overrides,
-                    on_task_event=_on_event,
-                    on_flow_started=_on_started,
-                    on_task_starting=_on_task_starting,
-                    show_steps=show_steps,
-                    stoppable=True,
+                _with_heartbeat(
+                    atelier.rerun_flow(
+                        flow_id,
+                        overrides=overrides,
+                        on_task_event=_on_event,
+                        on_flow_started=_on_started,
+                        on_task_starting=_on_task_starting,
+                        show_steps=show_steps,
+                        stoppable=True,
+                    ),
+                    running,
                 )
             )
         except asyncio.CancelledError:
@@ -247,6 +372,7 @@ def run_cmd(
 
     collected_events = []
     captured_flow_id = {"id": None}
+    running = _RunningTasks()
 
     def _on_event(event: TaskEvent) -> None:
         """Collect the task event and render it to the console.
@@ -254,6 +380,8 @@ def run_cmd(
         :param event: the emitted task event to record and display.
         """
         collected_events.append(event)
+        running.finish(event)
+        mark_activity()
         render_task_event(event, console)
 
     def _on_started(fid: str) -> None:
@@ -270,20 +398,28 @@ def run_cmd(
         :param task_name: name of the task starting.
         :param tool: tool identifier used to execute the task.
         """
-        console.print(_render_orchestration_msg(f'running task "{task_name}" [{tool}]'))
+        index = running.start(task_name)
+        mark_activity()
+        console.print()
+        console.print(
+            render_task_start(task_name, tool, index, len(conduit.tasks))
+        )
 
     console.print(_render_orchestration_msg(f'loading conduit "{conduit_name}"'))
 
     try:
         flow_id = asyncio.run(
-            atelier.run_conduit(
-                conduit_name,
-                inputs,
-                on_task_event=_on_event,
-                on_flow_started=_on_started,
-                on_task_starting=_on_task_starting,
-                show_steps=show_steps,
-                stoppable=True,
+            _with_heartbeat(
+                atelier.run_conduit(
+                    conduit_name,
+                    inputs,
+                    on_task_event=_on_event,
+                    on_flow_started=_on_started,
+                    on_task_starting=_on_task_starting,
+                    show_steps=show_steps,
+                    stoppable=True,
+                ),
+                running,
             )
         )
     except asyncio.CancelledError:
