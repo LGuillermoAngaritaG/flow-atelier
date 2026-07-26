@@ -15,7 +15,7 @@ from flow_atelier.core.atelier import Atelier
 from flow_atelier.core.settings import AtelierSettings
 from flow_atelier.schemas.api import ScheduledJob
 from flow_atelier.schemas.log import TaskEvent
-from flow_atelier.services.api.app import FastApiServer
+from flow_atelier.services.api.app import LOOPBACK_HOSTS, FastApiServer
 from flow_atelier.services.api.scheduler_bus import SchedulerEventBus
 from flow_atelier.services.scheduler import SchedulerDaemon, default_local_zone
 from flow_atelier.services.scheduler.store import ScheduleStore
@@ -60,11 +60,18 @@ def serve_cmd(
     )
 
     settings = AtelierSettings()
-    atelier = Atelier(base_dir=settings.global_atelier_dir)
+    global_schedule_store = ScheduleStore(settings.global_atelier_dir)
+
+    # Conduits and flows resolve exactly as they do for the CLI: project store
+    # (./.atelier) first, global store (~/.atelier) as fallback. Rooting the
+    # facade at the global dir instead would hide every conduit `atelier init`
+    # creates from the UI.
+    atelier = Atelier(settings=settings)
+    # Schedules are the one global resource — a single daemon spans projects —
+    # so the API writes to the same store the daemon below watches.
+    atelier.schedule_store = global_schedule_store
     bus = SchedulerEventBus()
     atelier.scheduler_bus = bus  # type: ignore[attr-defined]
-
-    global_schedule_store = ScheduleStore(settings.global_atelier_dir)
 
     async def _broadcasting_executor(
         job: ScheduledJob, working_dir: Path, report: Callable[[str], None]
@@ -80,7 +87,10 @@ def serve_cmd(
             "conduit_name": job.conduit_name,
             "run_path": str(working_dir),
         }
-        scheduled_atelier = Atelier(base_dir=settings.global_atelier_dir)
+        # Root the run at the job's own run_path, matching the daemon's default
+        # fire action (services/scheduler/runner.py) so a scheduled conduit
+        # resolves against the project it was scheduled for.
+        scheduled_atelier = Atelier(base_dir=working_dir / ".atelier")
         captured: dict[str, str | None] = {"flow_id": None}
         # Strong references for fire-and-forget broadcasts — the loop keeps
         # only a weak reference to a bare create_task, which can be GC'd
@@ -158,16 +168,33 @@ def serve_cmd(
         finally:
             await daemon.stop()
 
+    # Refuse rather than warn. This API runs shell commands, so an
+    # unauthenticated bind that anything but loopback can reach is a remote
+    # code execution surface, and `api_token` now defaults to empty — a
+    # printed warning scrolls past in the same second the port opens.
     if host not in ("127.0.0.1", "localhost", "::1") and not settings.api_token:
         console.print(
-            "[yellow]warning:[/yellow] serving on a non-loopback host without "
-            "ATELIER_API_TOKEN — anyone who can reach this address can run "
-            "shell commands via the API."
+            f"[red]error:[/red] refusing to serve on non-loopback host {host!r} "
+            "without ATELIER_API_TOKEN. Anyone who can reach this address could "
+            "run shell commands via the API. Set ATELIER_API_TOKEN, or bind "
+            "127.0.0.1 (the default)."
         )
+        raise typer.Exit(1)
+
+    # Pin the accepted Host header so a rebound DNS name cannot drive this API
+    # (see LOOPBACK_HOSTS). A wildcard bind can be reached under any number of
+    # names we cannot enumerate here, so it accepts all of them — safe only
+    # because the check above has already established that a wildcard bind
+    # carries a token.
+    wildcard_bind = host in ("0.0.0.0", "::", "")
+    allowed_hosts = ["*"] if wildcard_bind else sorted({host, *LOOPBACK_HOSTS})
 
     cors = list(cors_origin) if cors_origin else None
     api_app = FastApiServer().create_app(
-        atelier, cors_origins=cors, api_token=settings.api_token or None
+        atelier,
+        cors_origins=cors,
+        api_token=settings.api_token or None,
+        allowed_hosts=allowed_hosts,
     )
     api_app.router.lifespan_context = _lifespan
 

@@ -27,7 +27,7 @@ async def client(tmp_path, _isolate_global_atelier_dir):
     )
     app = FastApiServer().create_app(atelier)
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as c:
         yield c
 
 
@@ -270,3 +270,78 @@ async def test_open_path_refuses_unknown_path(client, monkeypatch):
     assert resp.status_code == 200
     assert resp.json() == {"opened": False}
     assert not calls
+
+
+async def test_conduit_reads_carry_a_default_run_path(client, tmp_path):
+    """Verify reads expose the server's working directory as `run_path`.
+
+    The UI requires a working directory before it will run anything, and only
+    the server knows where it was started; without this the field starts empty
+    and every user hand-types an absolute path.
+
+    :param client: httpx client fixture bound to the API.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    await client.post("/conduits", json=_payload())
+    expected = str(tmp_path)
+
+    listed = await client.get("/conduits")
+    fetched = await client.get("/conduits/release_notes")
+
+    assert listed.json()[0]["run_path"] == expected
+    assert fetched.json()["run_path"] == expected
+
+
+async def test_run_path_is_not_persisted_to_disk(client, tmp_path):
+    """Verify `run_path` stays response-only and never lands in conduit.yaml.
+
+    :param client: httpx client fixture bound to the API.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    await client.post("/conduits", json={**_payload(), "run_path": "/somewhere/else"})
+    on_disk = (tmp_path / ".atelier/conduits/release_notes/conduit.yaml").read_text()
+
+    assert "run_path" not in on_disk
+    assert (await client.get("/conduits/release_notes")).json()["run_path"] == str(tmp_path)
+
+
+async def test_patch_accepts_the_input_shape_reads_return(client):
+    """Verify a conduit read from the API can be PATCHed straight back.
+
+    The UI edits what GET returned, so the object form of `inputs`
+    ({description, default}) must be accepted on update — a string-only
+    annotation made every save fail with 422 for any conduit declaring inputs.
+
+    :param client: httpx client fixture bound to the API.
+    """
+    payload = {**_payload(), "inputs": {"repo_url": "The git repo URL"}}
+    await client.post("/conduits", json=payload)
+
+    fetched = (await client.get("/conduits/release_notes")).json()
+    assert fetched["inputs"]["repo_url"] == {
+        "description": "The git repo URL",
+        "default": None,
+    }
+
+    resp = await client.patch(
+        "/conduits/release_notes",
+        json={"description": "edited", "inputs": fetched["inputs"]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["inputs"]["repo_url"]["description"] == "The git repo URL"
+
+
+async def test_patch_still_accepts_the_string_shorthand(client):
+    """Verify the plain-string shorthand for inputs keeps working on update.
+
+    :param client: httpx client fixture bound to the API.
+    """
+    await client.post("/conduits", json=_payload())
+
+    resp = await client.patch(
+        "/conduits/release_notes", json={"inputs": {"branch": "Branch to deploy"}}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["inputs"]["branch"]["description"] == "Branch to deploy"

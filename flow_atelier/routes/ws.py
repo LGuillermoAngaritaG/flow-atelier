@@ -158,8 +158,12 @@ def _wire_atelier(
     :returns: the atelier, task-event callback, task-starting callback,
         and flow-started callback.
     """
+    # Inherit the connection's settings rather than re-rooting at the global
+    # dir: a run must resolve conduits from the same project+global stores that
+    # produced the ``GET /conduits`` list the client picked from. The per-flow
+    # Atelier exists only to own a flow-scoped prompt sink and HITL executor.
     atelier = Atelier(
-        base_dir=base_atelier.settings.global_atelier_dir,
+        settings=base_atelier.settings,
         prompt_sink=WsPromptSink(broker, flow_id),
     )
     broker.register_flow(flow_id)

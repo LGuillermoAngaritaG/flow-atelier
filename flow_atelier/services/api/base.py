@@ -20,6 +20,7 @@ class ApiServerBase(ABC):
         *,
         cors_origins: Iterable[str] | None = None,
         api_token: str | None = None,
+        allowed_hosts: Iterable[str] | None = None,
     ) -> FastAPI:
         """Return a configured :class:`FastAPI` instance.
 
@@ -28,6 +29,8 @@ class ApiServerBase(ABC):
             localhost-only origins
         :param api_token: bearer token required on every request when set;
             ``None`` disables auth (local trust)
+        :param allowed_hosts: accepted ``Host`` header values; ``None`` means
+            loopback only (blocks DNS rebinding)
         """
 
 

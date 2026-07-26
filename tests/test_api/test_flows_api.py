@@ -21,7 +21,7 @@ async def fixture(tmp_path, monkeypatch):
     app = FastApiServer().create_app(atelier)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
-        transport=transport, base_url="http://test", timeout=15.0
+        transport=transport, base_url="http://127.0.0.1", timeout=15.0
     ) as c:
         yield c, atelier
 

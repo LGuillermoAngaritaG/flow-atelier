@@ -81,7 +81,7 @@ def test_ws_happy_path_emits_started_log_and_complete(env, tmp_path):
     :param tmp_path: pytest temp directory fixture.
     """
     _, app = env
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1", headers={"host": "127.0.0.1"}) as client:
         with client.websocket_connect("/ws/run-conduit") as ws:
             ws.send_text(
                 json.dumps(
@@ -108,6 +108,45 @@ def test_ws_happy_path_emits_started_log_and_complete(env, tmp_path):
     )
 
 
+def test_ws_runs_a_project_scoped_conduit(tmp_path, monkeypatch):
+    """A conduit in the *project* store is runnable over the socket.
+
+    Regression guard: the per-flow Atelier used to be re-rooted at the global
+    dir, so anything under ``./.atelier/conduits`` — everything ``atelier
+    init`` and the Designer create — failed with "conduit not found".
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    monkeypatch.setenv(
+        "ATELIER_GLOBAL_ATELIER_DIR", str(tmp_path / ".atelier-global")
+    )
+    atelier = Atelier(base_dir=tmp_path / ".atelier")
+    project_conduit = atelier.store.base_dir / "conduits" / "hello"
+    project_conduit.mkdir(parents=True, exist_ok=True)
+    (project_conduit / "conduit.yaml").write_text(HELLO_YAML)
+    assert atelier.store.conduit_source("hello") == "project"
+
+    app = FastApiServer().create_app(atelier)
+    with TestClient(app, base_url="http://127.0.0.1", headers={"host": "127.0.0.1"}) as client:
+        with client.websocket_connect("/ws/run-conduit") as ws:
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "run",
+                        "conduit_name": "hello",
+                        "inputs": {},
+                        "run_path": str(tmp_path),
+                    }
+                )
+            )
+            envelopes = _drain_until(
+                ws, lambda e: e["type"] in ("flow_complete", "flow_failed")
+            )
+
+    assert envelopes[-1]["type"] == "flow_complete", envelopes[-1]
+
+
 def test_ws_hitl_round_trip_completes_after_answer(env, tmp_path):
     """Verify the WS hitl round-trip completes after an answer is sent.
 
@@ -115,7 +154,7 @@ def test_ws_hitl_round_trip_completes_after_answer(env, tmp_path):
     :param tmp_path: pytest temp directory fixture.
     """
     _, app = env
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1", headers={"host": "127.0.0.1"}) as client:
         with client.websocket_connect("/ws/run-conduit") as ws:
             ws.send_text(
                 json.dumps(
@@ -155,7 +194,7 @@ def test_ws_unknown_message_type_emits_error_envelope(env):
     :param env: env fixture providing (atelier, app).
     """
     _, app = env
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1", headers={"host": "127.0.0.1"}) as client:
         with client.websocket_connect("/ws/run-conduit") as ws:
             ws.send_text(json.dumps({"type": "explode", "flow_id": "T-3"}))
             envelope = json.loads(ws.receive_text())
@@ -169,7 +208,7 @@ def test_ws_run_unknown_conduit_emits_flow_failed(env, tmp_path):
     :param tmp_path: pytest temp directory fixture.
     """
     _, app = env
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1", headers={"host": "127.0.0.1"}) as client:
         with client.websocket_connect("/ws/run-conduit") as ws:
             ws.send_text(
                 json.dumps(
@@ -195,7 +234,7 @@ def test_ws_rejects_bad_token(env):
     """
     atelier, _ = env
     app = FastApiServer().create_app(atelier, api_token="s3cret")
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1", headers={"host": "127.0.0.1"}) as client:
         # The token check runs before accept(), so Starlette turns the
         # pre-accept close into a disconnect raised at connect time.
         with pytest.raises(WebSocketDisconnect) as missing:
@@ -217,7 +256,7 @@ def test_ws_accepts_valid_token(env, tmp_path):
     """
     atelier, _ = env
     app = FastApiServer().create_app(atelier, api_token="s3cret")
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1", headers={"host": "127.0.0.1"}) as client:
         with client.websocket_connect("/ws/run-conduit?token=s3cret") as ws:
             ws.send_text(
                 json.dumps(

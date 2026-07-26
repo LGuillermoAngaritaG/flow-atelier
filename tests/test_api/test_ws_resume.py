@@ -68,7 +68,7 @@ def test_ws_resume_emits_started_log_and_complete(env, tmp_path):
     :param tmp_path: pytest temp directory fixture.
     """
     _, app = env
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1", headers={"host": "127.0.0.1"}) as client:
         with client.websocket_connect("/ws/run-conduit") as ws:
             # Run a flow to completion first
             ws.send_text(
@@ -112,7 +112,7 @@ def test_ws_resume_unknown_flow_emits_flow_failed(env):
     :param env: env fixture providing (atelier, app).
     """
     _, app = env
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1", headers={"host": "127.0.0.1"}) as client:
         with client.websocket_connect("/ws/run-conduit") as ws:
             ws.send_text(
                 json.dumps(
