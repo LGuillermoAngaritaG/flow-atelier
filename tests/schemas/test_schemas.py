@@ -322,7 +322,50 @@ def test_new_harness_tool_strings_validate(tool_str):
             ],
         }
     )
-    assert c.tasks[0].tool.value == tool_str
+    assert c.tasks[0].tool == tool_str
+
+
+def _task_with_tool(tool_str: str) -> dict:
+    """Build a minimal conduit payload whose single task uses ``tool_str``.
+
+    :param tool_str: the tool identifier to put on the task.
+    """
+    return {
+        "name": "x",
+        "description": "d",
+        "tasks": [
+            {"t": {"description": "d", "task": "hi", "tool": tool_str, "depends_on": []}}
+        ],
+    }
+
+
+def test_unbundled_harness_name_validates():
+    """An ACP agent the code has never heard of is a legal tool identifier.
+
+    Harnesses are config (ATELIER_HARNESSES), so the schema checks the shape
+    of the name only; whether one is registered is Atelier.tool_readiness's
+    call.
+    """
+    c = Conduit.model_validate(_task_with_tool("harness:gemini"))
+    assert c.tasks[0].tool == "harness:gemini"
+
+
+@pytest.mark.parametrize(
+    "tool_str",
+    [
+        "tool:rm-rf",       # tool:* executors are code — closed set
+        "harness:",         # no name
+        "harness:My Agent", # uppercase and a space
+        "claude",           # missing the namespace prefix
+    ],
+)
+def test_malformed_tool_is_rejected(tool_str):
+    """Verify a tool identifier outside both grammars fails validation.
+
+    :param tool_str: parametrized malformed identifier under test.
+    """
+    with pytest.raises(ValueError, match="invalid tool"):
+        Conduit.model_validate(_task_with_tool(tool_str))
 
 
 def test_repeat_must_be_positive():

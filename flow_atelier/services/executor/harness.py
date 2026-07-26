@@ -1,13 +1,14 @@
-"""Harness executors — five ACP-speaking coding agents.
+"""Harness executor — drives any ACP-speaking coding agent.
 
-Each harness is a thin :class:`AcpHarnessExecutor` subclass differing only
-in its ``launch_cmd``. Each reuses the host CLI's own config and auth.
+One executor covers every agent; they differ only in the argv that starts
+them and, occasionally, an environment variable or two. Those come from
+:mod:`flow_atelier.services.executor.acp_registry`, so ``harness:gemini``
+and ``harness:claude-code`` are the same code path with different data.
 
-- ``harness:claude-code`` → ``@agentclientprotocol/claude-agent-acp`` via ``npx``
-- ``harness:codex``       → ``@zed-industries/codex-acp`` via ``npx``
-- ``harness:opencode``    → ``opencode acp`` (native ACP)
-- ``harness:copilot``     → ``copilot --acp`` (GitHub Copilot CLI, native ACP)
-- ``harness:cursor``      → ``@blowmage/cursor-agent-acp`` via ``npx``
+Each agent runs as the user's own installed, logged-in CLI: flow-atelier
+spawns the command it was given and never installs or authenticates
+anything itself. :meth:`AcpHarnessExecutor.probe` reports which of those
+two the user still has to do.
 
 Non-interactive mode sends one prompt turn and returns whatever the agent
 streams before ``stop_reason``. Interactive mode keeps the session open
@@ -27,10 +28,12 @@ import shutil
 import sys
 from collections import deque
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import acp
+from acp.connection import StreamDirection, StreamEvent
 from acp.schema import (
     AgentMessageChunk,
     AgentThoughtChunk,
@@ -103,6 +106,82 @@ AGENT_STDERR_LINES = 50
 # Grace period for the stderr drain to pick up an agent's dying words
 # before the transport tears the pipe down.
 STDERR_DRAIN_GRACE_SECONDS = 0.5
+
+# Bound on waiting for a turn's session-update handlers to finish. Reached
+# only if a notification is lost, in which case a run must not stall until
+# the task timeout fires.
+UPDATE_DRAIN_TIMEOUT_SECONDS = 5.0
+
+# Budget for a connection check. Generous: the first run of an
+# npx/uvx-distributed agent downloads the package before it says anything.
+PROBE_TIMEOUT_SECONDS = 90.0
+
+
+@dataclass
+class ProbeResult:
+    """Outcome of a harness connection check.
+
+    :param ok: whether the agent is reachable and completed the handshake.
+    :param stage: how far the check got — ``path``, ``spawn``, ``initialize``,
+        ``handshake`` (timed out), ``session``, or ``ok``.
+    :param detail: one-line human explanation of ``stage``.
+    :param agent: the agent's self-reported name and version, when it got
+        far enough to send one.
+    :param protocol_version: the ACP version the agent negotiated.
+    :param auth_methods: auth method ids the agent advertises. Reported only
+        — logging in is the user's job, done with the agent's own CLI.
+    :param modes: session mode ids the agent offers.
+    :param permissive_mode: the mode a real run would switch to, if any.
+    :param stderr: tail of the agent's stderr, the usual place a failing
+        agent explains itself.
+    """
+
+    ok: bool
+    stage: str
+    detail: str
+    agent: str = ""
+    protocol_version: int | None = None
+    auth_methods: list[str] = field(default_factory=list)
+    modes: list[str] = field(default_factory=list)
+    permissive_mode: str = ""
+    stderr: str = ""
+
+
+class _ProbeClient:
+    """ACP client for a connection check: accepts everything, does nothing.
+
+    A probe never sends a prompt, so the agent has no reason to call back.
+    Permission requests are denied rather than auto-approved: a check must
+    not authorize an agent to touch anything.
+    """
+
+    async def session_update(self, *args: Any, **kwargs: Any) -> None:
+        """Ignore a session update.
+
+        :param args: ignored positional ACP arguments.
+        :param kwargs: ignored keyword ACP arguments.
+        """
+        del args, kwargs
+        return None
+
+    async def request_permission(
+        self, *args: Any, **kwargs: Any
+    ) -> RequestPermissionResponse:
+        """Refuse any permission request raised during a check.
+
+        :param args: ignored positional ACP arguments.
+        :param kwargs: ignored keyword ACP arguments.
+        :returns: a cancelled :class:`DeniedOutcome`.
+        """
+        del args, kwargs
+        return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
+
+    def on_connect(self, conn: Any) -> None:
+        """Record the connection handed over on attach.
+
+        :param conn: the ACP connection.
+        """
+        self._conn = conn
 
 
 async def _drain_agent_stderr(stream, sink: deque[str]) -> None:
@@ -196,24 +275,6 @@ def _pick_permissive_mode(state: SessionModeState | None) -> str | None:
                 return mode.id
     return None
 
-CLAUDE_ACP_LAUNCH = [
-    "npx",
-    "-y",
-    "@agentclientprotocol/claude-agent-acp@0.52.0",
-]
-CODEX_ACP_LAUNCH = [
-    "npx",
-    "-y",
-    "@zed-industries/codex-acp@0.16.0",
-]
-OPENCODE_ACP_LAUNCH = ["opencode", "acp"]
-COPILOT_ACP_LAUNCH = ["copilot", "--acp"]
-CURSOR_ACP_LAUNCH = [
-    "npx",
-    "-y",
-    "@blowmage/cursor-agent-acp@0.7.1",
-]
-
 
 def build_interactive_suffix(marker: str) -> str:
     """Return the trailing instruction appended to interactive prompts.
@@ -259,8 +320,10 @@ class _BufferingClient:
     """ACP :class:`acp.Client` that buffers agent output and routes user I/O.
 
     Agent message chunks are appended to ``buffer`` and mirrored to the
-    :class:`PromptSink`. Tool-permission requests are presented to the sink;
-    the selected option id is returned as an :class:`AllowedOutcome`.
+    :class:`PromptSink`. Tool-permission requests are answered here, never
+    delegated to the sink: runs are unattended, so the session is switched
+    into the agent's most permissive mode up front and this is only the
+    backstop for an agent that asks anyway.
 
     The harness capabilities default to "no filesystem, no terminal" so the
     agent should not call the file/terminal methods — if it does, they raise
@@ -318,6 +381,13 @@ class _BufferingClient:
         # the agent reported, if any. Both UNSTABLE/optional in ACP.
         self.usage: Usage | None = None
         self.cost: float | None = None
+        # Session updates seen on the wire vs. handled, so a turn can wait
+        # for its own notifications. See :meth:`await_pending_updates`.
+        self._updates_received = 0
+        self._updates_handled = 0
+        self._updates_idle = asyncio.Event()
+        # One handler at a time: notifications arrive as independent tasks.
+        self._dispatch_lock = asyncio.Lock()
 
     async def _record(self, step: IntermediateStep) -> None:
         """Buffer ``step``, persist it, and mirror it to the sink.
@@ -386,14 +456,89 @@ class _BufferingClient:
         if hasattr(self._sink, "flush_steps"):
             await self._sink.flush_steps()
 
+    def observe(self, event: StreamEvent) -> None:
+        """Count ``session/update`` notifications as they arrive off the wire.
+
+        Registered as an ACP stream observer, which the library invokes
+        synchronously from its receive loop, in message order, before the
+        notification is queued. That makes this a reliable count of the
+        updates a turn produced — see :meth:`await_pending_updates`.
+
+        :param event: the raw JSON-RPC message event from the connection.
+        """
+        if (
+            event.direction is StreamDirection.INCOMING
+            and event.message.get("method") == "session/update"
+        ):
+            self._updates_received += 1
+
+    async def await_pending_updates(
+        self, timeout: float = UPDATE_DRAIN_TIMEOUT_SECONDS
+    ) -> None:
+        """Wait until every observed session update has been handled.
+
+        The agent streams ``session/update`` notifications and then the
+        ``prompt`` response. The response resolves ``conn.prompt`` directly,
+        while each notification is dispatched as its own background task. So
+        when ``conn.prompt`` returns, the handlers for the final chunks may
+        still be queued or in flight, and reading the buffer then can drop
+        the last chunk.
+
+        Because the receive loop notifies observers in order and before
+        queueing, everything counted by :meth:`observe` when ``prompt``
+        returns belongs to the turn that just ended; waiting for the handled
+        count to catch up is therefore sufficient and needs no access to the
+        library's internals. ``session_update`` counts in a ``finally``, so
+        a handler that raises still advances the count.
+
+        :param timeout: seconds to wait before giving up. A bound, not an
+            expectation: it only stops a lost notification from stalling the
+            run until the task timeout fires.
+        """
+        while self._updates_handled < self._updates_received:
+            # No await between the check and the clear, so a handler cannot
+            # slip in and have its set() discarded here.
+            self._updates_idle.clear()
+            try:
+                await asyncio.wait_for(self._updates_idle.wait(), timeout)
+            except TimeoutError:
+                logger.debug(
+                    "gave up waiting for %d session updates",
+                    self._updates_received - self._updates_handled,
+                )
+                return
+
     async def session_update(self, session_id: str, update, **kwargs) -> None:
         """Handle a session update notification from the ACP agent.
+
+        Serialized: the ACP dispatcher runs every notification as its own
+        task, so without a lock two handlers interleave at their first await
+        and can reorder what they emit — a thinking flush landing between a
+        message chunk and its own flush, say. Handlers are started in receive
+        order, so taking the lock immediately preserves that order end to end.
+
+        Counts the update as handled on the way out, whatever happens, so
+        :meth:`await_pending_updates` can never wait on a handler that has
+        already given up.
 
         :param session_id: id of the session emitting the update (unused).
         :param update: the ACP update payload (message chunk, tool call, etc.).
         :param kwargs: additional ACP fields (unused).
         """
+        try:
+            async with self._dispatch_lock:
+                await self._dispatch_update(update)
+        finally:
+            self._updates_handled += 1
+            if self._updates_handled >= self._updates_received:
+                self._updates_idle.set()
         del session_id, kwargs
+
+    async def _dispatch_update(self, update) -> None:
+        """Route one session update to the right buffer or step.
+
+        :param update: the ACP update payload (message chunk, tool call, etc.).
+        """
         if isinstance(update, AgentMessageChunk):
             await self._flush_thinking()
             content = update.content
@@ -583,6 +728,8 @@ class AcpHarnessExecutor(ExecutorBase):
         ``["npx", "-y", "@agentclientprotocol/claude-agent-acp"]``)
     :param sink: :class:`PromptSink` for user I/O and permission requests
     :param done_marker: substring that terminates an interactive loop
+    :param env: extra environment variables for the agent process, layered
+        over the inherited environment
     """
 
     def __init__(
@@ -590,6 +737,7 @@ class AcpHarnessExecutor(ExecutorBase):
         launch_cmd: list[str],
         sink: PromptSink | None = None,
         done_marker: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
         """Initialize the harness executor.
 
@@ -598,12 +746,28 @@ class AcpHarnessExecutor(ExecutorBase):
             :class:`TerminalPromptSink`.
         :param done_marker: optional done-token override; defaults to
             :data:`DEFAULT_DONE_MARKER`.
+        :param env: optional extra environment variables for the agent.
         """
         if not launch_cmd:
             raise ValueError("launch_cmd must not be empty")
         self.launch_cmd = list(launch_cmd)
         self.sink = sink if sink is not None else TerminalPromptSink()
         self.done_marker = done_marker or DEFAULT_DONE_MARKER
+        self.env = dict(env or {})
+
+    def _spawn_env(self) -> dict[str, str]:
+        """Build the environment the agent subprocess runs with.
+
+        The ACP transport does not inherit our environment: left to itself it
+        hands the agent a trimmed set (HOME, PATH, SHELL, TERM, USER, LOGNAME)
+        and drops everything else. That silently breaks agents behind a proxy
+        or custom CA, agents authenticated by API key or cloud provider, and
+        any ``git push`` the agent tries (no ``SSH_AUTH_SOCK``). Pass the real
+        environment, then layer the agent's own variables on top.
+
+        :returns: the environment mapping for the agent process.
+        """
+        return {**os.environ, **self.env}
 
     def is_available(self) -> tuple[bool, str]:
         """Probe whether the harness's launch binary is on PATH.
@@ -619,6 +783,112 @@ class AcpHarnessExecutor(ExecutorBase):
         if shutil.which(binary) is None:
             return (False, f"`{binary}` not found on PATH")
         return (True, "")
+
+    async def probe(
+        self, cwd: str | None = None, timeout: float = PROBE_TIMEOUT_SECONDS
+    ) -> ProbeResult:
+        """Check that this harness's command starts and speaks ACP.
+
+        Spawns the agent, completes the ``initialize`` handshake and opens a
+        session, then stops. No prompt is sent, so the check costs no tokens.
+        Opening the session is the point: it is the step that fails when the
+        user has not logged in to the agent's own CLI, which is precisely the
+        setup flow-atelier reports but never performs.
+
+        :param cwd: working directory for the agent; defaults to the process cwd.
+        :param timeout: seconds to allow for the whole handshake. Generous by
+            default because an npx-distributed agent may be fetching itself.
+        :returns: a :class:`ProbeResult` describing how far the check got.
+        """
+        ready, reason = self.is_available()
+        if not ready:
+            return ProbeResult(ok=False, stage="path", detail=reason)
+        agent_stderr: deque[str] = deque(maxlen=AGENT_STDERR_LINES)
+        target = cwd or str(Path.cwd())
+        try:
+            result = await asyncio.wait_for(
+                self._probe(target, agent_stderr), timeout=timeout
+            )
+        except TimeoutError:
+            result = ProbeResult(
+                ok=False,
+                stage="handshake",
+                detail=f"no ACP handshake within {timeout:.0f}s",
+            )
+        except Exception as exc:  # noqa: BLE001 — any spawn failure is a result
+            result = ProbeResult(
+                ok=False, stage="spawn", detail=f"{type(exc).__name__}: {exc}"
+            )
+        result.stderr = "\n".join(agent_stderr)
+        return result
+
+    async def _probe(self, cwd: str, agent_stderr: deque[str]) -> ProbeResult:
+        """Run the handshake half of :meth:`probe`.
+
+        :param cwd: working directory for the agent process.
+        :param agent_stderr: bounded deque the agent's stderr is drained into.
+        :returns: a :class:`ProbeResult` for the handshake.
+        """
+        cmd, *args = self.launch_cmd
+        cmd = _resolve_cmd(cmd)
+        async with acp.spawn_agent_process(
+            _ProbeClient(),
+            cmd,
+            *args,
+            cwd=cwd,
+            env=self._spawn_env(),
+            transport_kwargs={"limit": 8 * 1024 * 1024},
+        ) as (conn, proc):
+            drain = (
+                asyncio.create_task(_drain_agent_stderr(proc.stderr, agent_stderr))
+                if proc.stderr is not None
+                else None
+            )
+            try:
+                try:
+                    init = await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
+                except Exception as exc:  # noqa: BLE001
+                    return ProbeResult(
+                        ok=False,
+                        stage="initialize",
+                        detail=(
+                            f"started, but did not complete the ACP handshake "
+                            f"({type(exc).__name__}: {exc})"
+                        ),
+                    )
+                info = getattr(init, "agent_info", None)
+                partial = ProbeResult(
+                    ok=False,
+                    stage="session",
+                    detail="",
+                    agent=f"{info.name} {info.version}".strip() if info else "",
+                    protocol_version=init.protocol_version,
+                    auth_methods=[m.id for m in (init.auth_methods or [])],
+                )
+                try:
+                    sess = await conn.new_session(cwd=cwd)
+                except Exception as exc:  # noqa: BLE001
+                    partial.detail = (
+                        f"speaks ACP, but could not open a session "
+                        f"({type(exc).__name__}: {exc})"
+                    )
+                    return partial
+                modes = getattr(sess, "modes", None)
+                partial.ok = True
+                partial.stage = "ok"
+                partial.detail = "reachable and ACP-compatible"
+                partial.modes = [m.id for m in (modes.available_modes if modes else [])]
+                partial.permissive_mode = _pick_permissive_mode(modes) or ""
+                return partial
+            finally:
+                if drain is not None:
+                    with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+                        await asyncio.wait_for(
+                            asyncio.shield(drain), STDERR_DRAIN_GRACE_SECONDS
+                        )
+                    drain.cancel()
+                if sys.platform == "win32":
+                    _close_proc_transports(proc)
 
     async def execute(
         self,
@@ -637,7 +907,10 @@ class AcpHarnessExecutor(ExecutorBase):
         if task.interactive:
             prompt_text = prompt_text + build_interactive_suffix(self.done_marker)
 
-        cwd = str(context.working_dir) if context.working_dir else str(Path.cwd())
+        # Absolute: ACP agents reject a relative `cwd` outright ("`cwd` must be
+        # an absolute path"), and a relative --path or schedule run_path would
+        # otherwise fail the whole task at session/new.
+        cwd = str(Path(context.working_dir).resolve()) if context.working_dir else str(Path.cwd())
         client = _BufferingClient(
             self.sink,
             stream_messages=task.interactive,
@@ -709,7 +982,11 @@ class AcpHarnessExecutor(ExecutorBase):
             cmd,
             *args,
             cwd=cwd,
+            env=self._spawn_env(),
             transport_kwargs={"limit": 8 * 1024 * 1024},
+            # Public stream-observer hook: lets the client count the session
+            # updates a turn produced so it can wait for its own handlers.
+            observers=[client.observe],
         ) as (
             conn,
             proc,
@@ -794,47 +1071,9 @@ class AcpHarnessExecutor(ExecutorBase):
         )
         if resp.usage is not None:
             client.usage = resp.usage
-        await self._drain_pending_notifications(conn)
+        await client.await_pending_updates()
         await client.flush_pending()
         return self._result_for_turn(client, resp.stop_reason)
-
-    @staticmethod
-    async def _drain_pending_notifications(conn) -> None:
-        """Deterministically wait for all session-update handlers to finish.
-
-        The agent streams ``session/update`` notifications and then the
-        ``prompt`` response. The response resolves ``conn.prompt`` directly,
-        bypassing the notification queue, while each notification is consumed
-        from that queue and run as a background task by the ACP dispatcher. So
-        when ``conn.prompt`` returns, the handlers for the final chunks may
-        still be queued or in flight, and a buffer-stability poll can sample
-        the buffer before they land and drop the last chunk.
-
-        Instead of guessing with a timing window we drain deterministically:
-        ``queue.join()`` blocks until every notification received before the
-        response has had its handler task spawned, then we await those handler
-        tasks so their buffer writes are guaranteed complete.
-
-        Reaches into the low-level :class:`acp.Connection` (``conn._conn``) and
-        its dispatcher's queue/supervisor because the library exposes no public
-        drain hook. Degrades to a no-op if that internal shape ever changes.
-
-        :param conn: the active ACP client-side connection.
-        """
-        connection = getattr(conn, "_conn", None)
-        queue = getattr(connection, "_queue", None)
-        supervisor = getattr(connection, "_tasks", None)
-        if queue is None or supervisor is None:
-            logger.debug("ACP connection lacks queue/supervisor; skipping drain")
-            return
-        await queue.join()
-        pending = [
-            task
-            for task in list(getattr(supervisor, "_tasks", ()))
-            if task.get_name() == "acp.Dispatcher.notification" and not task.done()
-        ]
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
 
     async def _run_interactive(
         self,
@@ -869,7 +1108,7 @@ class AcpHarnessExecutor(ExecutorBase):
             # final non-null value wins rather than summing per-turn deltas.
             if resp.usage is not None:
                 client.usage = resp.usage
-            await self._drain_pending_notifications(conn)
+            await client.await_pending_updates()
             await client.flush_pending()
             last_stop = resp.stop_reason
             buffer_text = "".join(client.buffer)
@@ -969,119 +1208,4 @@ class AcpHarnessExecutor(ExecutorBase):
             output=output,
             steps=client.steps,
             usage=usage,
-        )
-
-
-class ClaudeHarness(AcpHarnessExecutor):
-    """`harness:claude-code` — drives ``@agentclientprotocol/claude-agent-acp``."""
-
-    def __init__(
-        self,
-        sink: PromptSink | None = None,
-        launch_cmd: list[str] | None = None,
-        done_marker: str | None = None,
-    ) -> None:
-        """Initialize the Claude Code harness.
-
-        :param sink: optional :class:`PromptSink` for user I/O.
-        :param launch_cmd: optional argv override; defaults to
-            :data:`CLAUDE_ACP_LAUNCH`.
-        :param done_marker: optional done-token override.
-        """
-        super().__init__(
-            launch_cmd=launch_cmd or list(CLAUDE_ACP_LAUNCH),
-            sink=sink,
-            done_marker=done_marker,
-        )
-
-
-class CodexHarness(AcpHarnessExecutor):
-    """`harness:codex` — drives ``@zed-industries/codex-acp``."""
-
-    def __init__(
-        self,
-        sink: PromptSink | None = None,
-        launch_cmd: list[str] | None = None,
-        done_marker: str | None = None,
-    ) -> None:
-        """Initialize the Codex harness.
-
-        :param sink: optional :class:`PromptSink` for user I/O.
-        :param launch_cmd: optional argv override; defaults to
-            :data:`CODEX_ACP_LAUNCH`.
-        :param done_marker: optional done-token override.
-        """
-        super().__init__(
-            launch_cmd=launch_cmd or list(CODEX_ACP_LAUNCH),
-            sink=sink,
-            done_marker=done_marker,
-        )
-
-
-class OpencodeHarness(AcpHarnessExecutor):
-    """`harness:opencode` — drives ``opencode acp`` (native ACP)."""
-
-    def __init__(
-        self,
-        sink: PromptSink | None = None,
-        launch_cmd: list[str] | None = None,
-        done_marker: str | None = None,
-    ) -> None:
-        """Initialize the opencode harness.
-
-        :param sink: optional :class:`PromptSink` for user I/O.
-        :param launch_cmd: optional argv override; defaults to
-            :data:`OPENCODE_ACP_LAUNCH`.
-        :param done_marker: optional done-token override.
-        """
-        super().__init__(
-            launch_cmd=launch_cmd or list(OPENCODE_ACP_LAUNCH),
-            sink=sink,
-            done_marker=done_marker,
-        )
-
-
-class CopilotHarness(AcpHarnessExecutor):
-    """`harness:copilot` — drives ``copilot --acp`` (GitHub Copilot CLI)."""
-
-    def __init__(
-        self,
-        sink: PromptSink | None = None,
-        launch_cmd: list[str] | None = None,
-        done_marker: str | None = None,
-    ) -> None:
-        """Initialize the Copilot CLI harness.
-
-        :param sink: optional :class:`PromptSink` for user I/O.
-        :param launch_cmd: optional argv override; defaults to
-            :data:`COPILOT_ACP_LAUNCH`.
-        :param done_marker: optional done-token override.
-        """
-        super().__init__(
-            launch_cmd=launch_cmd or list(COPILOT_ACP_LAUNCH),
-            sink=sink,
-            done_marker=done_marker,
-        )
-
-
-class CursorHarness(AcpHarnessExecutor):
-    """`harness:cursor` — drives the ``@blowmage/cursor-agent-acp`` adapter via npx."""
-
-    def __init__(
-        self,
-        sink: PromptSink | None = None,
-        launch_cmd: list[str] | None = None,
-        done_marker: str | None = None,
-    ) -> None:
-        """Initialize the Cursor harness.
-
-        :param sink: optional :class:`PromptSink` for user I/O.
-        :param launch_cmd: optional argv override; defaults to
-            :data:`CURSOR_ACP_LAUNCH`.
-        :param done_marker: optional done-token override.
-        """
-        super().__init__(
-            launch_cmd=launch_cmd or list(CURSOR_ACP_LAUNCH),
-            sink=sink,
-            done_marker=done_marker,
         )

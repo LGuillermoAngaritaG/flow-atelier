@@ -1,6 +1,6 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { ToolType } from "@/types/conduit";
-import { TOOL_COLORS } from "@/constants/tools";
+import { toolColor } from "@/constants/tools";
 import { Repeat } from "lucide-react";
 import { cn } from "@lib/cn";
 
@@ -34,7 +34,7 @@ export function TaskNode({ data, selected }: NodeProps) {
       <div className="px-3 py-2">
         <span
           className="font-mono text-micro uppercase tracking-[0.14em]"
-          style={{ color: TOOL_COLORS[d.tool] }}
+          style={{ color: toolColor(d.tool) }}
           data-testid="n-tool"
         >
           {d.tool}

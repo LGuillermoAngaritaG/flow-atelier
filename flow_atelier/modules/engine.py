@@ -484,7 +484,7 @@ class Engine:
                 TaskEvent(
                     flow_id=flow_id,
                     task=t.name,
-                    tool=t.tool.value,
+                    tool=t.tool,
                     iteration=iteration,
                     of=t.repeat,
                     exit_code=result.exit_code,
@@ -513,7 +513,7 @@ class Engine:
                 TaskEvent(
                     flow_id=flow_id,
                     task=t.name,
-                    tool=t.tool.value,
+                    tool=t.tool,
                     of=t.repeat,
                     success=False,
                     status=status,
@@ -559,7 +559,7 @@ class Engine:
             self.store.write_progress(flow_id, progress)
             if iteration == start_iteration and on_task_starting is not None:
                 try:
-                    on_task_starting(name, task_map[name].tool.value)
+                    on_task_starting(name, task_map[name].tool)
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -648,9 +648,9 @@ class Engine:
                         failure_error = ValueError(f"task {t.name!r}: {reason}")
                     return
 
-                executor = self.executors.get(t.tool.value)
+                executor = self.executors.get(t.tool)
                 if executor is None:
-                    reason = f"no executor registered for tool {t.tool.value!r}"
+                    reason = f"no executor registered for tool {t.tool!r}"
                     mark_failed(t.name, reason)
                     if not failed:
                         failed = True
@@ -722,7 +722,7 @@ class Engine:
                 # HITL waits on a human: it must not hold a concurrency
                 # slot (starving parallel-ready tasks) nor be killed by
                 # the backstop timeout while the user is away.
-                is_hitl = t.tool.value == ToolType.hitl.value
+                is_hitl = t.tool == ToolType.hitl
 
                 async with (contextlib.nullcontext() if is_hitl else semaphore):
                     last_output = ""
@@ -797,7 +797,7 @@ class Engine:
                                 flow_id,
                                 LogEntry(
                                     task=t.name,
-                                    tool=t.tool.value,
+                                    tool=t.tool,
                                     iteration=iteration,
                                     of=t.repeat,
                                     command=resolved,

@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sys
-import types
 from pathlib import Path
 from typing import Any
+
+from acp.connection import StreamDirection, StreamEvent
+from acp.schema import AgentMessageChunk, TextContentBlock
 
 from flow_atelier.schemas.conduit import TaskDefinition, ToolType
 from flow_atelier.services.executor.base import FlowContext
@@ -14,14 +17,8 @@ from flow_atelier.services.executor.harness import (
     AGENT_STDERR_LINES,
     DEFAULT_DONE_MARKER,
     AcpHarnessExecutor,
-    ClaudeHarness,
-    CodexHarness,
-    CopilotHarness,
-    CursorHarness,
-    OpencodeHarness,
     build_interactive_suffix,
 )
-from flow_atelier.services.executor.prompt_sink import PermissionOption
 
 FAKE_AGENT = Path(__file__).resolve().parents[2] / "fixtures" / "fake_acp_agent.py"
 
@@ -104,10 +101,13 @@ class RecordingSink:
             raise EOFError("no more scripted replies")
         return self._replies.pop(0)
 
-    async def request_permission(
-        self, summary: str, options: list[PermissionOption]
-    ) -> str:
-        """Return the configured permission choice, or the first option.
+    async def request_permission(self, summary, options):
+        """Canary: nothing in production may route permissions to a sink.
+
+        :class:`PromptSink` deliberately has no permission method — the
+        harness answers `session/request_permission` itself. This records
+        any call so the `perm_log == []` assertions stay meaningful instead
+        of passing vacuously.
 
         :param summary: human-readable permission summary.
         :param options: available permission options.
@@ -659,62 +659,56 @@ class TestInteractive:
         assert "[mode_set:" not in result.output
 
 
-class TestPreset:
-    def test_claude_harness_default_launch_cmd(self) -> None:
-        """Verify ClaudeHarness uses the claude-agent-acp launch command."""
-        h = ClaudeHarness(sink=RecordingSink())
-        assert "claude-agent-acp" in " ".join(h.launch_cmd)
+class TestSpawnEnvironment:
+    def test_parent_environment_is_inherited(self, monkeypatch) -> None:
+        """The agent must see our environment, not the transport's trimmed set.
 
-    def test_claude_harness_override_launch_cmd(self) -> None:
-        """Verify ClaudeHarness honors an explicit launch_cmd override."""
-        h = ClaudeHarness(sink=RecordingSink(), launch_cmd=["foo", "bar"])
-        assert h.launch_cmd == ["foo", "bar"]
+        Without this the ACP transport hands the agent only HOME/PATH/SHELL/
+        TERM/USER/LOGNAME, silently breaking proxies, custom CAs, API-key auth
+        and any `git push` the agent attempts (no SSH_AUTH_SOCK).
 
-    def test_codex_harness_default_launch_cmd(self) -> None:
-        """Verify CodexHarness uses the codex-acp launch command."""
-        h = CodexHarness(sink=RecordingSink())
-        assert "codex-acp" in " ".join(h.launch_cmd)
+        :param monkeypatch: pytest monkeypatch fixture.
+        """
+        monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
+        env = AcpHarnessExecutor(launch_cmd=["x"], sink=RecordingSink())._spawn_env()
+        assert env["SSH_AUTH_SOCK"] == "/tmp/agent.sock"
 
-    def test_opencode_harness_default_launch_cmd(self) -> None:
-        """Verify OpencodeHarness uses the opencode acp launch command."""
-        h = OpencodeHarness(sink=RecordingSink())
-        assert h.launch_cmd == ["opencode", "acp"]
+    def test_agent_env_overrides_the_inherited_value(self, monkeypatch) -> None:
+        """A harness's own env wins over the same name in our environment.
 
-    def test_opencode_harness_override_launch_cmd(self) -> None:
-        """Verify OpencodeHarness honors an explicit launch_cmd override."""
-        h = OpencodeHarness(sink=RecordingSink(), launch_cmd=["foo", "bar"])
-        assert h.launch_cmd == ["foo", "bar"]
+        :param monkeypatch: pytest monkeypatch fixture.
+        """
+        monkeypatch.setenv("AGENT_AUTO_UPDATE", "1")
+        executor = AcpHarnessExecutor(
+            launch_cmd=["x"], sink=RecordingSink(), env={"AGENT_AUTO_UPDATE": "0"}
+        )
+        assert executor._spawn_env()["AGENT_AUTO_UPDATE"] == "0"
 
-    def test_copilot_harness_default_launch_cmd(self) -> None:
-        """Verify CopilotHarness uses the copilot --acp launch command."""
-        h = CopilotHarness(sink=RecordingSink())
-        assert h.launch_cmd == ["copilot", "--acp"]
+    async def test_declared_env_reaches_the_agent_process(self, tmp_path) -> None:
+        """An end-to-end check that env actually lands in the spawned process.
 
-    def test_copilot_harness_override_launch_cmd(self) -> None:
-        """Verify CopilotHarness honors an explicit launch_cmd override."""
-        h = CopilotHarness(sink=RecordingSink(), launch_cmd=["foo", "bar"])
-        assert h.launch_cmd == ["foo", "bar"]
-
-    def test_cursor_harness_default_launch_cmd(self) -> None:
-        """Verify CursorHarness uses the pinned cursor-agent-acp launch command."""
-        h = CursorHarness(sink=RecordingSink())
-        assert h.launch_cmd == [
-            "npx",
-            "-y",
-            "@blowmage/cursor-agent-acp@0.7.1",
-        ]
-
-    def test_cursor_harness_override_launch_cmd(self) -> None:
-        """Verify CursorHarness honors an explicit launch_cmd override."""
-        h = CursorHarness(sink=RecordingSink(), launch_cmd=["foo", "bar"])
-        assert h.launch_cmd == ["foo", "bar"]
+        :param tmp_path: pytest temp directory fixture.
+        """
+        probe = tmp_path / "probe.py"
+        probe.write_text(
+            "import os, pathlib, sys\n"
+            f"pathlib.Path({str(tmp_path / 'seen.txt')!r}).write_text("
+            "os.environ.get('ATELIER_PROBE', ''))\n"
+        )
+        executor = AcpHarnessExecutor(
+            launch_cmd=[sys.executable, str(probe)],
+            sink=RecordingSink(),
+            env={"ATELIER_PROBE": "reached"},
+        )
+        await executor.execute(_task("hi"), "hi", _ctx(timeout=15))
+        assert (tmp_path / "seen.txt").read_text() == "reached"
 
 
 class TestAtelierHarnessWiring:
-    def test_atelier_exposes_all_five_harness_keys(
+    def test_atelier_exposes_registry_and_legacy_harness_keys(
         self, monkeypatch, tmp_path
     ) -> None:
-        """Verify Atelier registers all five harness executor keys.
+        """Verify Atelier registers registry agents plus the legacy names.
 
         :param monkeypatch: pytest monkeypatch fixture.
         :param tmp_path: pytest temp directory fixture.
@@ -723,19 +717,36 @@ class TestAtelierHarnessWiring:
         from flow_atelier.core.atelier import Atelier
 
         a = Atelier()
-        assert sorted(a.executors) == [
+        # The names that predate the ACP registry keep working...
+        for legacy in (
             "harness:claude-code",
             "harness:codex",
             "harness:copilot",
             "harness:cursor",
             "harness:opencode",
-            "tool:bash",
-            "tool:conduit",
-            "tool:hitl",
-        ]
-        assert isinstance(a.executors["harness:opencode"], OpencodeHarness)
-        assert isinstance(a.executors["harness:copilot"], CopilotHarness)
-        assert isinstance(a.executors["harness:cursor"], CursorHarness)
+        ):
+            assert legacy in a.executors, legacy
+        # ...alongside every agent the registry lists, by its own id.
+        assert "harness:gemini" in a.executors
+        assert "gemini-cli" in " ".join(a.executors["harness:gemini"].launch_cmd)
+
+    def test_legacy_alias_tracks_the_registry_entry(self, monkeypatch, tmp_path) -> None:
+        """Verify harness:claude-code resolves to the registry's claude agent.
+
+        :param monkeypatch: pytest monkeypatch fixture.
+        :param tmp_path: pytest temp directory fixture.
+        """
+        monkeypatch.chdir(tmp_path)
+        from flow_atelier.core.atelier import Atelier
+
+        a = Atelier()
+        assert (
+            a.executors["harness:claude-code"].launch_cmd
+            == a.executors["harness:claude-acp"].launch_cmd
+        )
+        assert "claude-agent-acp" in " ".join(
+            a.executors["harness:claude-code"].launch_cmd
+        )
 
     def test_opencode_launch_cmd_env_override(self, monkeypatch, tmp_path) -> None:
         """Verify ATELIER_OPENCODE_LAUNCH_CMD overrides the opencode launch cmd.
@@ -862,70 +873,215 @@ class TestLastTurnOutput:
         assert "hi" in result.output
 
 
-class TestDrainPendingNotifications:
-    async def test_drain_awaits_queued_and_inflight_handlers(self) -> None:
-        """The drain must wait for every queued notification's handler to
-        finish — including handlers that only append after a scheduling
-        gap — so no streamed chunk is dropped from the buffered output.
+class TestAwaitPendingUpdates:
+    """The turn boundary must not read the buffer before handlers finish.
 
-        Uses the real ACP dispatcher (queue -> supervisor.create(handler))
-        with slow handlers; a buffer-stability poll would sample the empty
-        buffer and return early, while the deterministic drain guarantees
-        every handler has completed before it returns.
+    Built on the ACP stream-observer hook rather than the library's private
+    queue/supervisor: the receive loop notifies observers synchronously and
+    in order, so counting `session/update` there and again in the handler is
+    enough to know when a turn's notifications have all landed.
+    """
+
+    def _client(self) -> Any:
+        """Build a buffering client with a no-op sink."""
+        from flow_atelier.services.executor.harness import _BufferingClient
+
+        return _BufferingClient(RecordingSink())
+
+    @staticmethod
+    def _update_event(direction=StreamDirection.INCOMING, method="session/update"):
+        """Build a raw stream event as the ACP connection would emit one.
+
+        :param direction: message direction.
+        :param method: JSON-RPC method name.
         """
-        from acp.task import (
-            DefaultMessageDispatcher,
-            InMemoryMessageQueue,
-            InMemoryMessageStateStore,
-            RpcTask,
-            RpcTaskKind,
-            TaskSupervisor,
+        return StreamEvent(direction, {"method": method, "params": {}})
+
+    async def test_waits_for_a_handler_that_lands_after_a_scheduling_gap(
+        self,
+    ) -> None:
+        """A slow handler must complete before the wait returns.
+
+        This is the regression the drain exists for: a buffer-stability poll
+        samples the empty buffer and returns early, dropping the last chunk.
+        """
+        client = self._client()
+        chunk = AgentMessageChunk(
+            session_update="agent_message_chunk",
+            content=TextContentBlock(type="text", text="late chunk"),
         )
 
-        queue = InMemoryMessageQueue()
-        supervisor = TaskSupervisor(source="test")
-        store = InMemoryMessageStateStore()
-        buffer: list[str] = []
-
-        async def notification_runner(message: dict[str, Any]) -> None:
-            # Append only after a scheduling gap: a 20ms stability poll
-            # would have already given up by the time this lands.
+        async def slow_handler() -> None:
+            """Handle an update only after yielding to the loop."""
             await asyncio.sleep(0.05)
-            buffer.append(message["params"]["text"])
+            await client.session_update("s", chunk)
 
-        async def request_runner(message: dict[str, Any]) -> Any:
-            return None
+        client.observe(self._update_event())
+        task = asyncio.create_task(slow_handler())
+        await client.await_pending_updates()
+        assert client.buffer == ["late chunk"]
+        await task
 
-        dispatcher = DefaultMessageDispatcher(
-            queue=queue,
-            supervisor=supervisor,
-            store=store,
-            request_runner=request_runner,
-            notification_runner=notification_runner,
-        )
-        dispatcher.start()
+    async def test_observer_is_wired_into_a_real_run(self) -> None:
+        """The observer must actually fire against the real ACP connection.
+
+        If `observers=` were ever ignored, the received count would stay at
+        zero and the wait would silently degrade to a no-op — reintroducing
+        the dropped-chunk bug it exists to prevent. Assert on the counters
+        of the client a real run used.
+        """
+        from flow_atelier.services.executor import harness as harness_mod
+
+        seen: list[Any] = []
+        original = harness_mod._BufferingClient
+
+        def capture(*args: Any, **kwargs: Any) -> Any:
+            """Record each client the executor builds."""
+            client = original(*args, **kwargs)
+            seen.append(client)
+            return client
+
+        harness_mod._BufferingClient = capture
         try:
-            for i in range(5):
-                await queue.publish(
-                    RpcTask(
-                        RpcTaskKind.NOTIFICATION,
-                        {"method": "session/update", "params": {"text": f"c{i}"}},
-                    )
-                )
-            conn = types.SimpleNamespace(
-                _conn=types.SimpleNamespace(_queue=queue, _tasks=supervisor)
+            executor = AcpHarnessExecutor(
+                launch_cmd=_fake_cmd(
+                    {"turns": [{"chunks": ["a", "b", "c"], "stop": "end_turn"}]}
+                ),
+                sink=RecordingSink(),
             )
-            await AcpHarnessExecutor._drain_pending_notifications(conn)
-            assert buffer == ["c0", "c1", "c2", "c3", "c4"]
+            result = await executor.execute(_task("x"), "x", _ctx())
         finally:
-            await dispatcher.stop()
-            await supervisor.shutdown()
+            harness_mod._BufferingClient = original
 
-    async def test_drain_noop_when_connection_shape_missing(self) -> None:
-        """Drain degrades to a no-op if the ACP internals aren't present,
-        rather than raising."""
-        conn = types.SimpleNamespace()  # no _conn
-        await AcpHarnessExecutor._drain_pending_notifications(conn)
+        assert result.exit_code == 0
+        client = seen[0]
+        assert client._updates_received >= 3, "stream observer never fired"
+        assert client._updates_handled == client._updates_received
+        assert result.output == "abc"
+
+    async def test_handlers_are_serialized_in_receive_order(self) -> None:
+        """Concurrent notification tasks must not interleave their output.
+
+        The ACP dispatcher spawns one task per notification, so handlers that
+        await mid-flight could otherwise emit out of order. Handlers started
+        in order must finish in order.
+        """
+        from flow_atelier.services.executor.harness import _BufferingClient
+
+        order: list[str] = []
+
+        class SlowSink(RecordingSink):
+            """A sink that yields inside display, inviting interleaving."""
+
+            async def display(self, text: str) -> None:
+                """Record entry, yield, then record exit.
+
+                :param text: the chunk being displayed.
+                """
+                order.append(f"enter:{text}")
+                await asyncio.sleep(0.01)
+                order.append(f"exit:{text}")
+
+        client = _BufferingClient(SlowSink(), stream_messages=True)
+        chunks = ["a", "b", "c"]
+        for _ in chunks:
+            client.observe(self._update_event())
+        await asyncio.gather(
+            *(
+                client.session_update(
+                    "s",
+                    AgentMessageChunk(
+                        session_update="agent_message_chunk",
+                        content=TextContentBlock(type="text", text=text),
+                    ),
+                )
+                for text in chunks
+            )
+        )
+        assert order == [
+            "enter:a", "exit:a", "enter:b", "exit:b", "enter:c", "exit:c",
+        ]
+        assert client.buffer == chunks
+
+    async def test_returns_immediately_when_nothing_is_outstanding(self) -> None:
+        """With no observed updates the wait is a no-op."""
+        client = self._client()
+        await client.await_pending_updates()
+        assert client.buffer == []
+
+    async def test_ignores_outgoing_and_non_update_messages(self) -> None:
+        """Only inbound session/update messages count toward the wait."""
+        client = self._client()
+        client.observe(self._update_event(direction=StreamDirection.OUTGOING))
+        client.observe(self._update_event(method="session/prompt"))
+        # Neither was counted, so this must not block on a handler.
+        await client.await_pending_updates(timeout=0.2)
+
+    async def test_a_failing_handler_still_advances_the_count(self) -> None:
+        """A raising handler must not strand the wait until its timeout.
+
+        The ACP dispatcher swallows notification-handler exceptions, so a
+        counter that only advanced on success would wait out the bound on
+        every failure.
+        """
+        class BoomSink(RecordingSink):
+            """A sink whose display blows up mid-handler."""
+
+            async def display(self, text: str) -> None:
+                """Fail the way a broken renderer would.
+
+                :param text: text chunk (unused).
+                """
+                raise RuntimeError("renderer blew up")
+
+        from flow_atelier.services.executor.harness import _BufferingClient
+
+        client = _BufferingClient(BoomSink(), stream_messages=True)
+        client.observe(self._update_event())
+        chunk = AgentMessageChunk(
+            session_update="agent_message_chunk",
+            content=TextContentBlock(type="text", text="x"),
+        )
+        with contextlib.suppress(RuntimeError):
+            await client.session_update("s", chunk)
+        await client.await_pending_updates(timeout=0.2)
+
+    async def test_wait_is_bounded_when_a_notification_never_arrives(self) -> None:
+        """A lost notification costs the bound, not the whole task timeout."""
+        client = self._client()
+        client.observe(self._update_event())
+        started = asyncio.get_running_loop().time()
+        await client.await_pending_updates(timeout=0.1)
+        assert asyncio.get_running_loop().time() - started < 1.0
+
+
+async def test_relative_working_dir_is_resolved_before_session_new(tmp_path) -> None:
+    """A relative working_dir must reach the agent as an absolute path.
+
+    ACP agents reject a relative `cwd` at session/new, so passing one through
+    fails the task before it starts — which is what `atelier run --path .` or
+    a schedule with a relative run_path would do. The fake agent enforces the
+    same rule as the real ones.
+
+    :param tmp_path: pytest temp directory fixture.
+    """
+    import os
+
+    executor = AcpHarnessExecutor(
+        launch_cmd=_fake_cmd({"turns": [{"chunks": ["ok"], "stop": "end_turn"}]}),
+        sink=RecordingSink(),
+    )
+    context = FlowContext(
+        flow_id="f", store=None, inputs={}, timeout=30, working_dir=Path("."),
+    )
+    cwd_before = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = await executor.execute(_task("x"), "x", context)
+    finally:
+        os.chdir(cwd_before)
+    assert result.exit_code == 0, result.stderr
+    assert "ok" in result.output
 
 
 def test_is_available_true_when_binary_on_path(monkeypatch) -> None:

@@ -41,6 +41,14 @@ html[data-theme="light"] {
   --color-tool-opencode: oklch(0.47 0.11 170);
   --color-tool-copilot: oklch(0.47 0.14 240);
   --color-tool-cursor: oklch(0.47 0.16 310);
+  --color-tool-gemini: oklch(0.47 0.13 285);
+  --color-tool-qwen-code: oklch(0.47 0.13 330);
+  --color-tool-goose: oklch(0.47 0.13 120);
+  --color-tool-amp-acp: oklch(0.47 0.13 20);
+  --color-tool-cline: oklch(0.47 0.13 185);
+  --color-tool-auggie: oklch(0.47 0.13 90);
+  /* Any ACP agent outside the default palette. */
+  --color-tool-harness-other: oklch(0.47 0.04 60);
 }
 
 /* -----------------------------------------------------------------------

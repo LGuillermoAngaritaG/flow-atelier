@@ -156,7 +156,7 @@ def build_plan(conduit: Conduit, parsed: dict[str, list]) -> ExecutionPlan:
         is_gate = bool(cond_dependents[t.name])
         planned[t.name] = PlannedTask(
             name=t.name,
-            tool=t.tool.value,
+            tool=t.tool,
             level=level[t.name],
             plain_edges=plain_edges,
             conditional_edges=conditional_edges,

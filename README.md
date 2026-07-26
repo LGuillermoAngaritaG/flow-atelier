@@ -7,8 +7,10 @@ shell commands, AI coding agents, and human approvals. Run them from your
 terminal or a local visual editor.
 
 Flow Atelier is a workflow runner whose tasks can hand work to Claude Code,
-Codex, opencode, Copilot, or Cursor — each driven through *your* existing login
-for that tool. No API keys are configured, stored, or proxied by flow-atelier.
+Codex, Gemini, opencode, Copilot, Cursor, or any of the ~40 agents in the
+[ACP registry](https://agentclientprotocol.com/get-started/registry) — each
+driven through *your* existing login for that tool. No API keys are
+configured, stored, or proxied by flow-atelier.
 
 There is no SDK to learn and no code to write: a workflow is a plain YAML file
 you (or an agent) can read end to end and edit. Steps run in parallel where their dependencies allow,
@@ -160,7 +162,7 @@ You write a conduit YAML file and put it in
   ran, what each task printed, whether it succeeded, when it
    finished.
 
-The five AI harnesses use each tool's **own login** that lives on your
+Every AI harness uses that tool's **own login** that lives on your
 machine. flow-atelier never sees, stores, or proxies any credentials.
 
 ## Install
@@ -205,26 +207,88 @@ Either way, you end up with an `atelier` command on your `PATH`.
 
 ### Optional: AI harnesses
 
-You only need to install the harness(es) for the AI tools you actually
-plan to use. If you never use AI in your conduits, you can skip this
-entire section.
+You only need the AI tools you actually plan to use. If you never use AI
+in your conduits, you can skip this entire section.
 
-- `harness:claude-code` — Node.js / `npx` on PATH, plus an
-authenticated `claude` setup (`~/.claude/...`). On first use `npx`
-downloads `@zed-industries/claude-code-acp`.
-- `harness:codex` — Node.js / `npx` on PATH, plus an authenticated
-`codex` setup (`~/.codex/...`). On first use `npx` downloads
-`@zed-industries/codex-acp`.
-- `harness:opencode` — the `opencode` binary on PATH.
-- `harness:copilot` — the `copilot` binary on PATH (from the
-`@github/copilot` npm package).
-- `harness:cursor` — Node.js / `npx` on PATH, plus the
-`cursor-agent` binary on PATH.
+**flow-atelier does not install agents and does not manage their logins.**
+You install the agent you want and log into it with its own CLI; then you
+point flow-atelier at its command, either by name or by argv. There is no
+bundled installer, no download manager, and no credential handling here.
 
-Each harness reuses its own CLI's config and login. To pin a custom
-version or point at a different adapter, set the matching
-`ATELIER_*_LAUNCH_CMD` environment variable to a JSON array of argv
-(see `.env.example`).
+What flow-atelier does do is run the command you selected, exactly as that
+agent documents it. For agents distributed through `npx` or `uvx`, the
+documented command fetches the package on first use — that is the agent's
+own distribution mechanism doing its normal thing, the same as running the
+command yourself in a shell. Agents distributed as a binary are never
+downloaded; you install those, and flow-atelier runs what it finds on
+PATH.
+
+An AI task names its agent and nothing else:
+
+```yaml
+- review:
+    description: review the diff
+    task: "review the working tree and list any bugs"
+    tool: harness:gemini
+    depends_on: []
+```
+
+The names come from the [ACP registry](https://agentclientprotocol.com/get-started/registry),
+a snapshot of which ships with flow-atelier. To see what you can type and
+what already works on your machine:
+
+```bash
+atelier harness list           # every agent, and whether it runs here
+atelier harness list --ready   # just the ones you can use right now
+atelier harness sync           # refresh the list from the ACP registry
+```
+
+Roughly 40 agents are listed, including `harness:claude-code`,
+`harness:codex`, `harness:gemini`, `harness:copilot`, `harness:cursor`,
+`harness:opencode`, `harness:qwen-code`, `harness:goose` and
+`harness:amp-acp`. A name is only the launch command that agent
+documents; the `via` column says how it starts:
+
+- `npx` / `uvx` — the agent's own package manager fetches it on first
+run, at the version the registry pins. Needs Node.js or uv on PATH.
+- `binary` — you install the agent's CLI, and flow-atelier runs it from
+PATH. `atelier harness list` names the missing binary when it isn't there.
+
+Either way, logging in is yours to do, with that agent's own CLI.
+
+#### Checking a harness before you use it
+
+```bash
+atelier harness check gemini
+atelier harness check --cmd "/opt/my-agent --acp"
+```
+
+This starts the agent, completes the ACP handshake, opens a session and
+stops. No prompt is sent, so it costs no tokens. It reports one of:
+
+- **ok** — with the agent's name and version, the ACP version, and the
+  session modes it offers.
+- **not found on PATH** — install the agent yourself, then re-check.
+- **started but did not speak ACP** — usually the wrong entry point;
+  many CLIs need an `--acp` flag.
+- **could not open a session** — usually not logged in. The check lists
+  the auth methods the agent advertises, and you log in with that
+  agent's own CLI.
+
+Failures exit non-zero and include the tail of the agent's own stderr,
+which is where a failing agent explains itself.
+
+For an agent the registry doesn't list — something private, a fork, a
+local build — give flow-atelier its command and it becomes a first-class
+harness:
+
+```bash
+ATELIER_HARNESSES='{"mine":["/opt/my-agent","--acp"]}'   # tool: harness:mine
+```
+
+To pin one of `claude-code`, `codex`, `opencode`, `copilot` or `cursor`
+to a specific argv, the matching `ATELIER_*_LAUNCH_CMD` variable still
+overrides the registry (see `.env.example`).
 
 ## Quickstart
 

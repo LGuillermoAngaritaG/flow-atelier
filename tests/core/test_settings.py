@@ -1,6 +1,9 @@
 """Settings unit tests."""
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from flow_atelier.core.settings import AtelierSettings
 
 
@@ -47,3 +50,31 @@ def test_env_override(tmp_path, monkeypatch):
     assert s.claude_launch_cmd == ["npx", "-y", "custom-claude-acp"]
     assert s.atelier_dir == Path(tmp_path / "somewhere")
     assert s.global_atelier_dir == Path(tmp_path / "global_here")
+
+
+def test_harnesses_env_parses_json_map(monkeypatch):
+    """Verify ATELIER_HARNESSES loads as a name -> argv map.
+
+    :param monkeypatch: pytest monkeypatch fixture.
+    """
+    monkeypatch.setenv(
+        "ATELIER_HARNESSES", '{"gemini": ["npx", "-y", "gemini-acp"]}'
+    )
+    s = AtelierSettings(_env_file=None)
+    assert s.harnesses == {"gemini": ["npx", "-y", "gemini-acp"]}
+
+
+@pytest.mark.parametrize(
+    "harnesses",
+    [
+        {"My Agent": ["a"]},  # unusable: no conduit could name it
+        {"gemini": []},       # unusable: nothing to spawn
+    ],
+)
+def test_unusable_harness_entry_is_rejected(harnesses):
+    """Verify a harness entry no conduit could reference or run fails loudly.
+
+    :param harnesses: parametrized invalid harness map under test.
+    """
+    with pytest.raises(ValidationError):
+        AtelierSettings(_env_file=None, harnesses=harnesses)

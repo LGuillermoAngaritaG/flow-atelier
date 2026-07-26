@@ -1,10 +1,17 @@
 """Atelier facade: run_single_task (ad-hoc one-task conduit)."""
 from __future__ import annotations
 
+import json
+import sys
+from pathlib import Path
+
 import pytest
 
 from flow_atelier.core.atelier import Atelier
+from flow_atelier.core.settings import AtelierSettings
 from flow_atelier.schemas.api import RunTaskInput, RunTaskOutput
+
+FAKE_AGENT = Path(__file__).resolve().parents[1] / "fixtures" / "fake_acp_agent.py"
 
 
 @pytest.fixture
@@ -53,6 +60,39 @@ async def test_run_single_task_persists_flow_dir(atelier, tmp_path):
     out = await atelier.run_single_task(payload)
     flow_dir = atelier.store._flow_dir(out.flow_id)
     assert (flow_dir / "logs.jsonl").exists()
+
+
+async def test_run_single_task_drives_a_settings_declared_harness(
+    tmp_path, monkeypatch, _isolate_global_atelier_dir
+):
+    """An ACP agent known only to ATELIER_HARNESSES runs end to end.
+
+    Covers the whole chain the bundled harnesses get for free: settings ->
+    executor registry -> task schema -> engine dispatch -> ACP session.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param monkeypatch: pytest monkeypatch fixture.
+    :param _isolate_global_atelier_dir: isolated global atelier dir fixture.
+    """
+    script = json.dumps({"turns": [{"chunks": ["custom agent ok"], "stop": "end_turn"}]})
+    at = Atelier(
+        settings=AtelierSettings(
+            atelier_dir=tmp_path / ".atelier",
+            global_atelier_dir=_isolate_global_atelier_dir,
+            harnesses={"fake": [sys.executable, str(FAKE_AGENT), "--script", script]},
+        ),
+    )
+    out = await at.run_single_task(
+        RunTaskInput(
+            name="ask",
+            description="ad-hoc harness task",
+            task="hello",
+            tool="harness:fake",
+            run_path=str(tmp_path),
+        )
+    )
+    assert out.logs[-1].exit_code == 0
+    assert "custom agent ok" in (out.logs[-1].stdout or "")
 
 
 async def test_run_single_task_failure_returns_non_zero_exit(atelier, tmp_path):

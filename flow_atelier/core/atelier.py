@@ -30,15 +30,14 @@ from flow_atelier.schemas.conduit import Conduit
 from flow_atelier.schemas.flow import parse_flow_id
 from flow_atelier.schemas.log import LogEntry
 from flow_atelier.schemas.progress import FlowStatus, Progress
+from flow_atelier.services.executor.acp_registry import (
+    LEGACY_HARNESS_ALIASES,
+    SNAPSHOT_FILENAME,
+    load_registry,
+)
 from flow_atelier.services.executor.bash import BashExecutor
 from flow_atelier.services.executor.conduit import ConduitExecutor
-from flow_atelier.services.executor.harness import (
-    ClaudeHarness,
-    CodexHarness,
-    CopilotHarness,
-    CursorHarness,
-    OpencodeHarness,
-)
+from flow_atelier.services.executor.harness import AcpHarnessExecutor
 from flow_atelier.services.executor.hitl import HitlExecutor
 from flow_atelier.services.executor.prompt_sink import PromptSink, TerminalPromptSink
 from flow_atelier.services.package import (
@@ -98,43 +97,12 @@ class Atelier:
             global_dir=self.settings.global_atelier_dir,
         )
         sink: PromptSink = prompt_sink if prompt_sink is not None else TerminalPromptSink()
-        claude_launch = (
-            self.settings.claude_launch_cmd or None
-        )
-        codex_launch = self.settings.codex_launch_cmd or None
-        opencode_launch = self.settings.opencode_launch_cmd or None
-        copilot_launch = self.settings.copilot_launch_cmd or None
-        cursor_launch = self.settings.cursor_launch_cmd or None
         self.executors = {
             "tool:bash": BashExecutor(),
             "tool:hitl": HitlExecutor(),
             "tool:conduit": ConduitExecutor(),
-            "harness:claude-code": ClaudeHarness(
-                sink=sink,
-                launch_cmd=claude_launch,
-                done_marker=self.settings.done_marker,
-            ),
-            "harness:codex": CodexHarness(
-                sink=sink,
-                launch_cmd=codex_launch,
-                done_marker=self.settings.done_marker,
-            ),
-            "harness:opencode": OpencodeHarness(
-                sink=sink,
-                launch_cmd=opencode_launch,
-                done_marker=self.settings.done_marker,
-            ),
-            "harness:copilot": CopilotHarness(
-                sink=sink,
-                launch_cmd=copilot_launch,
-                done_marker=self.settings.done_marker,
-            ),
-            "harness:cursor": CursorHarness(
-                sink=sink,
-                launch_cmd=cursor_launch,
-                done_marker=self.settings.done_marker,
-            ),
         }
+        self._register_harnesses(sink)
         self.engine = Engine(
             self.executors,
             self.store,
@@ -142,6 +110,51 @@ class Atelier:
             loop_history_entry_chars=self.settings.loop_history_entry_chars,
         )
         self.schedule_store = ScheduleStore(self.settings.atelier_dir)
+
+    def _register_harnesses(self, sink: PromptSink) -> None:
+        """Register a ``harness:<name>`` executor for every known ACP agent.
+
+        Four layers, each overriding the last:
+
+        1. every agent in the ACP registry snapshot, under its registry id;
+        2. the legacy names flow-atelier shipped before the registry existed;
+        3. the per-harness ``ATELIER_*_LAUNCH_CMD`` argv overrides;
+        4. ``ATELIER_HARNESSES``, for agents the registry has never heard of.
+
+        :param sink: :class:`PromptSink` shared by every harness executor.
+        """
+        def make(argv: list[str], env: dict[str, str] | None = None) -> AcpHarnessExecutor:
+            """Build a harness executor for ``argv``.
+
+            :param argv: the agent's launch command.
+            :param env: optional extra environment variables.
+            """
+            return AcpHarnessExecutor(
+                launch_cmd=argv,
+                sink=sink,
+                done_marker=self.settings.done_marker,
+                env=env,
+            )
+
+        self.registry = load_registry(self.settings.global_atelier_dir / SNAPSHOT_FILENAME)
+        for agent_id, spec in self.registry.items():
+            self.executors[f"harness:{agent_id}"] = make(list(spec.argv), spec.env)
+        for alias, target in LEGACY_HARNESS_ALIASES.items():
+            spec = self.registry.get(target)
+            if spec is not None:
+                self.executors[f"harness:{alias}"] = make(list(spec.argv), spec.env)
+        launch_overrides = {
+            "claude-code": self.settings.claude_launch_cmd,
+            "codex": self.settings.codex_launch_cmd,
+            "opencode": self.settings.opencode_launch_cmd,
+            "copilot": self.settings.copilot_launch_cmd,
+            "cursor": self.settings.cursor_launch_cmd,
+        }
+        for alias, argv in launch_overrides.items():
+            if argv:
+                self.executors[f"harness:{alias}"] = make(list(argv))
+        for name, argv in self.settings.harnesses.items():
+            self.executors[f"harness:{name}"] = make(list(argv))
 
     def tool_readiness(self, conduit: Conduit) -> list[str]:
         """Report why a conduit can't run, before any task executes.
@@ -159,7 +172,7 @@ class Atelier:
         """
         problems: list[str] = []
         for task in conduit.tasks:
-            tool = task.tool.value
+            tool = task.tool
             executor = self.executors.get(tool)
             if executor is None:
                 msg = f"task {task.name!r}: no executor registered for tool {tool!r}"

@@ -1,12 +1,9 @@
 """Test WsPromptSink sends step envelopes via the broker."""
 from __future__ import annotations
 
-import pytest
-
 from flow_atelier.modules.engine import _current_task_ctx
 from flow_atelier.schemas.log import IntermediateStep, StepKind
 from flow_atelier.services.api.ws_sink import WsPromptSink
-from flow_atelier.services.executor.prompt_sink import PermissionOption
 
 
 async def test_display_step_sends_step_envelope() -> None:
@@ -55,14 +52,3 @@ async def test_display_step_reads_current_task_from_contextvar() -> None:
         assert sent[0]["task"] == "other-task"
     finally:
         _current_task_ctx.reset(token)
-
-
-async def test_request_permission_denies_all_requests() -> None:
-    """request_permission should deny all requests with a PermissionError."""
-    sink = WsPromptSink(broker=None, flow_id="f1")  # type: ignore[arg-type]
-    options = [
-        PermissionOption(id="allow", label="Allow"),
-        PermissionOption(id="deny", label="Deny"),
-    ]
-    with pytest.raises(PermissionError, match="does not support interactive permission"):
-        await sink.request_permission("summary", options)

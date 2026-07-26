@@ -10,7 +10,7 @@ and how to use it, see [README.md](./README.md).
 - [uv](https://docs.astral.sh/uv/) for dependency and environment
   management.
 
-The AI harnesses (`harness:claude-code`, `harness:codex`, etc.) are
+The AI harnesses (`harness:claude-code`, `harness:gemini`, etc.) are
 only needed to run conduits that use them or the `live` test suite.
 Unit tests do not require any harness installed.
 
@@ -114,7 +114,9 @@ flow_atelier/
 │   │   ├── bash.py             # tool:bash
 │   │   ├── hitl.py             # tool:hitl
 │   │   ├── conduit.py          # tool:conduit (recursive)
-│   │   └── harness.py          # the five ACP harnesses
+│   │   ├── harness.py          # the ACP harness (every agent)
+│   │   ├── acp_registry.py     # ACP agent registry -> launch commands
+│   │   └── acp_registry.json   # bundled registry snapshot
 │   ├── store/                  # conduit/flow persistence
 │   │   ├── base.py             # StoreBase (abstract)
 │   │   └── filesystem.py       # FilesystemStore (project + global dirs)
@@ -160,21 +162,47 @@ propagates to its dependents.
 Each tool maps to an `ExecutorBase` subclass in `services/executor/`.
 Executors implement `execute(...)` and `is_available()` (the
 preflight readiness probe used by `atelier check` and at the start of
-`atelier run`). The registry is built in `core/atelier.py`; the set
-of valid tool names is the `ToolType` enum in `schemas/conduit.py`.
+`atelier run`). The executors are built in `core/atelier.py`. A task's
+`tool` is a plain string: `tool:*` is closed to the `ToolType` enum in
+`schemas/conduit.py`, while any well-formed `harness:<name>` is allowed
+and resolved against the executor registry at preflight.
 
-The five AI harnesses share one implementation in `harness.py` that
-speaks the [Agent Client Protocol](https://agentclientprotocol.com)
-over stdio. They differ only in their launch command, which can be
-overridden via the `ATELIER_*_LAUNCH_CMD` environment variables (see
-`.env.example`). Each harness reuses its own CLI's login; flow-atelier
-never handles credentials.
+Every AI agent shares one implementation in `harness.py` that speaks the
+[Agent Client Protocol](https://agentclientprotocol.com) over stdio, and
+differs only in the argv (and occasionally env) that starts it. Those
+come from `acp_registry.py`, which reads a trimmed snapshot of the
+[ACP registry](https://agentclientprotocol.com/get-started/registry)
+shipped in `acp_registry.json`. `atelier harness sync` refetches it into
+the user's global atelier dir, which then wins over the bundled copy —
+nothing on the run path touches the network.
+
+flow-atelier never installs an agent and never authenticates one: a
+registry entry is a launch command, not a package manager. Installing and
+logging in are the user's, done with the agent's own CLI.
+
+The line sits at *our* behaviour, not the agent's. We run the command the
+user selected exactly as that agent documents it, which for an `npx`/`uvx`
+entry includes its package manager fetching it on first run — identical to
+typing the command in a shell. What we don't do is build a parallel
+installer: `binary` distributions are never downloaded or extracted, only
+resolved from PATH.
+
+What we owe the user instead is a clear report of what is missing, which is
+`AcpHarnessExecutor.probe()` behind `atelier harness check` — spawn,
+`initialize`, `new_session`, stop.
+No prompt is sent, so a check costs no tokens, and the stages it can fail
+at (`path`, `initialize`, `session`) map to the three things a user has to
+fix: install it, point at the ACP entry point, log in.
 
 ### Adding a new tool
 
 1. Add the value to `ToolType` in `schemas/conduit.py`.
 2. Implement an `ExecutorBase` subclass in `services/executor/`.
 3. Register it in the executor dict in `core/atelier.py`.
+
+New *harnesses* need none of this: an ACP agent listed in the registry
+works as `harness:<its registry id>` as soon as the snapshot has it, and
+an unlisted one is a line of `ATELIER_HARNESSES`.
 
 ### Storage
 

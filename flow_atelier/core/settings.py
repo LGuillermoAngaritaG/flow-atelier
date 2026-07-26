@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from flow_atelier.schemas.conduit import HARNESS_NAME_RE
 
 
 class AtelierSettings(BaseSettings):
@@ -77,6 +79,16 @@ class AtelierSettings(BaseSettings):
             "Empty = use the bundled default (@blowmage/cursor-agent-acp)."
         ),
     )
+    harnesses: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description=(
+            "Extra ACP agents, as name -> argv. Each is registered as "
+            "'harness:<name>' and driven by the same generic ACP executor as "
+            "the bundled five, so any ACP-speaking agent works without a code "
+            'change. Example: ATELIER_HARNESSES=\'{"gemini": ["npx", "-y", '
+            '"gemini-acp"]}\'. A name matching a bundled harness overrides it.'
+        ),
+    )
     done_marker: str = "[ATELIER_DONE]"
     api_token: str = Field(
         # Empty, never a literal: a shipped default token is a published
@@ -90,3 +102,26 @@ class AtelierSettings(BaseSettings):
             "Empty = no auth (local trust)."
         ),
     )
+
+    @field_validator("harnesses")
+    @classmethod
+    def _harnesses_usable(cls, v: dict[str, list[str]]) -> dict[str, list[str]]:
+        """Reject harness entries no conduit could ever reference or run.
+
+        A name outside the ``harness:<name>`` grammar registers an executor
+        key that :class:`TaskDefinition <flow_atelier.schemas.conduit.TaskDefinition>`
+        refuses to parse, and an empty argv has nothing to spawn. Both would
+        otherwise surface much later as a confusing "no executor registered".
+
+        :param v: the configured name -> argv map.
+        :returns: the validated map unchanged.
+        """
+        for name, argv in v.items():
+            if not HARNESS_NAME_RE.match(name):
+                raise ValueError(
+                    f"invalid harness name {name!r}: only lowercase letters, "
+                    "digits and hyphens are allowed"
+                )
+            if not argv:
+                raise ValueError(f"harness {name!r}: argv must not be empty")
+        return v

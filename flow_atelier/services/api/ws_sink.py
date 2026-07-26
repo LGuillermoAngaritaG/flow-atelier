@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 
 from flow_atelier.modules.engine import current_flow_id, current_task
 from flow_atelier.services.api.ws_manager import WebSocketBroker
-from flow_atelier.services.executor.prompt_sink import PermissionOption
 
 if TYPE_CHECKING:
     from flow_atelier.schemas.log import IntermediateStep
@@ -52,20 +51,6 @@ class WsPromptSink:
         :raises NotImplementedError: always.
         """
         raise NotImplementedError("WS sink does not support request_input")
-
-    async def request_permission(
-        self, summary: str, options: list[PermissionOption]
-    ) -> str:
-        """Deny all permission requests until interactive approval is implemented.
-
-        :param summary: permission description (unused).
-        :param options: available permission choices (unused).
-        :raises PermissionError: always, as interactive approval is not yet supported.
-        """
-        raise PermissionError(
-            "WS sink does not support interactive permission approval: "
-            f"denied request '{summary}'"
-        )
 
     async def display_step(self, step: IntermediateStep) -> None:
         """Forward an intermediate step as a ``step`` envelope over WebSocket.

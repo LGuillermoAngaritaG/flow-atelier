@@ -14,7 +14,6 @@ from acp.schema import (
 
 from flow_atelier.schemas.log import IntermediateStep, StepKind
 from flow_atelier.services.executor.harness import _BufferingClient
-from flow_atelier.services.executor.prompt_sink import PermissionOption
 
 
 class RecordingSink:
@@ -46,17 +45,6 @@ class RecordingSink:
         """
         del prompt
         raise EOFError
-
-    async def request_permission(
-        self, summary: str, options: list[PermissionOption]
-    ) -> str:
-        """Auto-approve by returning the first option id.
-
-        :param summary: permission request summary (ignored).
-        :param options: available permission options.
-        """
-        del summary
-        return options[0].id
 
     async def display_step(self, step: IntermediateStep) -> None:
         """Record an intermediate step.
