@@ -6,23 +6,37 @@ import { ConduitProvider } from "@/services/ConduitProvider";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Toaster } from "@/components/ui/toaster";
 import Dashboard from "@/pages/dashboard";
-import { Loader2 } from "lucide-react";
 import * as runner from "@/runner";
 
 const Designer = lazy(() => import("@/pages/Designer"));
 const Kanban = lazy(() => import("@/pages/kanban"));
 
-// Expose runner on window for Playwright smoke checks.
-if (typeof window !== "undefined") {
+// Expose the runner on window for smoke checks — dev only, so the debug hook
+// is not part of the shipped surface.
+if (import.meta.env.DEV && typeof window !== "undefined") {
   (window as unknown as { atelier?: typeof runner }).atelier = runner;
 }
 
+// A skeleton in the shape of a route rather than a spinner in the middle of the
+// screen: the Designer chunk is the heaviest one, and a page-shaped placeholder
+// reads as "this is loading" instead of "something is wrong".
 function ScreenFallback() {
   return (
-    <div className="flex items-center justify-center h-full min-h-[200px]">
-      <div className="flex flex-col items-center gap-2 text-muted-foreground">
-        <Loader2 className="h-6 w-6 animate-spin" />
-        <span className="text-sm">Loading...</span>
+    <div aria-busy="true" aria-live="polite" className="px-4 py-6 lg:px-10 lg:py-10">
+      <span className="sr-only">Loading</span>
+      <div className="mb-8 h-10 w-64 animate-pulse rounded bg-muted lg:h-14" />
+      <div className="mx-auto grid max-w-[1280px] gap-4 lg:grid-cols-3">
+        {[0, 1, 2].map((col) => (
+          <div key={col} className="space-y-2">
+            <div className="h-4 w-24 animate-pulse rounded bg-muted" />
+            {[0, 1].map((row) => (
+              <div
+                key={row}
+                className="h-20 animate-pulse rounded-sm border border-border bg-muted/40"
+              />
+            ))}
+          </div>
+        ))}
       </div>
     </div>
   );

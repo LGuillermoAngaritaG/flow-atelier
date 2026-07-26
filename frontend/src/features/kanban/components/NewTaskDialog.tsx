@@ -46,16 +46,16 @@ export function NewTaskDialog({ open, onOpenChange, editTask, projectId, onRun }
               onClick={() => s.setStep("conduit-select")}
               className="rounded-md border border-border px-4 py-6 text-left transition-colors hover:bg-muted/40"
             >
-              <div className="font-mono text-[13px] text-foreground">conduit</div>
-              <div className="mt-1 text-[11px] text-muted-foreground">Run an existing conduit</div>
+              <div className="font-mono text-data text-foreground">conduit</div>
+              <div className="mt-1 text-label text-muted-foreground">Run an existing conduit</div>
             </button>
             <button
               type="button"
               onClick={() => s.setStep("task-nodes")}
               className="rounded-md border border-border px-4 py-6 text-left transition-colors hover:bg-muted/40"
             >
-              <div className="font-mono text-[13px] text-foreground">task</div>
-              <div className="mt-1 text-[11px] text-muted-foreground">Build with tasks</div>
+              <div className="font-mono text-data text-foreground">task</div>
+              <div className="mt-1 text-label text-muted-foreground">Build with tasks</div>
             </button>
           </div>
         )}
@@ -109,12 +109,12 @@ export function NewTaskDialog({ open, onOpenChange, editTask, projectId, onRun }
               />
               {isCustom && editTask.tool && (
                 <FieldRow label="tool">
-                  <div className="pb-2 font-mono text-[13px] text-foreground">
+                  <div className="pb-2 font-mono text-data text-foreground">
                     {editTask.tool}
                   </div>
                 </FieldRow>
               )}
-              <div className="border-b border-border/60 pb-2 font-mono text-[11px] uppercase tracking-[0.12em] text-primary">
+              <div className="border-b border-border/60 pb-2 font-mono text-label uppercase tracking-[0.12em] text-primary">
                 run path
               </div>
               <FieldRow label="Working Directory" hint="execution path" error={s.fieldErrors.runPath}>
@@ -122,12 +122,12 @@ export function NewTaskDialog({ open, onOpenChange, editTask, projectId, onRun }
                   value={s.runPath}
                   onChange={(e) => s.setRunPath(e.target.value)}
                   placeholder="/home/runner/..."
-                  className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
+                  className="w-full border-0 border-b border-border-strong bg-transparent pb-2 font-mono text-data text-foreground focus:border-primary"
                 />
               </FieldRow>
               {!isCustom && Object.keys(editInputs).length > 0 && (
                 <>
-                  <div className="border-b border-border/60 pb-2 font-mono text-[11px] uppercase tracking-[0.12em] text-primary">
+                  <div className="border-b border-border/60 pb-2 font-mono text-label uppercase tracking-[0.12em] text-primary">
                     inputs
                   </div>
                   {Object.entries(editInputs).map(([name, hint]) => (
@@ -136,7 +136,7 @@ export function NewTaskDialog({ open, onOpenChange, editTask, projectId, onRun }
                         value={s.values[name] ?? ""}
                         onChange={(e) => s.setValues((v) => ({ ...v, [name]: e.target.value }))}
                         placeholder={hintStr(hint)}
-                        className="w-full border-0 border-b border-border bg-transparent pb-2 font-mono text-[13px] text-foreground outline-none focus:border-primary"
+                        className="w-full border-0 border-b border-border-strong bg-transparent pb-2 font-mono text-data text-foreground focus:border-primary"
                       />
                     </FieldRow>
                   ))}
@@ -144,7 +144,7 @@ export function NewTaskDialog({ open, onOpenChange, editTask, projectId, onRun }
               )}
               {isCustom && (
                 <>
-                  <div className="border-b border-border/60 pb-2 font-mono text-[11px] uppercase tracking-[0.12em] text-primary">
+                  <div className="border-b border-border/60 pb-2 font-mono text-label uppercase tracking-[0.12em] text-primary">
                     task / prompt
                   </div>
                   <FieldRow label="task" hint="Command or prompt to run" error={s.fieldErrors.runPrompt}>
@@ -153,7 +153,7 @@ export function NewTaskDialog({ open, onOpenChange, editTask, projectId, onRun }
                       onChange={(e) => s.setRunPrompt(e.target.value)}
                       placeholder="Command or prompt"
                       rows={3}
-                      className="w-full resize-none border border-border/60 bg-transparent p-2 font-mono text-[11px] text-foreground outline-none focus:border-primary"
+                      className="w-full resize-none border border-border/60 bg-transparent p-2 font-mono text-label text-foreground focus:border-primary"
                     />
                   </FieldRow>
                 </>
@@ -197,7 +197,7 @@ export function NewTaskDialog({ open, onOpenChange, editTask, projectId, onRun }
             </Button>
           )}
           {s.step === "task-nodes" && (
-            <span className="font-mono text-[10px] text-muted-foreground">
+            <span className="font-mono text-mini text-muted-foreground">
               select a tool to add a node
             </span>
           )}

@@ -5,6 +5,7 @@ import { InputForm } from "@/features/dashboard/components/input-form";
 import { FlowHistory } from "@/features/dashboard/components/flow-history";
 import { Button } from "@/components/ui/button";
 import { useConduits, getConduitSync } from "@/services/ConduitProvider";
+import { BASE_URL } from "@/config/env";
 import { useConduit } from "@/hooks/useConduit";
 import { fetchSchedules } from "@/services/conduits";
 import { createSchedule, deleteSchedule } from "@/services/api/schedules";
@@ -17,18 +18,38 @@ export default function Dashboard() {
   const [scheduledJobs, setScheduledJobs] = useState<ScheduledJob[]>([]);
   const [addScheduleOpen, setAddScheduleOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [autoOpenFlowId, setAutoOpenFlowId] = useState<string | undefined>();
   const conduit = getConduitSync(selected, conduits) ?? conduits[0];
 
   const { run, cancel, resume, answerHITL, liveRuns } = useConduit({
     onFlowComplete: () => {
       setRefreshKey((k) => k + 1);
     },
+    // Runs the user started here — scheduled runs arrive as their own message
+    // type, so a background schedule firing never pops the drawer open.
+    onFlowStarted: (flowId) => setAutoOpenFlowId(flowId),
     onError: (message) => toast.error(message),
   });
 
+  // When the API is unreachable both fetches fail for the same reason, and the
+  // conduits failure already renders a full cause-level message inline; a
+  // second toast repeating it is noise. The two requests race, so we can't
+  // decide at rejection time — the conduits result may not be in yet. Record
+  // the failure and let an effect fire the toast only once the conduits load
+  // has resolved, and only if it resolved successfully.
+  const [schedulesFailed, setSchedulesFailed] = useState(false);
+  useEffect(() => {
+    if (schedulesFailed && !loading && !error) {
+      toast.error("Couldn't load schedules", { id: "schedules-load" });
+      setSchedulesFailed(false);
+    }
+  }, [schedulesFailed, loading, error]);
+
   const refreshAll = () => {
     setRefreshKey((k) => k + 1);
-    fetchSchedules().then(setScheduledJobs).catch(() => toast.error("Failed to load schedules"));
+    fetchSchedules()
+      .then(setScheduledJobs)
+      .catch(() => setSchedulesFailed(true));
   };
 
   useEffect(() => {
@@ -38,7 +59,7 @@ export default function Dashboard() {
         if (!ignore) setScheduledJobs(jobs);
       })
       .catch(() => {
-        if (!ignore) toast.error("Failed to load schedules");
+        if (!ignore) setSchedulesFailed(true);
       });
     return () => {
       ignore = true;
@@ -92,32 +113,48 @@ export default function Dashboard() {
   };
 
   return (
-    <div data-route="dashboard" className="min-h-[calc(100vh-3.5rem-1.75rem)]">
+    <div data-route="dashboard" className="min-h-[calc(100dvh-3.5rem)]">
       <section
         data-testid="dashboard-main"
-        className="px-10 py-10"
+        className="px-4 py-6 lg:px-10 lg:py-10"
       >
-        <header className="mb-10 flex items-baseline justify-between gap-10 border-b border-border pb-7">
-          <h1 className="page-title">
-            Run a <em className="text-primary not-italic">conduit</em>
+        {/* The 52px serif "Run a conduit" that used to sit here cost ~22% of
+            the fold to repeat what the active nav item already says. The
+            wordmark in the top bar carries the brand voice now. */}
+        <header className="mx-auto mb-6 flex max-w-[1280px] items-baseline justify-between gap-6 border-b border-border pb-4 lg:mb-8">
+          <h1 className="font-mono text-label uppercase tracking-[0.14em] text-foreground">
+            run a conduit
           </h1>
-          <div className="text-right font-mono text-[11px] uppercase tracking-[0.12em] leading-relaxed text-muted-foreground">
-            {loading ? "loading…" : `${conduits.length} conduits`}
+          <div className="font-mono text-label uppercase tracking-[0.12em] text-muted-foreground">
+            {/* An em dash, not 0: during a failure the count is unknown, and
+                "0 conduits" asserted something untrue. */}
+            {loading ? "loading…" : error ? "— conduits" : `${conduits.length} conduits`}
           </div>
         </header>
 
         {error ? (
           <div data-testid="dashboard-error" className="mx-auto max-w-[560px] py-20 text-center">
-            <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.12em] text-destructive">
-              Failed to load conduits
+            <div className="mb-3 font-mono text-label uppercase tracking-[0.12em] text-destructive">
+              Can't reach the flow-atelier API
             </div>
-            <div className="mb-6 font-mono text-[11px] text-muted-foreground">{error}</div>
-            <Button variant="outline" size="sm" onClick={refresh}>
+            <div className="mb-6 text-body leading-relaxed text-muted-foreground">
+              Tried <span className="font-mono text-data text-foreground">{BASE_URL}</span>. Check
+              that the server is running, then retry.
+            </div>
+            <details className="mb-6 text-left">
+              <summary className="cursor-pointer font-mono text-mini uppercase tracking-[0.12em] text-muted-foreground hover:text-foreground">
+                details
+              </summary>
+              <p className="mt-2 font-mono text-mini leading-relaxed text-muted-foreground">
+                {error}
+              </p>
+            </details>
+            <Button variant="outline" onClick={refresh}>
               retry
             </Button>
           </div>
         ) : loading ? (
-          <div data-testid="dashboard-loading" className="mx-auto grid max-w-[1280px] grid-cols-1 gap-16 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+          <div data-testid="dashboard-loading" className="mx-auto grid max-w-[1280px] grid-cols-1 gap-10 lg:gap-16 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
             <section>
               <div className="space-y-3">
                 <div className="h-4 w-28 animate-pulse rounded bg-muted" />
@@ -142,7 +179,7 @@ export default function Dashboard() {
             </section>
           </div>
         ) : (
-        <div className="mx-auto grid max-w-[1280px] grid-cols-1 gap-16 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+        <div className="mx-auto grid max-w-[1280px] grid-cols-1 gap-10 lg:gap-16 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
           <section>
             <ConduitPicker selected={selected} onSelect={setSelected} />
             {conduit && (
@@ -155,6 +192,7 @@ export default function Dashboard() {
               onDeleteJob={handleDeleteJob}
               onAddSchedule={() => setAddScheduleOpen(true)}
               refreshKey={refreshKey}
+              autoOpenFlowId={autoOpenFlowId}
               liveRuns={liveRuns}
               onRespondToHitl={answerHITL}
               onCancelRun={cancel}

@@ -48,7 +48,7 @@ export function DateRangePicker({ from, to, onConfirm }: Props) {
         <button
           type="button"
           className={cn(
-            "h-7 cursor-pointer rounded border px-2 font-mono text-[12px] outline-none focus:border-primary",
+            "h-9 cursor-pointer rounded-sm border px-2 font-mono text-label focus:border-primary focus-visible:outline-2 focus-visible:outline-primary",
             hasConfirmed ? "border-primary text-primary" : "border-border text-foreground",
             "bg-background",
           )}
@@ -68,7 +68,7 @@ export function DateRangePicker({ from, to, onConfirm }: Props) {
           <button
             type="button"
             onClick={handleClear}
-            className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground hover:text-foreground"
+            className="font-mono text-mini uppercase tracking-[0.12em] text-muted-foreground hover:text-foreground"
           >
             clear
           </button>

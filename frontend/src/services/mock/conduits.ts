@@ -82,11 +82,7 @@ export const conduits: Conduit[] = [
         description: "Run only if code review approves",
         task: "bun test --smoke",
         dependsOn: ["code_review"],
-        conditionalOn: {
-          task: "code_review",
-          kind: "match",
-          pattern: "APPROVE",
-        },
+        conditions: { "code_review": { kind: "match", pattern: "APPROVE" } },
         position: { x: 560, y: 80 },
       },
       {
@@ -95,11 +91,7 @@ export const conduits: Conduit[] = [
         description: "Only runs if review blocks",
         task: "bash scripts/alert.sh '$service blocked by review'",
         dependsOn: ["code_review"],
-        conditionalOn: {
-          task: "code_review",
-          kind: "not_match",
-          pattern: "APPROVE",
-        },
+        conditions: { "code_review": { kind: "not_match", pattern: "APPROVE" } },
         position: { x: 560, y: 260 },
       },
       {

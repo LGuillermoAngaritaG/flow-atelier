@@ -17,8 +17,7 @@ A web UI for building, scheduling, and running conduit workflows — DAG-based p
 - **XYFlow** — canvas/DAG rendering in the designer
 - **dnd-kit** — drag-and-drop in the kanban board
 - **Radix UI** — accessible primitives (dialogs, selects, tooltips, etc.)
-- **Vitest** — unit tests
-- **Playwright** — end-to-end tests
+- **Vitest** — unit tests (jsdom environment)
 
 ## Getting Started
 
@@ -39,21 +38,30 @@ A `.env` file in the project root (gitignored) is optional — the app runs with
 
 | Variable             | Description                              | Default                  |
 |----------------------|------------------------------------------|--------------------------|
-| `VITE_USE_MOCK_API`  | `"true"` for simulated backend data      | `true`                   |
+| `VITE_USE_MOCK_API`  | `"true"` for simulated backend data      | `false` (real backend)   |
 | `VITE_BACKEND_URL`   | Base URL for the backend API             | serving origin (same as the UI) |
-| `VITE_API_TOKEN`     | Bearer token sent to the backend         | `secret-key`             |
+| `VITE_API_TOKEN`     | Bearer token sent to the backend         | empty (no auth header)   |
 
 When the UI is served by `atelier serve` (the bundled SPA), `VITE_BACKEND_URL`
 defaults to the page's own origin, so the frontend automatically targets
 whatever host:port the server runs on — no URL to keep in sync. Set it only when
 the UI runs on a separate origin (e.g. the Vite dev server on `:5173`).
 
-Mock mode is on by default. To hit a real backend, disable mock mode and point at it:
+`VITE_API_TOKEN` has no default on purpose: a shipped token would be a
+published shared credential. Leave it empty for local use (`atelier serve` runs
+unauthenticated by default) and set it only when the backend is started with a
+matching `ATELIER_API_TOKEN`.
+
+To develop the UI against a backend on another port:
 
 ```
-VITE_USE_MOCK_API=false
 VITE_BACKEND_URL=http://localhost:8000
-VITE_API_TOKEN=your-token
+```
+
+To develop against fixture data with no backend running at all:
+
+```
+VITE_USE_MOCK_API=true
 ```
 
 ### Run the dev server
@@ -74,22 +82,15 @@ Output goes to `dist/`.
 
 ### Sync build to the backend
 
-The production build needs to land in the backend's `dist/` folder so it can serve the frontend. You can do this manually:
+The production build has to land in `flow_atelier/dist/` so the FastAPI app can
+serve it (see `flow_atelier/services/api/app.py`). The `Frontend` CI workflow
+does this automatically on every pull request and commits the result, so you
+normally don't need to. To do it by hand from the repo root:
 
 ```bash
-npm run build
-rm -rf /path/to/backend/dist
-cp -r dist /path/to/backend/dist
-```
-
-Or use the Makefile (set `BACKEND_PATH` to your backend root):
-
-```bash
-# macOS / Linux
-make sync BACKEND_PATH=/path/to/backend
-
-# Windows (requires Git Bash)
-make sync BACKEND_PATH=C:/path/to/backend
+cd frontend && npm run build && cd ..
+rm -rf flow_atelier/dist
+cp -r frontend/dist flow_atelier/dist
 ```
 
 ### Preview the production build

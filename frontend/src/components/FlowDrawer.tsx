@@ -175,7 +175,7 @@ export function FlowDrawer({
                 <Button
                   variant="outline"
                   size="sm"
-                  className="ml-auto font-mono text-[9px]"
+                  className="ml-auto font-mono text-micro"
                   onClick={onOpenPath}
                   data-testid="flow-drawer-open-path"
                 >
@@ -222,7 +222,7 @@ export function FlowDrawer({
                 duration={duration}
               />
             ) : (
-              <div className="font-mono text-[11px] text-muted-foreground">
+              <div className="font-mono text-label text-muted-foreground">
                 No flow data available.
               </div>
             )
@@ -230,7 +230,7 @@ export function FlowDrawer({
         </ScrollArea>
 
         <div className="flex items-center justify-between gap-3 border-t border-border p-4">
-          <div className="font-mono text-[10px] text-muted-foreground">
+          <div className="font-mono text-mini text-muted-foreground">
           </div>
           {onRemove && (
             <Button
@@ -334,7 +334,7 @@ function ExpandableTasks({
 
   return (
     <section className="mb-4">
-      <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+      <div className="mb-2 font-mono text-mini uppercase tracking-[0.14em] text-muted-foreground">
         tasks
       </div>
       <ul className="space-y-0.5">
@@ -349,7 +349,7 @@ function ExpandableTasks({
               <button
                 type="button"
                 onClick={() => toggle(st.name)}
-                className="flex w-full items-center gap-2 rounded px-1 py-1.5 font-mono text-[11px] text-left hover:bg-muted/40 transition-colors"
+                className="flex w-full items-center gap-2 rounded px-1 py-1.5 font-mono text-label text-left hover:bg-muted/40 transition-colors"
               >
                 <ChevronRight
                   className={cn(
@@ -369,7 +369,7 @@ function ExpandableTasks({
                 />
                 <span className="flex-1 truncate">{st.name}</span>
                 {st.durationMs != null && (
-                  <span className="shrink-0 text-[10px] text-muted-foreground/70">
+                  <span className="shrink-0 text-mini text-muted-foreground">
                     {fmtMSS(st.durationMs)}
                   </span>
                 )}
@@ -385,7 +385,7 @@ function ExpandableTasks({
                 <div className="ml-5 border-l border-border pl-3 pb-1">
                   <div
                     ref={isOpen && st.status === "running" ? logsRef : undefined}
-                    className="max-h-[200px] overflow-auto bg-background px-2 py-1.5 font-mono text-[11px] leading-relaxed text-muted-foreground"
+                    className="max-h-[200px] overflow-auto bg-background px-2 py-1.5 font-mono text-label leading-relaxed text-muted-foreground"
                   >
                     {taskLogs.map((line, i) => (
                       <div
@@ -397,7 +397,7 @@ function ExpandableTasks({
                           line.level === "err" && "text-destructive",
                         )}
                       >
-                        <span className="text-muted-foreground/60">
+                        <span className="text-muted-foreground">
                           {fmtClock(line.t)}{" "}
                         </span>
                         {line.text}
@@ -454,7 +454,7 @@ function NestedConduitTasks({
 
   return (
     <div className="ml-5 border-l border-primary/30 pl-3 pb-1">
-      <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.12em] text-primary/70">
+      <div className="mb-1 font-mono text-micro uppercase tracking-[0.12em] text-primary/70">
         {childRun.conduitName}
       </div>
       <ul className="space-y-0.5">
@@ -467,7 +467,7 @@ function NestedConduitTasks({
               <button
                 type="button"
                 onClick={() => toggle(name)}
-                className="flex w-full items-center gap-2 rounded px-1 py-1 font-mono text-[10px] text-left hover:bg-muted/40 transition-colors"
+                className="flex w-full items-center gap-2 rounded px-1 py-1 font-mono text-mini text-left hover:bg-muted/40 transition-colors"
               >
                 <ChevronRight
                   className={cn(
@@ -487,7 +487,7 @@ function NestedConduitTasks({
                 />
                 <span className="flex-1 truncate">{name}</span>
                 {childDurations.has(name) && (
-                  <span className="shrink-0 text-[9px] text-muted-foreground/70">
+                  <span className="shrink-0 text-micro text-muted-foreground">
                     {fmtMSS(childDurations.get(name)!)}
                   </span>
                 )}
@@ -497,7 +497,7 @@ function NestedConduitTasks({
                 <div className="ml-4 border-l border-border pl-2 pb-1">
                   <div
                     ref={isOpen && status === "running" ? logsRef : undefined}
-                    className="max-h-[160px] overflow-auto bg-background px-2 py-1 font-mono text-[10px] leading-relaxed text-muted-foreground"
+                    className="max-h-[160px] overflow-auto bg-background px-2 py-1 font-mono text-mini leading-relaxed text-muted-foreground"
                   >
                     {taskLogs.map((line, i) => (
                       <div
@@ -509,7 +509,7 @@ function NestedConduitTasks({
                           line.level === "err" && "text-destructive",
                         )}
                       >
-                        <span className="text-muted-foreground/60">
+                        <span className="text-muted-foreground">
                           {fmtClock(line.t)}{" "}
                         </span>
                         {line.text}
@@ -551,13 +551,13 @@ function LogsSection({
 
   return (
     <section className="mb-4">
-      <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+      <div className="mb-2 font-mono text-mini uppercase tracking-[0.14em] text-muted-foreground">
         logs
       </div>
       <div
         ref={logsRef}
         data-testid="drawer-logs"
-        className="max-h-[260px] overflow-auto border border-border bg-background px-3 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground"
+        className="max-h-[260px] overflow-auto border border-border bg-background px-3 py-2 font-mono text-label leading-relaxed text-muted-foreground"
       >
         {globalLines.map((line, i) => (
           <div
@@ -569,7 +569,7 @@ function LogsSection({
               line.level === "err" && "text-destructive",
             )}
           >
-            <span className="text-muted-foreground/60">
+            <span className="text-muted-foreground">
               {fmtClock(line.t)}{" "}
             </span>
             {line.text}
@@ -577,7 +577,7 @@ function LogsSection({
         ))}
       </div>
       {startedAt && (
-        <div className="mt-1 font-mono text-[10px] text-muted-foreground">
+        <div className="mt-1 font-mono text-mini text-muted-foreground">
           {globalLines.length} lines · {fmtDuration(duration ?? Date.now() - startedAt)} elapsed
         </div>
       )}
@@ -624,7 +624,7 @@ function HitlSection({
 
   return (
     <section className="mb-4">
-      <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.14em] text-orange-400">
+      <div className="mb-2 font-mono text-mini uppercase tracking-[0.14em] text-warning">
         {hitl.taskName
           ? `awaiting human input for task: ${hitl.taskName}`
           : "awaiting human input"}
@@ -634,7 +634,7 @@ function HitlSection({
           {responses.map((r, i) => (
             <div
               key={i}
-              className="border border-border bg-background px-3 py-1.5 font-mono text-[11px] text-foreground"
+              className="border border-border bg-background px-3 py-1.5 font-mono text-label text-foreground"
             >
               {r}
             </div>
@@ -649,11 +649,11 @@ function HitlSection({
               <div key={f.name} className="space-y-1">
                 <label
                   htmlFor={`hitl-${f.name}`}
-                  className="block font-mono text-[9px] uppercase tracking-[0.12em] text-orange-400"
+                  className="block font-mono text-micro uppercase tracking-[0.12em] text-warning"
                 >
                   {f.name}
                 </label>
-                <div className="font-mono text-[11px] text-muted-foreground">
+                <div className="font-mono text-label text-muted-foreground">
                   {f.description}
                 </div>
                 <input
@@ -664,12 +664,12 @@ function HitlSection({
                     if (isError) setErrors((prev) => prev.filter((n) => n !== f.name));
                   }}
                   placeholder="Type your response…"
-                  className={`w-full border-0 border-b bg-transparent pb-1.5 font-mono text-[11px] text-foreground outline-none focus:border-orange-500 ${
+                  className={`w-full border-0 border-b bg-transparent pb-1.5 font-mono text-label text-foreground focus:border-warning ${
                     isError ? "border-destructive" : "border-border"
                   }`}
                 />
                 {isError && (
-                  <div className="font-mono text-[10px] text-destructive">
+                  <div className="font-mono text-mini text-destructive">
                     {f.name} is required
                   </div>
                 )}
@@ -677,12 +677,12 @@ function HitlSection({
             );
           })}
           {errors.length > 0 && (
-            <div className="font-mono text-[10px] text-destructive">
+            <div className="font-mono text-mini text-destructive">
               Please fill in the required fields above.
             </div>
           )}
           <div className="flex gap-1.5">
-            <Button type="submit" size="sm" className="flex-1 text-[9px]">
+            <Button type="submit" size="sm" className="flex-1 text-micro">
               resume
             </Button>
           </div>
