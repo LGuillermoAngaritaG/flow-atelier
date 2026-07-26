@@ -1,4 +1,4 @@
-flow-atelier
+![flow-atelier](./atelier.jpg)
 
 # Flow Atelier
 
@@ -45,11 +45,11 @@ atelier serve                            # opens the visual editor on :8000
 The designer lays a conduit out by dependency depth, so each column is a set of
 steps that can run at the same time:
 
-Designer
+![Designer](./docs/img/designer.jpg)
 
 Runs stream to the dashboard, including the human-approval gates:
 
-Dashboard
+![Dashboard](./docs/img/dashboard.jpg)
 
 ## How it compares
 
