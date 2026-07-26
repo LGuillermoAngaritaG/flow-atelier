@@ -25,7 +25,9 @@ import os
 import platform
 import sys
 import threading
+import time
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 OWNER = "LGuillermoAngaritaG"
@@ -245,13 +247,58 @@ def _do_swap() -> None:
 # Public entry point
 # ---------------------------------------------------------------------------
 
+CHECK_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+def _stamp_path() -> Path:
+    """Return the throttle stamp's location, under the global atelier dir.
+
+    Resolved per call rather than at import: ``global_atelier_dir`` is
+    configurable, and binding it at module import would pin whatever ``HOME``
+    happened to be set to when this module was first loaded.
+
+    :returns: path to the last-update-check stamp file.
+    """
+    from flow_atelier.core.settings import AtelierSettings
+
+    return AtelierSettings().global_atelier_dir / ".last-update-check"
+
+
+def _due_for_check(now: float) -> bool:
+    """Return True at most once per :data:`CHECK_INTERVAL_SECONDS`, and stamp it.
+
+    Without this the hint prints on *every* command (noise in scripts and
+    pipes) and the frozen binary calls the GitHub API on every invocation,
+    which burns the 60/hour unauthenticated rate limit. A stamp that can't be
+    read or written fails open: the check runs, it just isn't throttled.
+
+    :param now: current wall-clock time, seconds since the epoch.
+    :returns: True when a check should run now.
+    """
+    stamp = _stamp_path()
+    try:
+        if now - stamp.stat().st_mtime < CHECK_INTERVAL_SECONDS:
+            return False
+    except OSError:
+        pass  # missing or unreadable stamp — treat as due
+    try:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+    except OSError:
+        pass  # read-only HOME: check every time rather than never
+    return True
+
+
 def start_background_update_check() -> None:
     """Spawn the background update-check thread (or print a pip hint).
 
     Called from the CLI root callback.  No-op when
-    ``ATELIER_NO_UPDATE_CHECK=1`` is set.
+    ``ATELIER_NO_UPDATE_CHECK=1`` is set, and throttled to once a day.
     """
     if os.environ.get("ATELIER_NO_UPDATE_CHECK") == "1":
+        return
+
+    if not _due_for_check(time.time()):
         return
 
     if not is_frozen_binary():
