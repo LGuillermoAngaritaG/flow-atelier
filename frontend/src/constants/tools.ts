@@ -59,8 +59,51 @@ export const TOOL_META: ToolMeta[] = [
     desc: "Cursor harness",
     color: "var(--color-tool-cursor)",
   },
+  {
+    name: "harness:gemini",
+    desc: "Gemini CLI harness",
+    color: "var(--color-tool-gemini)",
+  },
+  {
+    name: "harness:qwen-code",
+    desc: "Qwen Code harness",
+    color: "var(--color-tool-qwen-code)",
+  },
+  {
+    name: "harness:goose",
+    desc: "goose harness",
+    color: "var(--color-tool-goose)",
+  },
+  {
+    name: "harness:amp-acp",
+    desc: "Amp harness",
+    color: "var(--color-tool-amp-acp)",
+  },
+  {
+    name: "harness:cline",
+    desc: "Cline harness",
+    color: "var(--color-tool-cline)",
+  },
+  {
+    name: "harness:auggie",
+    desc: "Auggie CLI harness",
+    color: "var(--color-tool-auggie)",
+  },
 ];
 
-export const TOOL_COLORS: Record<ToolType, string> = Object.fromEntries(
+const TOOL_COLOR_BY_NAME: Record<string, string> = Object.fromEntries(
   TOOL_META.map((t) => [t.name, t.color]),
-) as Record<ToolType, string>;
+);
+
+/**
+ * Colour for a tool, falling back for agents the palette doesn't enumerate.
+ *
+ * `TOOL_META` is the designer's default palette, not the set of legal tools:
+ * a conduit may name any ACP agent the backend has registered (see
+ * `atelier harness list`). Those still have to render, so unknown harnesses
+ * share one colour rather than resolving to `undefined` and inheriting
+ * whatever the surrounding text happens to be.
+ */
+export function toolColor(tool: ToolType): string {
+  return TOOL_COLOR_BY_NAME[tool] ?? "var(--color-tool-harness-other)";
+}

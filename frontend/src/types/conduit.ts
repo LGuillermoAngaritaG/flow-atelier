@@ -1,12 +1,16 @@
-export type ToolType =
-  | "tool:bash"
-  | "tool:hitl"
-  | "tool:conduit"
-  | "harness:claude-code"
-  | "harness:codex"
-  | "harness:opencode"
-  | "harness:copilot"
-  | "harness:cursor";
+/** Tools backed by flow-atelier's own executors. A closed set. */
+export type BuiltinToolType = "tool:bash" | "tool:hitl" | "tool:conduit";
+
+/**
+ * Any ACP agent, named by its ACP-registry id (`harness:gemini`) or by a
+ * command the user declared in `ATELIER_HARNESSES`. Open by design: the
+ * backend resolves the name against its executor registry, so pinning this
+ * to a fixed list here would reject conduits the engine runs happily.
+ * `TOOL_META` still enumerates the ones the designer offers by default.
+ */
+export type HarnessToolType = `harness:${string}`;
+
+export type ToolType = BuiltinToolType | HarnessToolType;
 
 /** A gate on one dependency edge: run only if the source output (not) matches. */
 export interface TaskCondition {

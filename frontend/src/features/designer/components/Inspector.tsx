@@ -5,7 +5,7 @@ import { hintStr, slugifyTaskName } from "@/types/conduit";
 import { Badge } from "@/components/ui/badge";
 import { withoutCondition } from "@/utils/conditions";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import { TOOL_COLORS } from "@/constants/tools";
+import { toolColor } from "@/constants/tools";
 
 interface Props {
   task: ConduitTask | undefined;
@@ -142,7 +142,7 @@ export function Inspector({ task, conduit, conduits, onUpdateTask, conduitInputs
         </div>
         <div
           className="mt-1 font-mono text-data font-bold leading-tight"
-          style={{ color: TOOL_COLORS[task.tool] ?? "var(--color-foreground)" }}
+          style={{ color: toolColor(task.tool) }}
         >
           {task.tool}
         </div>

@@ -49,6 +49,14 @@
   --color-tool-opencode: oklch(0.78 0.12 170);
   --color-tool-copilot: oklch(0.78 0.12 240);
   --color-tool-cursor: oklch(0.78 0.13 310);
+  --color-tool-gemini: oklch(0.79 0.12 285);
+  --color-tool-qwen-code: oklch(0.79 0.12 330);
+  --color-tool-goose: oklch(0.79 0.12 120);
+  --color-tool-amp-acp: oklch(0.79 0.12 20);
+  --color-tool-cline: oklch(0.79 0.12 185);
+  --color-tool-auggie: oklch(0.79 0.12 90);
+  /* Any ACP agent outside the default palette. */
+  --color-tool-harness-other: oklch(0.79 0.03 60);
 }
 
 /* Named stacking layers. Anything that overlaps across components picks a name

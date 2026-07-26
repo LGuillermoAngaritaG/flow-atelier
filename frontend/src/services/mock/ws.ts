@@ -15,11 +15,9 @@ function baseDurationFor(tool: ToolType): number {
       return 200;
     case "tool:conduit":
       return intBetween(rng, 1000, 1400);
-    case "harness:claude-code":
-    case "harness:codex":
-    case "harness:opencode":
-    case "harness:copilot":
-    case "harness:cursor":
+    default:
+      // Any harness:* agent. Enumerating them here would go stale every
+      // time the ACP registry gains an entry.
       return intBetween(rng, 1500, 2300);
   }
 }

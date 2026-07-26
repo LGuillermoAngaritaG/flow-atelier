@@ -3,7 +3,7 @@ import type { Task } from "@/types/task";
 import { useConduits, getConduitSync } from "@/services/ConduitProvider";
 import { useTaskStore } from "@/runner";
 import { cancelTask as cancelEngine } from "@/runner";
-import { TOOL_COLORS } from "@/constants/tools";
+import { toolColor } from "@/constants/tools";
 import { cn } from "@/lib/cn";
 
 interface Props {
@@ -90,7 +90,7 @@ export function TaskCardRunning({ task: initialTask, selected, onClick }: Props)
         <div className="mt-0.5 flex items-center gap-1.5">
           <span
             className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
-            style={{ backgroundColor: TOOL_COLORS[task.tool] ?? "var(--color-muted-foreground)" }}
+            style={{ backgroundColor: toolColor(task.tool) }}
           />
           <span className="font-mono text-micro text-muted-foreground truncate">{task.tool}</span>
         </div>
