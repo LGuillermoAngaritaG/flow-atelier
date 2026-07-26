@@ -160,7 +160,7 @@ def read_package(repo_dir: Path) -> PackageManifest:
     """Load the package manifest, or fall back to directory discovery.
 
     Schedules are never read (D7). When ``atelier-package.yaml`` is absent the
-    fallback discovers conduits/skills from the on-disk layout and warns, so a
+    fallback discovers conduits from the on-disk layout and warns, so a
     partial install doesn't read as success.
 
     :param repo_dir: package root directory (a fetched cache dir).
