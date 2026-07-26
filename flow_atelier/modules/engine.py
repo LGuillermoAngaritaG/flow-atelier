@@ -49,7 +49,12 @@ from flow_atelier.schemas.conduit import (
     ToolType,
 )
 from flow_atelier.schemas.flow import parse_flow_id
-from flow_atelier.schemas.log import ExecutionResult, LogEntry, TaskEvent
+from flow_atelier.schemas.log import (
+    ExecutionResult,
+    LogEntry,
+    StepRecord,
+    TaskEvent,
+)
 from flow_atelier.schemas.progress import FlowStatus, Progress, TaskProgress, TaskStatus
 from flow_atelier.services.executor.base import ExecutorBase, FlowContext
 from flow_atelier.services.executor.bash import to_bash_path
@@ -489,7 +494,7 @@ class Engine:
                     stderr=result.stderr,
                     success=result.success,
                     status=TaskStatus.completed if result.success else TaskStatus.failed,
-                    live_streamed=t.interactive,
+                    live_streamed=result.live_streamed or t.interactive,
                     steps=result.steps,
                 )
             )
@@ -681,6 +686,25 @@ class Engine:
                     conduit_dir=conduit_dir,
                 )
 
+                def _make_step_sink(iteration: int):
+                    """Build the per-iteration live step persistence hook.
+
+                    :param iteration: 1-based iteration the steps belong to.
+                    :returns: coroutine function appending one step to the store.
+                    """
+
+                    async def _persist(step) -> None:
+                        """Append one live step record for this iteration.
+
+                        :param step: the :class:`IntermediateStep` to persist.
+                        """
+                        await self.store.append_step(
+                            flow_id,
+                            StepRecord(task=t.name, iteration=iteration, step=step),
+                        )
+
+                    return _persist
+
                 # Pre-parse the loop predicate once per task. Schema enforces
                 # that at most one of `until` / `while_` is set, so we end up
                 # with a single (compiled_pattern, negate) plus a mode tag.
@@ -707,6 +731,9 @@ class Engine:
                     # resume history must not insta-trip the guard.
                     stagnant_streak = 0
                     for iteration in range(start_iteration, t.repeat + 1):
+                        # Rebound per iteration so persisted steps carry the
+                        # iteration they actually belong to.
+                        ctx.on_step = _make_step_sink(iteration)
                         if iteration > start_iteration:
                             try:
                                 resolved = _resolve_task()

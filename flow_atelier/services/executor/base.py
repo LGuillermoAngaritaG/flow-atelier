@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from flow_atelier.schemas.conduit import TaskDefinition
-from flow_atelier.schemas.log import ExecutionResult
+from flow_atelier.schemas.log import ExecutionResult, IntermediateStep
 from flow_atelier.services.store.base import StoreBase
 
 
@@ -31,6 +31,11 @@ class FlowContext:
     """Stream intermediate steps (thinking, tool calls, tool results) to the
     executor's :class:`PromptSink` as they happen. Independent of
     ``task.interactive`` (which gates raw message-chunk streaming)."""
+    on_step: Callable[[IntermediateStep], Awaitable[None]] | None = None
+    """Persist one intermediate step the moment it arrives. The engine only
+    writes a :class:`LogEntry` once a task returns, so without this a run
+    that is stopped or crashes loses its whole trace, and a running flow is
+    not tailable from another terminal. ``None`` disables persistence."""
     run_nested_conduit: Callable[[str, dict[str, Any], str], Awaitable[str]] | None = None
     """Callback: (conduit_name, inputs, parent_flow_id) -> child flow_id."""
     loop_history: list[str] = field(default_factory=list)

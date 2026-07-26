@@ -4,6 +4,7 @@ Nothing outside ``flow_atelier.cli`` should import from this module.
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime
 
 import typer
@@ -16,6 +17,26 @@ from flow_atelier.schemas.progress import Progress
 from flow_atelier.services.scheduler import ScheduleStore
 
 console = Console()
+
+# Monotonic timestamp of the last thing written to the run stream. The
+# heartbeat reads it to stay quiet while output is already flowing and
+# speak up only during genuine silence (npx cold start, a long tool call,
+# a tool:bash task that emits no steps at all).
+_last_activity: float = time.monotonic()
+
+
+def mark_activity() -> None:
+    """Record that something was just written to the run stream."""
+    global _last_activity
+    _last_activity = time.monotonic()
+
+
+def seconds_since_activity() -> float:
+    """Return seconds elapsed since the last :func:`mark_activity` call.
+
+    :returns: seconds of silence on the run stream.
+    """
+    return time.monotonic() - _last_activity
 
 
 def _parse_inputs(pairs: list[str]) -> dict[str, str]:

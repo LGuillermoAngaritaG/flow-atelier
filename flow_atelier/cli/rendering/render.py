@@ -1,6 +1,8 @@
 """Rich rendering helpers for the CLI presentation layer."""
 from __future__ import annotations
 
+import json
+import re
 from collections import Counter
 
 import yaml
@@ -23,34 +25,226 @@ from flow_atelier.schemas.log import IntermediateStep, StepKind, TaskEvent
 from flow_atelier.schemas.progress import FlowStatus, Progress, TaskStatus
 from flow_atelier.services.scheduler import PlannedJob
 
+# Payload keys worth showing next to a tool name, most specific first.
+# Covers the common harness tools: Bash, Read/Write/Edit, Grep/Glob, Task,
+# WebFetch/WebSearch. Anything unmatched falls back to compact ``k=v`` pairs.
+_TOOL_ARG_KEYS: tuple[str, ...] = (
+    "command",
+    "pattern",
+    "query",
+    "file_path",
+    "path",
+    "url",
+    "prompt",
+    "description",
+)
 
-def _render_step(step: IntermediateStep) -> Text:
+_STEP_ARG_CHARS = 90
+
+# Backstop on a single result panel. Task output is printed in full — it is the
+# product of the run and the reader may be an agent that cannot go and fetch
+# what an ellipsis dropped — but the producer is unbounded: `BashExecutor`
+# accumulates stdout with no cap, so `cat big.log` would otherwise wedge the
+# terminal and force Rich to word-wrap the whole thing. Set far above any real
+# task output, and the store always keeps the untruncated text.
+PANEL_MAX_CHARS = 100_000
+
+# Backstop on a rendered step timeline, for the same reason as
+# `PANEL_MAX_CHARS` and on the axis that actually blows up here: step *count*,
+# not character count. The producer is unbounded — an agent task can emit tens
+# of thousands of steps — and the timeline is the only view of a run that was
+# stopped or crashed, which is precisely the long-running case. The oldest
+# steps are dropped: a post-mortem reads from the end.
+TIMELINE_MAX_STEPS = 500
+
+# Values worth hiding when a tool call is echoed to the terminal. Payloads were
+# always persisted, but they are now *rendered*, so a token in a `curl -H` or a
+# connection string ends up on screen and in whatever the user pastes into an
+# issue. Best-effort by design: this reduces casual leakage, it is not a
+# guarantee, and the store still holds the unredacted text.
+_SECRET_RE = re.compile(
+    r"""(?xi)
+    (?:
+        # `Bearer <token>` / `Authorization: <scheme> <token>`
+        (?<=\bbearer\ )[\w\-.~+/]{8,}=*
+      | (?<=\bbasic\ )[\w\-.~+/]{8,}=*
+        # Well-known key prefixes (OpenAI, Anthropic, GitHub, Slack, AWS)
+      | \b(?:sk|pk|rk)-[\w\-]{12,}
+      | \bsk-ant-[\w\-]{12,}
+      | \bgh[pousr]_[A-Za-z0-9]{16,}
+      | \bxox[baprs]-[A-Za-z0-9\-]{10,}
+      | \bAKIA[0-9A-Z]{16}\b
+        # `--token X` / `--password=X`. The `--` prefix makes it unambiguously
+        # a flag, so a bare space is enough to delimit the value.
+      | --\w*(?:token|secret|password|passwd|api[_-]?key)\w*(?:[\s=]+)\S+
+        # `TOKEN=X`, `api_key: X`. No `--` to disambiguate, so require an
+        # explicit `=`/`:` — otherwise "the token is missing" masks "is".
+      | \b\w*(?:token|secret|password|passwd|api[_-]?key)\w*\s*[=:]\s*\S+
+    )
+    """
+)
+
+_REDACTED = "***"
+
+
+def _redact(text: str) -> str:
+    """Mask credential-shaped substrings before echoing ``text`` to a terminal.
+
+    Best-effort: a heuristic that catches the common shapes (bearer tokens,
+    vendor key prefixes, ``--password``/``TOKEN=`` style flags), not a
+    guarantee that nothing sensitive gets through. Applied on the render path
+    only — the store keeps the original so a post-mortem is not lossy.
+
+    :param text: raw payload text about to be displayed.
+    :returns: ``text`` with credential-shaped runs replaced by ``***``.
+    """
+    return _SECRET_RE.sub(_REDACTED, text)
+
+
+def _condense(text: str, limit: int = _STEP_ARG_CHARS) -> str:
+    """Collapse whitespace, redact credentials, and truncate for one line.
+
+    Every payload that reaches the terminal funnels through here, so this is
+    where :func:`_redact` runs — redacting at each call site instead would
+    mean a new display path silently skips it.
+
+    :param text: raw text to flatten onto one line.
+    :param limit: maximum characters to keep before eliding.
+    :returns: whitespace-collapsed text, elided with ``…`` when over ``limit``.
+    """
+    flat = _redact(" ".join(text.split()))
+    return flat if len(flat) <= limit else flat[:limit] + "…"
+
+
+def _tool_arg(step: IntermediateStep) -> str:
+    """Return the one detail that says *what* a tool call is doing.
+
+    A bare ``🔧 Bash`` is unreadable; ``🔧 Bash  pytest tests/ -x`` is not.
+    Prefers an ACP-reported file location, then a known payload key, then a
+    compact rendering of the first payload fields.
+
+    :param step: a ``tool_call`` step whose argument should be summarized.
+    :returns: a single-line argument summary, or ``""`` when nothing useful.
+    """
+    if step.locations:
+        return _condense(step.locations[0])
+    if not step.tool_input:
+        return ""
+    try:
+        data = json.loads(step.tool_input)
+    except ValueError:
+        # Truncated mid-JSON (see TOOL_PAYLOAD_CHARS) or a non-JSON payload.
+        return _condense(step.tool_input)
+    if not isinstance(data, dict):
+        return _condense(str(data))
+    for key in _TOOL_ARG_KEYS:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return _condense(value)
+    return _condense(", ".join(f"{k}={v}" for k, v in list(data.items())[:2]))
+
+
+def _render_step(step: IntermediateStep, task: str = "") -> Text:
     """Render a single intermediate step as a compact Rich Text line.
 
     - Thinking: ``  💭 {text[:120]}...`` dim italic
-    - Tool call: ``  🔧 {tool_name}  {location}`` bold dim + dim
-    - Tool result: ``     ✓ status`` or ``     ✗ status`` green/red
+    - Tool call: ``  🔧 {tool_name}  {argument}`` bold dim + dim
+    - Tool result: ``     ✓ status`` or ``     ✗ status {output}`` green/red
 
     :param step: the intermediate step to render.
+    :param task: owning task name; when given it is prefixed to the line so
+        steps stay attributable while parallel tasks stream into one console.
     """
     t = Text()
+    if task:
+        t.append(f"  {task} ", style="cyan")
+    else:
+        t.append("  ")
     if step.kind == StepKind.thinking:
         truncated = step.text[:120] + ("..." if len(step.text) > 120 else "")
-        t.append("  💭 ", style="dim italic")
+        t.append("💭 ", style="dim italic")
         t.append(truncated, style="dim italic")
     elif step.kind == StepKind.tool_call:
-        loc = f"  {step.locations[0]}" if step.locations else ""
-        t.append("  🔧 ", style="dim")
+        t.append("🔧 ", style="dim")
         t.append(step.tool_name, style="bold dim")
-        if loc:
-            t.append(loc, style="dim")
+        arg = _tool_arg(step)
+        if arg:
+            t.append(f"  {arg}", style="dim")
     elif step.kind == StepKind.tool_result:
         if step.tool_status == "failed":
-            t.append("     ✗ ", style="red")
+            t.append("   ✗ ", style="red")
             t.append(step.tool_status, style="red")
+            if step.tool_output:
+                t.append(f"  {_condense(step.tool_output)}", style="red dim")
         else:
-            t.append("     ✓ ", style="green")
+            t.append("   ✓ ", style="green")
             t.append(step.tool_status, style="green")
+    return t
+
+
+def render_agent_message(text: str, task: str = "") -> Text:
+    """Render what the agent said, in full.
+
+    Never truncated. This stream is read by other agents as well as by
+    people, and a machine reader cannot recover what an ellipsis dropped —
+    it would have to go find the flow's logs on disk. Tool *calls* collapse
+    because which tool ran is cheap to summarize; what the agent actually
+    said is the payload.
+
+    Continuation lines are emitted verbatim, not re-indented under the
+    marker. Padding them to the tag column looks tidier but rewrites the
+    content: it turns a four-space code block into a nine-space one, and
+    what is on screen is what a reader — human or agent — copies out. The
+    text is not stripped either, so interior blank lines and leading
+    indentation survive. This matters because ``ExecutionResult`` sets
+    ``live_streamed`` once a message has streamed, which suppresses the
+    result panel that would otherwise carry the pristine copy.
+
+    :param text: agent message text.
+    :param task: owning task name, prefixed when given.
+    """
+    t = Text()
+    t.append(f"  {task} " if task else "  ", style="cyan")
+    t.append("💬 ", style="white")
+    lines = text.splitlines() or [""]
+    t.append(lines[0])
+    for line in lines[1:]:
+        t.append(f"\n{line}")
+    return t
+
+
+def render_tool_burst_start(task: str = "") -> Text:
+    """Render the marker opening a run of tool calls.
+
+    :param task: owning task name, prefixed when given.
+    """
+    t = Text()
+    t.append(f"  {task} " if task else "  ", style="cyan")
+    t.append("🔧 ", style="dim")
+    t.append("using tools…", style="dim")
+    return t
+
+
+def render_tool_burst_summary(counts: Counter[str], task: str = "") -> Text:
+    """Render the tally closing a run of tool calls.
+
+    One line per burst instead of one per call: an agent that makes forty
+    tool calls in a row buries everything else on screen otherwise. The
+    per-call detail is still recorded — see ``atelier logs --show steps``.
+
+    :param counts: tool name to number of calls in this burst.
+    :param task: owning task name, prefixed when given.
+    """
+    total = sum(counts.values())
+    breakdown = ", ".join(
+        f"{name} {n}" if n > 1 else name
+        for name, n in counts.most_common()
+    )
+    t = Text()
+    t.append(f"  {task} " if task else "  ", style="cyan")
+    t.append(f"   used {total} tool{'s' if total != 1 else ''}", style="dim")
+    if breakdown:
+        t.append(f" ({breakdown})", style="dim")
     return t
 
 
@@ -64,48 +258,88 @@ def _render_orchestration_msg(text: str) -> Text:
     return t
 
 
-def _truncate_tail(text: str, max_lines: int = 20) -> tuple[str, int]:
-    """Return ``(displayed_text, dropped_line_count)``.
+def render_task_start(
+    task_name: str, tool: str, index: int, total: int, verb: str = "running"
+) -> Text:
+    """Render the banner announcing a task entering the running state.
 
-    Keeps only the last ``max_lines`` lines of ``text``. If the input has
-    ``max_lines`` or fewer lines, returns it unchanged with a dropped count
-    of zero.
+    Deliberately louder than :func:`_render_orchestration_msg`: this is the
+    heading the step lines below it belong to, so it must not look like one
+    of them. Includes ``[i/total]`` so a long flow shows how far along it is.
 
-    :param text: raw text to truncate from the top
-    :param max_lines: maximum number of trailing lines to keep
-    :returns: tuple of the retained text and how many lines were dropped
+    :param task_name: name of the task starting.
+    :param tool: tool identifier executing the task.
+    :param index: 1-based position among the tasks started so far.
+    :param total: total tasks in the conduit, or ``0`` when unknown.
+    :param verb: leading verb, e.g. ``running`` or ``resuming``.
     """
-    if not text:
-        return "", 0
-    lines = text.splitlines()
-    if len(lines) <= max_lines:
-        return "\n".join(lines), 0
-    dropped = len(lines) - max_lines
-    return "\n".join(lines[-max_lines:]), dropped
+    t = Text()
+    t.append("▶ ", style="bold cyan")
+    if total:
+        t.append(f"[{index}/{total}] ", style="dim")
+    t.append(task_name, style="bold")
+    t.append(f"  [{tool}]", style="dim")
+    if verb != "running":
+        t.append(f"  {verb}", style="dim italic")
+    return t
 
 
-def _truncated_section(text: str, max_lines: int = 20) -> Text:
-    """Truncate ``text`` to its last ``max_lines`` lines and return a
-    Rich :class:`Text` with an italic-dim header noting the dropped count.
+def render_heartbeat(elapsed_by_task: dict[str, float]) -> Text:
+    """Render the "still working" line shown during output silence.
 
-    :param text: raw text to truncate from the top.
-    :param max_lines: maximum number of trailing lines to keep.
+    A run can go quiet for minutes with nothing wrong: an ``npx`` cold
+    start before the first step, a long-running tool call, or a
+    ``tool:bash`` task that emits no steps at all. Naming the tasks and
+    their elapsed time distinguishes "still working" from "hung".
+
+    :param elapsed_by_task: running task name to seconds elapsed.
+    :returns: a dim single-line status, e.g. ``· still working — build 2m 14s``.
     """
-    displayed, dropped = _truncate_tail(text, max_lines=max_lines)
+    t = Text()
+    t.append("· still working", style="dim")
+    if elapsed_by_task:
+        parts = [
+            f"{name} {_format_duration_seconds(seconds)}"
+            for name, seconds in elapsed_by_task.items()
+        ]
+        t.append(f" — {' · '.join(parts)}", style="dim")
+    return t
+
+
+def _bounded(text: str) -> Text:
+    """Return ``text`` as Rich :class:`Text`, capped at :data:`PANEL_MAX_CHARS`.
+
+    Keeps the tail, which is where a failing task's diagnostic lives, and
+    names both how much was dropped and where the whole thing still is. Real
+    output is never near the cap; this only fires on a runaway producer.
+
+    :param text: raw body text to render.
+    :returns: the text, prefixed with a truncation notice when over the cap.
+    """
+    if len(text) <= PANEL_MAX_CHARS:
+        return Text(text)
     body = Text()
-    if dropped:
-        body.append(f"… ({dropped} lines truncated)\n", style="dim italic")
-    body.append(displayed)
+    body.append(
+        f"… ({len(text) - PANEL_MAX_CHARS} characters truncated — "
+        f"full output in `atelier logs`)\n",
+        style="dim italic",
+    )
+    body.append(text[-PANEL_MAX_CHARS:])
     return body
 
 
 def _build_failure_body(stdout: str, stderr: str) -> Text:
-    """Render a failure body that always surfaces stderr.
+    """Render a failure body that always surfaces stderr, in full.
 
     - Both empty → ``(empty)``.
-    - Only one populated → the existing single-body (truncated) form.
+    - Only one populated → that stream alone.
     - Both populated → labelled sections so the diagnostic stderr is
       visible alongside the stdout context.
+
+    Nothing is elided short of :data:`PANEL_MAX_CHARS`. A failing task's
+    output is the whole reason anyone is reading this panel, and the reader
+    may be another agent that cannot go and fetch the dropped lines from the
+    store.
 
     :param stdout: captured stdout text from the failed task.
     :param stderr: captured stderr text from the failed task.
@@ -115,15 +349,15 @@ def _build_failure_body(stdout: str, stderr: str) -> Text:
     if not has_stdout and not has_stderr:
         return Text("(empty)")
     if has_stdout and not has_stderr:
-        return _truncated_section(stdout)
+        return _bounded(stdout)
     if has_stderr and not has_stdout:
-        return _truncated_section(stderr)
+        return _bounded(stderr)
     body = Text()
     body.append("stdout:\n", style="dim bold")
-    body.append(_truncated_section(stdout))
+    body.append(_bounded(stdout))
     body.append("\n\n")
     body.append("stderr:\n", style="bold red")
-    body.append(_truncated_section(stderr))
+    body.append(_bounded(stderr))
     return body
 
 
@@ -147,9 +381,19 @@ def _step_summary_line(steps: list[IntermediateStep]) -> str | None:
 def _render_steps_timeline(steps: list[IntermediateStep]) -> Text:
     """Render each step as a compact timestamped line with short HH:MM times.
 
+    Capped at :data:`TIMELINE_MAX_STEPS`, keeping the tail — an agent task can
+    emit tens of thousands of steps, and every caller of this function renders
+    into a terminal. The store keeps them all.
+
     :param steps: ordered intermediate steps to render as a timeline.
     """
     body = Text()
+    if len(steps) > TIMELINE_MAX_STEPS:
+        body.append(
+            f"… ({len(steps) - TIMELINE_MAX_STEPS} earlier steps not shown)\n",
+            style="dim italic",
+        )
+        steps = steps[-TIMELINE_MAX_STEPS:]
     for step in steps:
         if step.kind == StepKind.tool_result:
             # Tool results indent under the preceding tool call (no timestamp).
@@ -172,8 +416,11 @@ def render_task_event(event: TaskEvent, console: Console) -> None:
     Success with empty output → compact single-line summary (no panel)
     to avoid visual noise for echo-style tasks.
 
-    Long bodies are truncated to the last 20 lines with a dim
-    ``… (N lines truncated)`` header so the terminal stays readable.
+    Bodies are printed in full. Task output is the product of the run and
+    this stream is consumed by other agents as well as by people, so
+    eliding it would silently drop the very thing the caller came for.
+    Harness tasks whose output already streamed live are summarized to a
+    single line instead, which avoids the duplication without losing data.
 
     :param event: the task event to render.
     :param console: Rich console to write the rendered output to.
@@ -228,7 +475,7 @@ def render_task_event(event: TaskEvent, console: Console) -> None:
         body_text = Text()
         if summary:
             body_text.append(f"{summary}\n", style="dim")
-        body_text.append(_truncated_section(body_source))
+        body_text.append(_bounded(body_source))
     else:
         border_style = "red"
         title = Text(f"✗ {title_core}", style="bold red")

@@ -9,7 +9,7 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from flow_atelier.cli import app
-from flow_atelier.cli.rendering.render import _truncate_tail, render_task_event
+from flow_atelier.cli.rendering.render import render_task_event
 from flow_atelier.schemas.log import TaskEvent
 
 CONDUIT_YAML = """
@@ -1012,36 +1012,6 @@ def _capture(event: TaskEvent) -> str:
     return buf.getvalue()
 
 
-def test_truncate_tail_short_passthrough():
-    """Verify shorter-than-max input passes through unchanged."""
-    text = "line1\nline2\nline3"
-    out, dropped = _truncate_tail(text, max_lines=20)
-    assert out == text
-    assert dropped == 0
-
-
-def test_truncate_tail_exactly_max():
-    """Verify input of exactly max lines is preserved without drops."""
-    text = "\n".join(f"l{i}" for i in range(20))
-    out, dropped = _truncate_tail(text, max_lines=20)
-    assert dropped == 0
-    assert out == text
-
-
-def test_truncate_tail_drops_head():
-    """Verify oversize input drops the head and keeps the last max_lines."""
-    text = "\n".join(f"l{i}" for i in range(100))
-    out, dropped = _truncate_tail(text, max_lines=20)
-    assert dropped == 80
-    # Only the last 20 kept.
-    assert out.splitlines() == [f"l{i}" for i in range(80, 100)]
-
-
-def test_truncate_tail_empty():
-    """Verify empty input returns empty output with zero drops."""
-    assert _truncate_tail("", max_lines=20) == ("", 0)
-
-
 def test_render_successful_task_with_output():
     """Verify a successful task renders task name, tool, body and timing."""
     event = TaskEvent(
@@ -1140,22 +1110,43 @@ def test_render_failed_task_with_only_output_does_not_label_sections():
     assert "stderr:" not in out.lower()
 
 
-def test_render_truncates_long_output():
-    """Verify long task output renders with a truncation indicator."""
+def test_render_does_not_truncate_long_output():
+    """Task output is rendered whole, however long.
+
+    This stream is parsed by other agents, not just skimmed by people, and
+    a machine reader cannot recover elided lines without going to the store.
+    """
     long_out = "\n".join(f"line{i}" for i in range(100))
     event = TaskEvent(
         task="chatty",
-        tool="harness:claude-code",
+        tool="tool:bash",
         exit_code=0,
         duration_seconds=1.5,
         output=long_out,
         success=True,
     )
     out = _capture(event)
-    assert "80 lines truncated" in out
-    # First line of original data should be gone; tail lines present.
-    assert "line0\n" not in out
+    assert "truncated" not in out
+    assert "line0" in out
     assert "line99" in out
+
+
+def test_render_does_not_truncate_failure_output():
+    """A failure body is exactly what the reader came for; keep all of it."""
+    event = TaskEvent(
+        task="build",
+        tool="tool:bash",
+        exit_code=1,
+        duration_seconds=1.5,
+        stdout="\n".join(f"out{i}" for i in range(60)),
+        stderr="\n".join(f"err{i}" for i in range(60)),
+        success=False,
+    )
+    out = _capture(event)
+    assert "truncated" not in out
+    assert "out0" in out
+    assert "err0" in out
+    assert "err59" in out
 
 
 def test_render_live_streamed_task_is_compact():
