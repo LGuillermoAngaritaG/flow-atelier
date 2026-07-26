@@ -12,9 +12,21 @@ _TASK_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 # so they must reject "/", ".", ".." to prevent path traversal on write/delete.
 # Hyphens are allowed because real conduits on disk use them (autonomous-projects).
 CONDUIT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# A harness name becomes the suffix of a `harness:<name>` executor key, and is
+# what a user types in YAML — keep it to a lowercase slug so the key a conduit
+# references and the key `ATELIER_HARNESSES` registers can never disagree over
+# case or spacing.
+HARNESS_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 class ToolType(str, Enum):
+    """The tools shipped in the box.
+
+    Not the closed set a task may name: ``tool:*`` is code and therefore
+    fixed, but any ``harness:<name>`` registered via ``ATELIER_HARNESSES``
+    is equally valid in a conduit. See :meth:`TaskDefinition._tool_valid`.
+    """
+
     bash = "tool:bash"
     hitl = "tool:hitl"
     conduit = "tool:conduit"
@@ -23,6 +35,9 @@ class ToolType(str, Enum):
     opencode = "harness:opencode"
     copilot = "harness:copilot"
     cursor = "harness:cursor"
+
+
+BUILTIN_TOOLS: frozenset[str] = frozenset(t.value for t in ToolType)
 
 
 class HitlInput(BaseModel):
@@ -51,7 +66,7 @@ class TaskDefinition(BaseModel):
     name: str
     description: str
     task: str
-    tool: ToolType
+    tool: str
     depends_on: list[str] = Field(default_factory=list)
     repeat: int = 1
     until: str | None = None
@@ -78,6 +93,30 @@ class TaskDefinition(BaseModel):
                 "underscores are allowed"
             )
         return v
+
+    @field_validator("tool")
+    @classmethod
+    def _tool_valid(cls, v: str) -> str:
+        """Accept a built-in tool or any well-formed ``harness:<name>``.
+
+        ``tool:*`` executors are code, so that side stays closed to the
+        :class:`ToolType` catalogue. Harnesses are config — a user can point
+        ``ATELIER_HARNESSES`` at any ACP-speaking agent — so the schema only
+        checks the shape of the name. Whether an executor is actually
+        registered for it is answered later by ``Atelier.tool_readiness``,
+        which is the only layer holding both the conduit and the registry.
+
+        :param v: the proposed tool identifier.
+        :returns: the validated identifier unchanged.
+        """
+        if v in BUILTIN_TOOLS:
+            return v
+        if v.startswith("harness:") and HARNESS_NAME_RE.match(v.removeprefix("harness:")):
+            return v
+        raise ValueError(
+            f"invalid tool {v!r}: expected one of {sorted(BUILTIN_TOOLS)} "
+            "or 'harness:<name>' (lowercase letters, digits and hyphens)"
+        )
 
     @field_validator("repeat")
     @classmethod

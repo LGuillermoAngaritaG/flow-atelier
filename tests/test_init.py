@@ -36,7 +36,7 @@ def test_init_creates_hello_conduit(fresh_cwd):
     conduit = Conduit.model_validate(data)
     assert conduit.name == "hello"
     assert len(conduit.tasks) == 1
-    assert conduit.tasks[0].tool.value == "tool:bash"
+    assert conduit.tasks[0].tool == "tool:bash"
 
 
 def test_init_does_not_create_flows(fresh_cwd):

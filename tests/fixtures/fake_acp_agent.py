@@ -39,13 +39,16 @@ import argparse
 import asyncio
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 import acp
+from acp.exceptions import RequestError
 from acp.schema import (
     AgentCapabilities,
     AgentMessageChunk,
     AllowedOutcome,
+    AuthMethodAgent,
     Cost,
     Implementation,
     InitializeResponse,
@@ -72,14 +75,22 @@ class FakeAgent:
         self,
         turns: list[dict[str, Any]],
         modes: dict[str, Any] | None = None,
+        auth_methods: list[dict[str, Any]] | None = None,
+        fail_session: str | None = None,
     ) -> None:
         """Initialize the fake agent with a scripted turn list.
 
         :param turns: ordered list of turn specs to consume on each prompt.
         :param modes: optional session-modes spec exposed via new_session.
+        :param auth_methods: optional auth methods advertised at initialize,
+            so connection-check reporting can be exercised.
+        :param fail_session: when set, new_session raises with this message —
+            what a logged-out agent does.
         """
         self._turns = list(turns)
         self._modes_spec = modes
+        self._auth_methods = auth_methods or []
+        self._fail_session = fail_session
         self._conn: acp.Client | None = None
 
     def on_connect(self, conn: acp.Client) -> None:
@@ -108,7 +119,10 @@ class FakeAgent:
                 ),
             ),
             agent_info=Implementation(name="fake-acp-agent", version="0.0.1"),
-            auth_methods=[],
+            auth_methods=[
+                AuthMethodAgent(id=m["id"], name=m.get("name", m["id"]))
+                for m in self._auth_methods
+            ],
         )
 
     async def new_session(self, cwd: str, mcp_servers=None, **kwargs) -> NewSessionResponse:
@@ -118,6 +132,12 @@ class FakeAgent:
         :param mcp_servers: MCP server specs (ignored).
         :param kwargs: additional keyword arguments accepted by the protocol.
         """
+        if not Path(cwd).is_absolute():
+            # Mirrors the real agents: claude-agent-acp rejects a relative cwd
+            # with "`cwd` must be an absolute path".
+            raise RequestError.invalid_params({"details": "`cwd` must be absolute"})
+        if self._fail_session:
+            raise RequestError.auth_required({"details": self._fail_session})
         modes = None
         if self._modes_spec:
             available = [
@@ -314,7 +334,12 @@ async def _main() -> None:
     parser.add_argument("--script", required=True)
     args = parser.parse_args()
     script = json.loads(args.script)
-    agent = FakeAgent(turns=script.get("turns", []), modes=script.get("modes"))
+    agent = FakeAgent(
+        turns=script.get("turns", []),
+        modes=script.get("modes"),
+        auth_methods=script.get("auth_methods"),
+        fail_session=script.get("fail_session"),
+    )
     await acp.run_agent(agent)
 
 

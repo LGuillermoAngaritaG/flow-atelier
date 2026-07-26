@@ -106,6 +106,13 @@ schedule_app = AtelierTyper(
 )
 app.add_typer(schedule_app, name="schedule")
 
+harness_app = AtelierTyper(
+    help="List and check ACP agents. Installing and logging in stay yours.",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
+app.add_typer(harness_app, name="harness")
+
 scheduler_app = AtelierTyper(
     help="Run and inspect the scheduler daemon.",
     no_args_is_help=True,
@@ -120,6 +127,7 @@ from flow_atelier.cli.commands import (  # noqa: E402, F401
     add,
     check,
     create,
+    harness,
     init,
     logs,
     outputs,

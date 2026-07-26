@@ -7,7 +7,6 @@ import io
 import pytest
 
 from flow_atelier.services.executor.prompt_sink import (
-    PermissionOption,
     PromptSink,
     TerminalPromptSink,
 )
@@ -152,81 +151,6 @@ class TestTerminalPromptSink:
         rendered = stream.getvalue()
         assert "trailing token without newline\n" in rendered
 
-    async def test_request_permission_returns_selected_option_id(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Verify request_permission returns the id of the chosen option.
-
-        :param monkeypatch: pytest monkeypatch fixture.
-        """
-        stream = io.StringIO()
-        sink = TerminalPromptSink(out=stream)
-        options = [
-            PermissionOption(id="allow", label="Allow"),
-            PermissionOption(id="deny", label="Deny"),
-        ]
-        monkeypatch.setattr(builtins, "input", lambda _prompt="": "2")
-        chosen = await sink.request_permission("run rm -rf?", options)
-        assert chosen == "deny"
-        rendered = stream.getvalue()
-        assert "run rm -rf?" in rendered
-        assert "Allow" in rendered
-        assert "Deny" in rendered
-
-    async def test_request_permission_defaults_first_on_blank(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Verify a blank reply defaults to the first option.
-
-        :param monkeypatch: pytest monkeypatch fixture.
-        """
-        stream = io.StringIO()
-        sink = TerminalPromptSink(out=stream)
-        options = [
-            PermissionOption(id="allow", label="Allow"),
-            PermissionOption(id="deny", label="Deny"),
-        ]
-        monkeypatch.setattr(builtins, "input", lambda _prompt="": "")
-        chosen = await sink.request_permission("ok?", options)
-        assert chosen == "allow"
-
-    async def test_request_permission_rejects_out_of_range(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Verify out-of-range indices are rejected and re-prompted.
-
-        :param monkeypatch: pytest monkeypatch fixture.
-        """
-        stream = io.StringIO()
-        sink = TerminalPromptSink(out=stream)
-        options = [PermissionOption(id="allow", label="Allow")]
-        answers = iter(["99", "1"])
-        monkeypatch.setattr(builtins, "input", lambda _prompt="": next(answers))
-        chosen = await sink.request_permission("ok?", options)
-        assert chosen == "allow"
-
-    async def test_request_permission_renders_markup_bearing_text_literally(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Agent-controlled summary/label text containing Rich markup
-        brackets must render literally and never raise ``MarkupError``,
-        which would abort the interactive run at the approval prompt.
-
-        :param monkeypatch: pytest monkeypatch fixture.
-        """
-        stream = io.StringIO()
-        sink = TerminalPromptSink(out=stream)
-        options = [
-            PermissionOption(id="allow", label="Allow [/]"),
-            PermissionOption(id="deny", label="Deny"),
-        ]
-        monkeypatch.setattr(builtins, "input", lambda _prompt="": "1")
-        chosen = await sink.request_permission("delete [old]/path", options)
-        assert chosen == "allow"
-        rendered = stream.getvalue()
-        assert "delete [old]/path" in rendered
-        assert "Allow [/]" in rendered
-
     async def test_request_input_renders_markup_bearing_reply_literally(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -253,4 +177,3 @@ class TestPromptSinkProtocol:
         sink: PromptSink = TerminalPromptSink()
         assert hasattr(sink, "display")
         assert hasattr(sink, "request_input")
-        assert hasattr(sink, "request_permission")

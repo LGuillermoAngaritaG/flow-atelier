@@ -1,7 +1,7 @@
 """PromptSink — pluggable user-interaction surface for executors.
 
 Executors that need to talk to the user (ACP harnesses, future elicitation)
-route all display/input/permission calls through a :class:`PromptSink`.
+route all display and input calls through a :class:`PromptSink`.
 The terminal implementation writes to a stream and reads stdin. Future
 transports (websocket, queue-based API) implement the same protocol.
 """
@@ -11,7 +11,6 @@ import asyncio
 import builtins
 import sys
 from collections import Counter
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TextIO, runtime_checkable
 
 from rich.console import Console
@@ -20,18 +19,6 @@ from rich.text import Text
 
 if TYPE_CHECKING:
     from flow_atelier.schemas.log import IntermediateStep
-
-
-@dataclass(frozen=True)
-class PermissionOption:
-    """One choice offered to the user for a permission decision.
-
-    :param id: stable identifier returned to the caller on selection
-    :param label: human-readable label shown in the UI
-    """
-
-    id: str
-    label: str
 
 
 @runtime_checkable
@@ -53,17 +40,6 @@ class PromptSink(Protocol):
 
         :param prompt: prompt label shown to the user.
         :returns: the user's reply.
-        """
-        ...
-
-    async def request_permission(
-        self, summary: str, options: list[PermissionOption]
-    ) -> str:
-        """Ask the user to pick one of ``options``; return the chosen ``id``.
-
-        :param summary: human-readable description of the pending action.
-        :param options: list of selectable :class:`PermissionOption` choices.
-        :returns: the ``id`` of the option the user picked.
         """
         ...
 
@@ -336,40 +312,3 @@ class TerminalPromptSink:
         prefix.append(_render_step(step, task=task))
         self._console.print(prefix)
 
-    async def request_permission(
-        self, summary: str, options: list[PermissionOption]
-    ) -> str:
-        """Prompt the user to choose one of ``options`` and return its id.
-
-        :param summary: human-readable description of the pending action.
-        :param options: list of selectable :class:`PermissionOption` choices.
-        :returns: the ``id`` of the option the user selected.
-        """
-        if not options:
-            raise ValueError("request_permission requires at least one option")
-        self._console.rule(
-            "[bold yellow]🔐 permission[/bold yellow]",
-            align="left",
-            style="yellow",
-        )
-        self._console.print(escape(summary))
-        for idx, opt in enumerate(options, start=1):
-            self._console.print(f"  [bold]{idx})[/bold] {escape(opt.label)}")
-
-        while True:
-            raw = await asyncio.to_thread(
-                builtins.input, f"choose [1-{len(options)}, default 1]: "
-            )
-            raw = raw.strip()
-            if raw == "":
-                return options[0].id
-            try:
-                choice = int(raw)
-            except ValueError:
-                self._console.print("[yellow]  invalid input, try again[/yellow]")
-                continue
-            if 1 <= choice <= len(options):
-                return options[choice - 1].id
-            self._console.print(
-                f"[yellow]  out of range (1-{len(options)}), try again[/yellow]"
-            )
