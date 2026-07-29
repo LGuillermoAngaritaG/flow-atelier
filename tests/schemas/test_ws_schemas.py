@@ -5,6 +5,9 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from flow_atelier.schemas.ws import (
+    AgentInputAnswerMessage,
+    AgentInputRequestMessage,
+    AgentMessageMessage,
     CancelMessage,
     ClientMessage,
     ErrorMessage,
@@ -233,3 +236,66 @@ def test_server_started_defaults_parent_fields_to_none():
     assert msg.parent_flow_id is None
     assert msg.parent_task is None
     assert msg.conduit_name == ""
+
+
+# ── interactive agent I/O ─────────────────────────────────────────────────
+
+
+def test_server_agent_message_validates():
+    """Verify a server `agent_message` message validates."""
+    msg = _server(
+        {"type": "agent_message", "flow_id": "T-1", "task": "ask", "text": "hi"}
+    )
+    assert isinstance(msg, AgentMessageMessage)
+    assert msg.task == "ask"
+    assert msg.text == "hi"
+
+
+def test_server_agent_input_request_validates():
+    """Verify a server `agent_input_request` message validates."""
+    msg = _server(
+        {
+            "type": "agent_input_request",
+            "flow_id": "T-1",
+            "task": "ask",
+            "request_id": "r-1",
+            "prompt": "agent is waiting for your reply:",
+        }
+    )
+    assert isinstance(msg, AgentInputRequestMessage)
+    assert msg.request_id == "r-1"
+    assert msg.prompt == "agent is waiting for your reply:"
+
+
+def test_client_agent_input_answer_validates():
+    """Verify a client `agent_input_answer` message validates."""
+    msg = _client(
+        {
+            "type": "agent_input_answer",
+            "flow_id": "T-1",
+            "request_id": "r-1",
+            "answer": "blue",
+        }
+    )
+    assert isinstance(msg, AgentInputAnswerMessage)
+    assert msg.request_id == "r-1"
+    assert msg.answer == "blue"
+
+
+def test_client_agent_input_answer_requires_request_id():
+    """Verify an answer without a request_id is rejected.
+
+    The correlation id is what keeps two simultaneous prompts in the same
+    flow from consuming each other's answers, so it cannot be optional.
+    """
+    with pytest.raises(ValidationError):
+        _client({"type": "agent_input_answer", "flow_id": "T-1", "answer": "x"})
+
+
+def test_agent_input_answer_dump_uses_snake_case():
+    """Verify AgentInputAnswerMessage.model_dump produces snake_case fields."""
+    dumped = AgentInputAnswerMessage(
+        flow_id="T-1", request_id="r-1", answer="blue"
+    ).model_dump()
+    assert dumped["type"] == "agent_input_answer"
+    assert dumped["request_id"] == "r-1"

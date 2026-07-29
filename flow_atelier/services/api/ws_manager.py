@@ -2,12 +2,14 @@
 
 Owns the per-connection state needed to multiplex multiple concurrent
 flows over a single socket: a ``flow_id → asyncio.Queue`` map for HITL
-answers, a ``flow_id → asyncio.Task`` map for run-task tracking and
-cancel, and an outbound ``send`` callable.
+answers, a ``flow_id → {request_id: Future}`` map for interactive
+agent-input turns, a ``flow_id → asyncio.Task`` map for run-task tracking
+and cancel, and an outbound ``send`` callable.
 """
 from __future__ import annotations
 
 import asyncio
+import secrets
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -27,6 +29,11 @@ class WebSocketBroker:
         """
         self.send_callable = send
         self._hitl_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
+        # Interactive agent turns awaiting a reply, keyed flow -> request id.
+        # A future per request rather than a queue per flow: two interactive
+        # tasks in one flow can be waiting at the same time, and a queue would
+        # hand the first answer to whichever happened to be listening.
+        self._agent_requests: dict[str, dict[str, asyncio.Future[str]]] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         # Flows whose last answer-await timed out. An answer for the abandoned
         # prompt can still arrive afterwards; we drain it at the start of the
@@ -55,9 +62,16 @@ class WebSocketBroker:
     def unregister_flow(self, flow_id: str) -> None:
         """Drop per-flow state for ``flow_id`` (idempotent).
 
+        Pending agent-input requests are cancelled rather than dropped: the
+        flow is over, so nothing will ever answer them, and a sink still
+        awaiting one would hang.
+
         :param flow_id: flow identifier
         """
         self._hitl_queues.pop(flow_id, None)
+        for future in self._agent_requests.pop(flow_id, {}).values():
+            if not future.done():
+                future.cancel()
         self._tasks.pop(flow_id, None)
         self._timed_out.discard(flow_id)
 
@@ -104,6 +118,55 @@ class WebSocketBroker:
         except TimeoutError:
             self._timed_out.add(flow_id)
             raise
+
+    # ------------------------------------------------------------------ agent input
+
+    def open_agent_input_request(
+        self, flow_id: str
+    ) -> tuple[str, asyncio.Future[str]]:
+        """Register a pending interactive turn and return its id and future.
+
+        :param flow_id: flow identifier the prompt belongs to
+        :returns: tuple of the opaque request id and the future its answer
+            will resolve.
+        """
+        request_id = secrets.token_hex(8)
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        self._agent_requests.setdefault(flow_id, {})[request_id] = future
+        return request_id, future
+
+    async def deliver_agent_input_answer(
+        self, flow_id: str, request_id: str, answer: str
+    ) -> None:
+        """Resolve the request ``request_id`` is waiting on with ``answer``.
+
+        :param flow_id: flow identifier the answer claims to belong to
+        :param request_id: the id issued with the request
+        :param answer: the user's reply for that turn
+        :raises KeyError: if the request is unknown, already answered, or
+            registered under a different flow
+        """
+        future = self._agent_requests.get(flow_id, {}).pop(request_id, None)
+        if future is None:
+            raise KeyError(request_id)
+        if not future.done():
+            future.set_result(answer)
+
+    def close_agent_input_request(self, flow_id: str, request_id: str) -> None:
+        """Forget a pending request (idempotent).
+
+        Called from the waiter's ``finally``, so a turn that was answered,
+        cancelled or failed leaves no entry a late answer could resolve.
+
+        :param flow_id: flow identifier the request belongs to
+        :param request_id: the id issued with the request
+        """
+        pending = self._agent_requests.get(flow_id)
+        if pending is None:
+            return
+        pending.pop(request_id, None)
+        if not pending:
+            self._agent_requests.pop(flow_id, None)
 
     # ------------------------------------------------------------------ cancel
 

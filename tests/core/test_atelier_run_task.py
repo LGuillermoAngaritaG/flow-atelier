@@ -111,3 +111,70 @@ async def test_run_single_task_failure_returns_non_zero_exit(atelier, tmp_path):
     assert out.flow_id
     assert out.logs
     assert out.logs[-1].exit_code != 0
+
+
+async def test_run_single_task_failure_is_reported_as_unsuccessful(atelier, tmp_path):
+    """A task that exits non-zero must say so in the response body.
+
+    The logs already carried the exit code; `success` exists for the case
+    below, where there are no logs to read it from.
+
+    :param atelier: Atelier facade fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    out = await atelier.run_single_task(
+        RunTaskInput(
+            name="boom",
+            description="explode",
+            task="exit 7",
+            tool="tool:bash",
+            run_path=str(tmp_path),
+        )
+    )
+    assert out.success is False
+    assert out.error
+
+
+async def test_run_single_task_that_never_started_is_not_reported_as_success(
+    atelier, tmp_path
+):
+    """A run that dies before its first task must not look like a quiet success.
+
+    An unavailable tool fails inside the engine, before any log entry exists,
+    so the response is an empty `logs` and a blank `flow_id` — byte-identical
+    to a task that simply printed nothing.
+
+    :param atelier: Atelier facade fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    out = await atelier.run_single_task(
+        RunTaskInput(
+            name="ghost",
+            description="unregistered harness",
+            task="hello",
+            tool="harness:definitely-not-registered",
+            run_path=str(tmp_path),
+        )
+    )
+    assert out.success is False
+    assert out.error
+    assert not out.logs
+
+
+async def test_run_single_task_success_reports_success(atelier, tmp_path):
+    """The happy path keeps `success` true and `error` empty.
+
+    :param atelier: Atelier facade fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    out = await atelier.run_single_task(
+        RunTaskInput(
+            name="ok",
+            description="fine",
+            task="echo fine",
+            tool="tool:bash",
+            run_path=str(tmp_path),
+        )
+    )
+    assert out.success is True
+    assert out.error == ""

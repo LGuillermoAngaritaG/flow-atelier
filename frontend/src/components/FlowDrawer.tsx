@@ -14,7 +14,7 @@ import { fmtClock, fmtDuration, fmtMSS } from "@/utils/format";
 import { ChevronRight } from "lucide-react";
 import type { LogEntry, HitlRequest, FlowTaskStatus } from "@/types/task";
 import type { Conduit } from "@/types/conduit";
-import type { LiveRun } from "@/hooks/useConduit";
+import type { AgentInputRequest, LiveRun } from "@/hooks/useConduit";
 
 export interface FlowDrawerTask {
   name: string;
@@ -37,6 +37,9 @@ export interface FlowDrawerProps {
   hitl?: HitlRequest;
   hitlResponses?: string[];
   onRespondToHitl?: (answers: Record<string, string>) => void;
+  /** Interactive harness turns awaiting a reply — separate from `hitl`. */
+  agentInputs?: AgentInputRequest[];
+  onAnswerAgentInput?: (requestId: string, answer: string) => void;
   onCancel?: () => void;
   onResume?: () => void;
   onRemove?: () => void;
@@ -110,6 +113,7 @@ export function buildChildRunsFromLogs(
         status: (allDone ? "done" : "failed") as LiveRun["status"],
         logLines: childLogLines,
         taskStatuses,
+        agentRequests: [],
         runPath: "",
         inputs: {},
         parentFlowId,
@@ -141,6 +145,8 @@ export function FlowDrawer({
   hitl,
   hitlResponses,
   onRespondToHitl,
+  agentInputs,
+  onAnswerAgentInput,
   onCancel,
   onResume,
   onRemove,
@@ -227,6 +233,20 @@ export function FlowDrawer({
               </div>
             )
           )}
+
+          {agentInputs?.map((req) => (
+            // Keyed by request id, so a new turn mounts a fresh, empty box and
+            // an answered one takes its draft away with it.
+            <AgentInputSection
+              key={req.requestId}
+              agentInput={req}
+              onAnswer={
+                onAnswerAgentInput
+                  ? (answer) => onAnswerAgentInput(req.requestId, answer)
+                  : undefined
+              }
+            />
+          ))}
         </ScrollArea>
 
         <div className="flex items-center justify-between gap-3 border-t border-border p-4">
@@ -581,6 +601,66 @@ function LogsSection({
           {globalLines.length} lines · {fmtDuration(duration ?? Date.now() - startedAt)} elapsed
         </div>
       )}
+    </section>
+  );
+}
+
+/* ── Interactive agent turn ───────────────────────────────────────────────── */
+
+/**
+ * Reply box for one interactive harness task. The agent is parked mid-session
+ * waiting on this one answer, so it's a single free-form field — no named
+ * inputs, and none of the HITL form's state.
+ *
+ * The caller keys this by request id, which is what resets the draft between
+ * turns. The text is deliberately left alone on submit: if the send fails the
+ * prompt stays up, and retyping the answer would be the user's punishment.
+ */
+export function AgentInputSection({
+  agentInput,
+  onAnswer,
+}: {
+  agentInput: AgentInputRequest;
+  onAnswer?: (answer: string) => void;
+}) {
+  const [value, setValue] = useState("");
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const answer = value.trim();
+    if (!answer) return;
+    onAnswer?.(answer);
+  };
+
+  return (
+    <section className="mb-4" data-testid="agent-input">
+      <div className="mb-2 font-mono text-mini uppercase tracking-[0.14em] text-primary">
+        {agentInput.taskName
+          ? `agent is waiting on you · ${agentInput.taskName}`
+          : "agent is waiting on you"}
+      </div>
+      <div className="font-mono text-label text-muted-foreground">
+        {agentInput.prompt}
+      </div>
+      <form onSubmit={submit} className="mt-2.5 space-y-2">
+        <textarea
+          data-testid="agent-input-field"
+          aria-label="reply to the agent"
+          rows={3}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="Type your reply…"
+          className="w-full resize-y border border-border bg-transparent p-2 font-mono text-label text-foreground focus:border-primary"
+        />
+        <Button
+          type="submit"
+          size="sm"
+          className="w-full text-micro"
+          data-testid="agent-input-submit"
+        >
+          send reply
+        </Button>
+      </form>
     </section>
   );
 }

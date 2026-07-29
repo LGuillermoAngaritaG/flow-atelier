@@ -95,3 +95,23 @@ async def test_get_logs_unknown_returns_404(fixture):
     client, _ = fixture
     resp = await client.get("/flows/no_such_flow/logs")
     assert resp.status_code == 404
+
+
+async def test_get_logs_rejects_encoded_dot_segment(fixture, tmp_path):
+    """Verify %2E%2E cannot read a logs.jsonl outside the flows/ directory.
+
+    httpx normalizes a literal `..` away, so the traversal only ever reached
+    the route percent-encoded — which is exactly how it arrived over the wire.
+
+    :param fixture: client+atelier tuple fixture.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    client, atelier = fixture
+    (atelier.store.base_dir / "logs.jsonl").write_text(
+        '{"task":"t","tool":"tool:bash","command":"c","exit_code":0,'
+        '"output":"SECRET","stdout":"SECRET","stderr":"",'
+        '"started_at":"2026-04-12T10:00:00Z","finished_at":"2026-04-12T10:00:00Z"}\n'
+    )
+    resp = await client.get("/flows/%2E%2E/logs")
+    assert resp.status_code == 404
+    assert "SECRET" not in resp.text

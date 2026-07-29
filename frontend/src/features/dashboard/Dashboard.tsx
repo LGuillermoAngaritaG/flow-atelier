@@ -21,7 +21,7 @@ export default function Dashboard() {
   const [autoOpenFlowId, setAutoOpenFlowId] = useState<string | undefined>();
   const conduit = getConduitSync(selected, conduits) ?? conduits[0];
 
-  const { run, cancel, resume, answerHITL, liveRuns } = useConduit({
+  const { run, cancel, resume, answerHITL, answerAgentInput, liveRuns } = useConduit({
     onFlowComplete: () => {
       setRefreshKey((k) => k + 1);
     },
@@ -195,6 +195,7 @@ export default function Dashboard() {
               autoOpenFlowId={autoOpenFlowId}
               liveRuns={liveRuns}
               onRespondToHitl={answerHITL}
+              onAnswerAgentInput={answerAgentInput}
               onCancelRun={cancel}
               onResumeRun={handleResume}
             />

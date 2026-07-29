@@ -49,8 +49,26 @@ class ResumeMessage(_WsBase):
     flow_id: str
 
 
+class AgentInputAnswerMessage(_WsBase):
+    """Client supplies the next turn for an interactive harness task.
+
+    ``request_id`` is required and echoes the id the server issued: a flow
+    can have several interactive tasks in flight, and without the id a
+    reply could be handed to whichever prompt happened to be waiting.
+    """
+
+    type: Literal["agent_input_answer"] = "agent_input_answer"
+    flow_id: str
+    request_id: str
+    answer: str
+
+
 ClientMessage = Annotated[
-    RunMessage | HitlAnswerMessage | CancelMessage | ResumeMessage,
+    RunMessage
+    | HitlAnswerMessage
+    | CancelMessage
+    | ResumeMessage
+    | AgentInputAnswerMessage,
     Field(discriminator="type"),
 ]
 
@@ -102,6 +120,29 @@ class HitlRequestMessage(_WsBase):
     inputs: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class AgentMessageMessage(_WsBase):
+    """Server streams a chunk of an interactive agent's prose.
+
+    Emitted per chunk as the agent speaks, so the client can read the
+    question before the matching :class:`AgentInputRequestMessage` lands.
+    """
+
+    type: Literal["agent_message"] = "agent_message"
+    flow_id: str
+    task: str = ""
+    text: str
+
+
+class AgentInputRequestMessage(_WsBase):
+    """Server asks for the next turn of an interactive harness task."""
+
+    type: Literal["agent_input_request"] = "agent_input_request"
+    flow_id: str
+    task: str = ""
+    request_id: str
+    prompt: str
+
+
 class FlowCompleteMessage(_WsBase):
     """Server signals flow finished successfully."""
 
@@ -131,6 +172,8 @@ ServerMessage = Annotated[
     | StepStatusMessage
     | StepMessage
     | HitlRequestMessage
+    | AgentMessageMessage
+    | AgentInputRequestMessage
     | FlowCompleteMessage
     | FlowFailedMessage
     | ErrorMessage,

@@ -28,7 +28,7 @@ from typing import Any
 
 import yaml
 
-from flow_atelier.schemas.conduit import Conduit
+from flow_atelier.schemas.conduit import CONDUIT_NAME_RE, Conduit
 from flow_atelier.schemas.flow import new_flow_id, parse_flow_id
 from flow_atelier.schemas.log import LogEntry, StepRecord
 from flow_atelier.schemas.progress import Progress
@@ -94,6 +94,30 @@ class FilesystemStore(StoreBase):
             raise ValueError(f"unsafe conduit name: {name!r}")
         return name
 
+    @staticmethod
+    def _safe_flow_id(flow_id: str) -> bool:
+        """Report whether ``flow_id`` is a single safe path component.
+
+        The same guard :meth:`_safe_conduit_name` gives conduits. A flow id
+        reaches this store straight from a URL path segment
+        (``GET /flows/<id>/logs``) and is joined onto ``flows/`` unchecked,
+        so without this ``%2E%2E`` walks out of the flow store and reads
+        (or, via :meth:`delete_flow`, removes) whatever sits one level up.
+
+        Both halves are load-bearing: the id grammar pins the
+        ``<date>_<uuid8>_`` prefix, which alone rules out ``.``/``..``, and
+        the conduit-name check closes the trailing ``.+`` capture, which
+        would otherwise happily match ``../../etc``.
+
+        :param flow_id: candidate flow identifier.
+        :returns: True when the id is well-formed and separator-free.
+        """
+        try:
+            conduit, _, _ = parse_flow_id(flow_id)
+        except ValueError:
+            return False
+        return bool(CONDUIT_NAME_RE.match(conduit))
+
     def _conduit_dir(self, name: str) -> Path:
         """Return the project-level directory for conduit ``name``.
 
@@ -129,9 +153,16 @@ class FilesystemStore(StoreBase):
         """Resolve and cache the directory for ``flow_id``.
 
         :param flow_id: flow identifier
+        :raises FileNotFoundError: if the id is malformed or no such flow exists
         """
         if flow_id in self._flow_paths:
             return self._flow_paths[flow_id]
+        # Rejected as "not found" rather than as a distinct error: to every
+        # caller a malformed id names no flow, and the routes already map
+        # FileNotFoundError to a 404. This also keeps the rglob below from
+        # ever receiving a glob pattern (`*`) to walk the store with.
+        if not self._safe_flow_id(flow_id):
+            raise FileNotFoundError(f"flow not found: {flow_id}")
         # Top-level flows live at a deterministic path; only nested child
         # flows (under <parent>/flows/<id>) need the recursive search.
         top_level = self.base_dir / "flows" / flow_id
@@ -307,6 +338,11 @@ class FilesystemStore(StoreBase):
         """
         if flow_id is None:
             flow_id = new_flow_id(conduit_name)
+        # Checked after generation, not before: the id embeds the conduit
+        # name, so an unsafe name produces an unsafe id either way, and
+        # mkdir(parents=True) below would create the escaped path.
+        if not self._safe_flow_id(flow_id):
+            raise ValueError(f"unsafe flow id: {flow_id!r}")
         if parent_flow_id is None:
             flow_dir = self.base_dir / "flows" / flow_id
         else:

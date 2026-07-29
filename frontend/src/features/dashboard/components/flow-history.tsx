@@ -37,6 +37,7 @@ interface Props {
   /** Live runs from the current dashboard session. */
   liveRuns: LiveRun[];
   onRespondToHitl?: (flowId: string, answers: Record<string, string>) => void;
+  onAnswerAgentInput?: (flowId: string, requestId: string, answer: string) => void;
   onCancelRun?: (flowId: string) => void;
   onResumeRun?: (flowId: string, conduitName?: string) => void;
 }
@@ -49,6 +50,7 @@ export function FlowHistory({
   autoOpenFlowId,
   liveRuns,
   onRespondToHitl,
+  onAnswerAgentInput,
   onCancelRun,
   onResumeRun,
 }: Props) {
@@ -401,6 +403,13 @@ export function FlowHistory({
         onRespondToHitl={
           onRespondToHitl && selectedLiveRun?.hitlRequest
             ? (answers) => onRespondToHitl(selectedLiveRun.flowId, answers)
+            : undefined
+        }
+        agentInputs={selectedLiveRun?.agentRequests}
+        onAnswerAgentInput={
+          onAnswerAgentInput && selectedLiveRun
+            ? (requestId, answer) =>
+                onAnswerAgentInput(selectedLiveRun.flowId, requestId, answer)
             : undefined
         }
         inputCount={drawerInputCount}

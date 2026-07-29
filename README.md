@@ -523,10 +523,56 @@ streams the reply to your terminal, and if the AI didn't write
 `[ATELIER_DONE]` yet, flow-atelier asks **you** for the next message
 to send back. The loop ends when `[ATELIER_DONE]` shows up.
 
+How that next message reaches flow-atelier depends on where the run
+started. On the terminal it reads one line from stdin — typed at the
+`› ` cursor, or piped in for scripted runs. Under `atelier serve` the
+same conversation travels over `/ws/run-conduit`: the agent's prose is
+streamed to the client as it is written, and the client sends the reply
+back on the same socket.
+
 If the AI asks for permission to run a tool, you'll see a numbered
 menu on the terminal; your choice is sent back as the answer.
 
 Non-interactive tasks run one turn and stop.
+
+For a direct interactive Claude conversation without writing a conduit,
+use `atelier ask`:
+
+```bash
+atelier ask "Help me write a specification" --path /absolute/path/to/project
+```
+
+`--path` is required and becomes Claude's working directory. Claude's
+questions are read from stdin just like any other interactive harness task.
+The resulting flow is still recorded under the `.atelier/flows/` directory
+from which you invoked `atelier`.
+
+#### Interactive turns over the WebSocket
+
+Three envelopes carry the conversation. They are additive — a client
+that ignores them still runs flows exactly as before.
+
+| From   | `type`                | Fields                                    |
+| ------ | --------------------- | ----------------------------------------- |
+| server | `agent_message`       | `flow_id`, `task`, `text`                 |
+| server | `agent_input_request` | `flow_id`, `task`, `request_id`, `prompt` |
+| client | `agent_input_answer`  | `flow_id`, `request_id`, `answer`         |
+
+`agent_message` is one chunk of agent prose, sent as the agent writes
+it, so the client can show the question before the request to answer it
+arrives. `agent_input_request` is the turn being handed back to you.
+
+The `request_id` from a request must be echoed verbatim in the answer.
+That is what allows several interactive tasks in one flow to be waiting
+at the same time: each reply goes to the prompt that asked for it, not
+to whichever prompt happens to be pending. An answer carrying an
+unknown or already-used `request_id` comes back as an `error` envelope.
+
+The socket is only the local transport between the UI and the
+`atelier serve` process on your machine. The harness itself still runs
+as that agent's own CLI under your existing login for it, so an
+interactive conversation over the WebSocket needs no LLM API key —
+exactly as on the terminal.
 
 ## Where conduits live
 
@@ -553,6 +599,7 @@ atelier plan <conduit>                                 # print the DAG as ordere
 
 # running
 atelier run <conduit> [--input key=value ...] [--show-steps/--hide-steps]
+atelier ask <query> --path <directory>                 # interactive Claude session
 atelier run --resume <flow_id>                         # resume a failed/crashed flow
 atelier run --again <flow_id>                          # fresh run reusing a past flow's inputs
 atelier stop <flow_id>                                 # gracefully halt a running flow
@@ -692,7 +739,7 @@ Flow Atelier visual frontend connects to.
 | `DELETE` | `/schedules/:id`      | Soft-delete                               |
 | `GET`    | `/flows`              | List prior flows                          |
 | `GET`    | `/flows/:id/logs`     | Per-flow log entries                      |
-| `WS`     | `/ws/run-conduit`     | Run flows + HITL gates over a socket      |
+| `WS`     | `/ws/run-conduit`     | Run flows, HITL + interactive AI turns    |
 
 
 Binds to `127.0.0.1:8000` by default; pass `--host 0.0.0.0` to expose

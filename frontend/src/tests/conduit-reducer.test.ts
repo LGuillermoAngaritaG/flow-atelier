@@ -6,7 +6,7 @@ import {
   taskToLine,
   mapStepStatus,
 } from "@/hooks/useConduit";
-import type { State, LiveRunStatus } from "@/hooks/useConduit";
+import type { State, LiveRunStatus, AgentInputRequest } from "@/hooks/useConduit";
 import type { BackendLogEntry, BackendTask } from "@/types/ws";
 import type { LogEntry, FlowTaskStatus } from "@/types/task";
 
@@ -23,6 +23,7 @@ const run = (flowId: string, overrides: Partial<{ conduitName: string; status: s
   taskStatuses: {} as Record<string, FlowTaskStatus>,
   runPath: "/test",
   inputs: {} as Record<string, string>,
+  agentRequests: [] as AgentInputRequest[],
 });
 
 const makeBackendLog = (overrides: Partial<BackendLogEntry> = {}): BackendLogEntry => ({
@@ -257,6 +258,7 @@ describe("reducer", () => {
         status: "running",
         logLines: [],
         taskStatuses: {},
+        agentRequests: [],
         runPath: "/tmp",
         inputs: {},
       });
@@ -282,6 +284,7 @@ describe("reducer", () => {
         status: "running",
         logLines: [],
         taskStatuses: {},
+        agentRequests: [],
         runPath: "",
         inputs: {},
       });
@@ -468,6 +471,222 @@ describe("reducer", () => {
       const r = next.runs.get("f1")!;
       expect(r.hitlAnswers).toEqual({ approve: "yes" });
       expect(r.hitlRequest).toBeUndefined();
+    });
+  });
+
+  describe("WS_AGENT_MESSAGE", () => {
+    it("appends the streamed agent prose to the log", () => {
+      const state = freshState();
+      state.runs.set("f1", run("f1"));
+      const next = reducer(state, {
+        type: "WS_AGENT_MESSAGE",
+        flowId: "f1",
+        text: "Which colour?",
+        taskName: "ask",
+      });
+      const r = next.runs.get("f1")!;
+      expect(r.logLines).toHaveLength(1);
+      expect(r.logLines[0].text).toBe("Which colour?");
+      expect(r.logLines[0].task).toBe("ask");
+    });
+
+    it("leaves hitl state untouched", () => {
+      const state = freshState();
+      state.runs.set("f1", {
+        ...run("f1"),
+        hitlRequest: { fromTool: "tool:hitl", comment: "gate" },
+      });
+      const next = reducer(state, {
+        type: "WS_AGENT_MESSAGE",
+        flowId: "f1",
+        text: "hi",
+        taskName: "ask",
+      });
+      expect(next.runs.get("f1")!.hitlRequest).toEqual({
+        fromTool: "tool:hitl",
+        comment: "gate",
+      });
+    });
+  });
+
+  describe("WS_AGENT_INPUT_REQUEST", () => {
+    it("stores the pending request with its correlation id", () => {
+      const state = freshState();
+      state.runs.set("f1", run("f1"));
+      const next = reducer(state, {
+        type: "WS_AGENT_INPUT_REQUEST",
+        flowId: "f1",
+        requestId: "r-1",
+        prompt: "your reply:",
+        taskName: "ask",
+      });
+      const r = next.runs.get("f1")!;
+      expect(r.agentRequests).toEqual([
+        { requestId: "r-1", prompt: "your reply:", taskName: "ask" },
+      ]);
+    });
+
+    it("does not populate hitlRequest", () => {
+      const state = freshState();
+      state.runs.set("f1", run("f1"));
+      const next = reducer(state, {
+        type: "WS_AGENT_INPUT_REQUEST",
+        flowId: "f1",
+        requestId: "r-1",
+        prompt: "your reply:",
+      });
+      expect(next.runs.get("f1")!.hitlRequest).toBeUndefined();
+    });
+
+    it("retains both requests when two tasks in one flow prompt at once", () => {
+      // max_concurrency > 1: two interactive harness tasks are parked on their
+      // own prompts. Dropping the first would strand its agent forever.
+      const state = freshState();
+      state.runs.set("f1", run("f1"));
+      const first = reducer(state, {
+        type: "WS_AGENT_INPUT_REQUEST",
+        flowId: "f1",
+        requestId: "r-1",
+        prompt: "which colour?",
+        taskName: "ask_colour",
+      });
+      const next = reducer(first, {
+        type: "WS_AGENT_INPUT_REQUEST",
+        flowId: "f1",
+        requestId: "r-2",
+        prompt: "which size?",
+        taskName: "ask_size",
+      });
+      expect(next.runs.get("f1")!.agentRequests).toEqual([
+        { requestId: "r-1", prompt: "which colour?", taskName: "ask_colour" },
+        { requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
+      ]);
+    });
+
+    it("replaces a request re-sent under the same id", () => {
+      const state = freshState();
+      state.runs.set("f1", {
+        ...run("f1"),
+        agentRequests: [{ requestId: "r-1", prompt: "old" }],
+      });
+      const next = reducer(state, {
+        type: "WS_AGENT_INPUT_REQUEST",
+        flowId: "f1",
+        requestId: "r-1",
+        prompt: "new",
+      });
+      expect(next.runs.get("f1")!.agentRequests).toEqual([
+        { requestId: "r-1", prompt: "new", taskName: undefined },
+      ]);
+    });
+  });
+
+  describe("ANSWER_AGENT_INPUT", () => {
+    it("removes only the answered request and leaves the rest answerable", () => {
+      const state = freshState();
+      state.runs.set("f1", {
+        ...run("f1"),
+        agentRequests: [
+          { requestId: "r-1", prompt: "which colour?", taskName: "ask_colour" },
+          { requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
+        ],
+      });
+      const next = reducer(state, {
+        type: "ANSWER_AGENT_INPUT",
+        flowId: "f1",
+        requestId: "r-1",
+        answer: "blue",
+      });
+      expect(next.runs.get("f1")!.agentRequests).toEqual([
+        { requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
+      ]);
+    });
+
+    it("logs the answer against the answered request's task", () => {
+      const state = freshState();
+      state.runs.set("f1", {
+        ...run("f1"),
+        agentRequests: [
+          { requestId: "r-1", prompt: "which colour?", taskName: "ask_colour" },
+          { requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
+        ],
+      });
+      const next = reducer(state, {
+        type: "ANSWER_AGENT_INPUT",
+        flowId: "f1",
+        requestId: "r-2",
+        answer: "large",
+      });
+      const logs = next.runs.get("f1")!.logLines;
+      expect(logs).toHaveLength(1);
+      expect(logs[0].text).toBe("› large");
+      expect(logs[0].task).toBe("ask_size");
+    });
+
+    it("leaves tool:hitl state untouched", () => {
+      const state = freshState();
+      state.runs.set("f1", {
+        ...run("f1"),
+        agentRequests: [{ requestId: "r-1", prompt: "your reply:" }],
+        hitlAnswers: { approve: "yes" },
+        hitlRequest: { fromTool: "tool:hitl", comment: "gate" },
+      });
+      const next = reducer(state, {
+        type: "ANSWER_AGENT_INPUT",
+        flowId: "f1",
+        requestId: "r-1",
+        answer: "blue",
+      });
+      const r = next.runs.get("f1")!;
+      expect(r.agentRequests).toEqual([]);
+      expect(r.hitlAnswers).toEqual({ approve: "yes" });
+      expect(r.hitlRequest).toEqual({ fromTool: "tool:hitl", comment: "gate" });
+    });
+
+    it("ignores an answer for an unknown request id", () => {
+      const state = freshState();
+      state.runs.set("f1", {
+        ...run("f1"),
+        agentRequests: [{ requestId: "r-2", prompt: "current" }],
+      });
+      const next = reducer(state, {
+        type: "ANSWER_AGENT_INPUT",
+        flowId: "f1",
+        requestId: "r-1",
+        answer: "stale",
+      });
+      const r = next.runs.get("f1")!;
+      expect(r.agentRequests).toEqual([{ requestId: "r-2", prompt: "current" }]);
+      expect(r.logLines).toHaveLength(0);
+    });
+  });
+
+  describe("terminal states clear every pending agent request", () => {
+    const twoPending = () => {
+      const state = freshState();
+      state.runs.set("f1", {
+        ...run("f1"),
+        agentRequests: [
+          { requestId: "r-1", prompt: "which colour?" },
+          { requestId: "r-2", prompt: "which size?" },
+        ],
+      });
+      return state;
+    };
+
+    it("clears them on flow_complete", () => {
+      const next = reducer(twoPending(), { type: "WS_FLOW_COMPLETE", flowId: "f1" });
+      expect(next.runs.get("f1")!.agentRequests).toEqual([]);
+    });
+
+    it("clears them on flow_failed", () => {
+      const next = reducer(twoPending(), { type: "WS_FLOW_FAILED", flowId: "f1", error: "boom" });
+      expect(next.runs.get("f1")!.agentRequests).toEqual([]);
+    });
+
+    it("clears them on cancel", () => {
+      const next = reducer(twoPending(), { type: "CANCEL", flowId: "f1" });
+      expect(next.runs.get("f1")!.agentRequests).toEqual([]);
     });
   });
 });

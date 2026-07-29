@@ -188,3 +188,65 @@ def test_every_registry_id_is_a_valid_harness_name() -> None:
     snapshot = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
     bad = [a["id"] for a in snapshot["agents"] if not HARNESS_NAME_RE.match(a["id"])]
     assert bad == []
+
+
+class TestMalformedDistribution:
+    """A bad snapshot entry must be skipped, never raised out of load."""
+
+    def test_npx_entry_without_a_package_is_skipped(self, tmp_path) -> None:
+        """`args` but no `package` used to KeyError out of Atelier.__init__.
+
+        trim_registry keeps such an entry (it filters keys, not shapes), so
+        the resolver is where it has to be survivable — and every command
+        constructs an Atelier, including the `harness sync` that would
+        replace the offending snapshot.
+
+        :param tmp_path: pytest temp directory fixture.
+        """
+        path = tmp_path / "acp_registry.json"
+        write_snapshot(
+            path,
+            {
+                "source": "x",
+                "version": "1.0.0",
+                "agents": [
+                    _agent({"npx": {"args": ["--acp"]}}),
+                    {**_agent({"npx": {"package": "good@1"}}), "id": "fine"},
+                ],
+            },
+        )
+        specs = load_registry(path)
+        assert "demo" not in specs
+        assert specs["fine"].argv == ("npx", "-y", "good@1")
+
+    def test_uvx_entry_without_a_package_is_skipped(self, tmp_path) -> None:
+        """Same guard on the uvx branch.
+
+        :param tmp_path: pytest temp directory fixture.
+        """
+        path = tmp_path / "acp_registry.json"
+        write_snapshot(
+            path,
+            {"source": "x", "version": "1.0.0", "agents": [_agent({"uvx": {"env": {"A": "1"}}})]},
+        )
+        assert load_registry(path) == {}
+
+    def test_a_broken_entry_does_not_stop_atelier_starting(self, tmp_path) -> None:
+        """The real blast radius: the facade must still construct.
+
+        :param tmp_path: pytest temp directory fixture.
+        """
+        from flow_atelier.core.atelier import Atelier
+        from flow_atelier.core.settings import AtelierSettings
+
+        write_snapshot(
+            tmp_path / "global" / "acp_registry.json",
+            {"source": "x", "version": "1.0.0", "agents": [_agent({"npx": {"args": []}})]},
+        )
+        atelier = Atelier(
+            settings=AtelierSettings(
+                atelier_dir=tmp_path / ".atelier",
+                global_atelier_dir=tmp_path / "global",
+            )
+        )
+        assert "tool:bash" in atelier.executors
