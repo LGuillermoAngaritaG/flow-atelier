@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from flow_atelier.cli import app
@@ -68,4 +69,4 @@ def test_ask_requires_a_path(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(app, ["ask", "hello"])
     assert result.exit_code == 2
-    assert "--path" in result.output
+    assert "--path" in unstyle(result.output)
