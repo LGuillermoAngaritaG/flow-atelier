@@ -16,9 +16,10 @@ interface Props {
   onCancelRun?: (flowId: string) => void;
   onResumeRun?: (flowId: string, conduitName?: string) => void;
   onRespondToHitl?: (flowId: string, answers: Record<string, string>) => void;
+  onAnswerAgentInput?: (flowId: string, requestId: string, answer: string) => void;
 }
 
-export function TaskDrawer({ taskName, onClose, liveRuns = [], onCancelRun, onResumeRun, onRespondToHitl }: Props) {
+export function TaskDrawer({ taskName, onClose, liveRuns = [], onCancelRun, onResumeRun, onRespondToHitl, onAnswerAgentInput }: Props) {
   const { conduits } = useConduits();
   const task = useTaskStore((s) =>
     taskName ? s.tasks.find((t) => t.name === taskName) : undefined,
@@ -154,6 +155,13 @@ export function TaskDrawer({ taskName, onClose, liveRuns = [], onCancelRun, onRe
           : drawerHitl
             ? (answers) => resumeWithAnswers(task.name, answers)
             : undefined
+      }
+      agentInputs={liveRun?.agentRequests}
+      onAnswerAgentInput={
+        onAnswerAgentInput && liveRun
+          ? (requestId, answer) =>
+              onAnswerAgentInput(liveRun.flowId, requestId, answer)
+          : undefined
       }
       onRemove={
         task.column === "todo"

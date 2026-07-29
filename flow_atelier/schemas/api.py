@@ -103,10 +103,17 @@ class RunTaskInput(BaseModel):
 
 
 class RunTaskOutput(BaseModel):
-    """Response shape for ``POST /tasks/run``."""
+    """Response shape for ``POST /tasks/run``.
+
+    ``success`` is not inferable from the rest: a run that died before its
+    first task logged anything returns an empty ``logs`` and a blank
+    ``flow_id``, which is byte-identical to a task that produced no output.
+    """
 
     flow_id: str
     logs: list[LogEntry] = Field(default_factory=list)
+    success: bool = True
+    error: str = ""
 
 
 class ScheduleConfig(BaseModel):

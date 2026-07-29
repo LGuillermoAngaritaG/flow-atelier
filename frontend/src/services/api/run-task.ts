@@ -17,6 +17,8 @@ interface BackendLogEntry {
 interface BackendRunTaskResponse {
   flowId: string;
   logs: BackendLogEntry[];
+  success?: boolean;
+  error?: string;
 }
 
 export function toFrontendLogEntry(entry: BackendLogEntry): LogEntry {
@@ -35,8 +37,11 @@ export async function runTask(req: RunTaskRequest): Promise<RunTaskResponse> {
   }
 
   const raw = await fetchJson<BackendRunTaskResponse>(`${BASE_URL}/tasks/run`, req);
-  return {
-    flowId: raw.flowId,
-    logs: raw.logs.map(toFrontendLogEntry),
-  };
+  const logs = raw.logs.map(toFrontendLogEntry);
+  // A run that died before its first task logged anything comes back with no
+  // entries at all; without this the failure renders as an empty, silent panel.
+  if (raw.success === false && raw.error) {
+    logs.push({ t: Date.now(), text: raw.error, level: "err" as const });
+  }
+  return { flowId: raw.flowId, logs };
 }

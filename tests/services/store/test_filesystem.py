@@ -776,3 +776,78 @@ class TestLogEncoding:
             encoding="utf-8",
         )
         assert [e.output for e in store.read_logs(flow_id)] == ["café — 你好"]
+
+
+class TestFlowIdIsAPathComponent:
+    """A flow id reaches the store from a URL segment; it must not traverse."""
+
+    @pytest.mark.parametrize(
+        "flow_id",
+        [
+            "..",
+            ".",
+            "",
+            "../conduits",
+            "20250101_aaaaaaaa_../../etc",   # well-formed prefix, escaping tail
+            "20250101_aaaaaaaa_..%2F..",
+            "*",                              # a glob would make rglob walk the store
+            "no_such_flow",
+        ],
+    )
+    def test_unsafe_flow_id_is_not_found(self, store, flow_id):
+        """_flow_dir refuses anything that isn't a well-formed flow id.
+
+        :param store: FilesystemStore fixture.
+        :param flow_id: candidate identifier that must be rejected.
+        """
+        with pytest.raises(FileNotFoundError):
+            store._flow_dir(flow_id)
+
+    def test_traversal_cannot_read_a_neighbouring_flows_file(self, store):
+        """A dot-segment must not reach logs.jsonl one level above flows/.
+
+        :param store: FilesystemStore fixture.
+        """
+        (store.base_dir / "logs.jsonl").write_text(
+            json.dumps(
+                {
+                    "task": "t",
+                    "tool": "tool:bash",
+                    "command": "c",
+                    "exit_code": 0,
+                    "output": "SECRET",
+                    "stdout": "SECRET",
+                    "stderr": "",
+                    "started_at": "2026-04-12T10:00:00Z",
+                    "finished_at": "2026-04-12T10:00:00Z",
+                }
+            )
+            + "\n"
+        )
+        with pytest.raises(FileNotFoundError):
+            store.read_logs("..")
+
+    def test_generated_ids_still_resolve(self, store):
+        """The guard must not reject the ids the store itself generates.
+
+        :param store: FilesystemStore fixture.
+        """
+        flow_id = store.create_flow("hello", {})
+        assert store._flow_dir(flow_id).is_dir()
+
+    def test_create_flow_rejects_an_escaping_id(self, store):
+        """A caller-supplied id must not mkdir its way out of the store.
+
+        :param store: FilesystemStore fixture.
+        """
+        with pytest.raises(ValueError, match="unsafe flow id"):
+            store.create_flow("hello", {}, flow_id="20250101_aaaaaaaa_../../pwned")
+        assert not (store.base_dir.parent.parent / "pwned").exists()
+
+    def test_create_flow_rejects_an_unsafe_conduit_name(self, store):
+        """An unsafe conduit name yields an unsafe generated id; reject it.
+
+        :param store: FilesystemStore fixture.
+        """
+        with pytest.raises(ValueError, match="unsafe flow id"):
+            store.create_flow("../../pwned", {})

@@ -127,7 +127,7 @@ export function Kanban() {
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const setTasks = useTaskStore((s) => s.setTasks);
 
-  const { run: conduitRun, cancel: conduitCancel, resume: conduitResume, answerHITL: conduitAnswerHITL, liveRuns } = useConduit({
+  const { run: conduitRun, cancel: conduitCancel, resume: conduitResume, answerHITL: conduitAnswerHITL, answerAgentInput: conduitAnswerAgentInput, liveRuns } = useConduit({
     onFlowStarted: (flowId, conduitName) => {
       const task = useTaskStore.getState().tasks.find(t => t.name === conduitName && t.column === "in_progress");
       if (task) {
@@ -413,6 +413,7 @@ export function Kanban() {
         onCancelRun={conduitCancel}
         onResumeRun={conduitResume}
         onRespondToHitl={conduitAnswerHITL}
+        onAnswerAgentInput={conduitAnswerAgentInput}
       />
       <NewTaskDialog open={addOpen} onOpenChange={closeDialog} editTask={editTask} onRun={runTaskByName} projectId={showAllProjects ? (projects[0]?.id ?? "default") : activeProject.id} />
       <NewProjectDialog open={newProjectOpen} onOpenChange={setNewProjectOpen} onCreate={handleCreateProject} />

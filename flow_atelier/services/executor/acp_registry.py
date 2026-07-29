@@ -131,10 +131,17 @@ def _launch_spec(agent: dict[str, Any], plat: str) -> LaunchSpec | None:
             if not entry:
                 continue
             argv = _binary_argv(entry)
-        elif kind == "npx":
-            argv = ["npx", "-y", entry["package"], *entry.get("args", [])]
         else:
-            argv = ["uvx", entry["package"], *entry.get("args", [])]
+            # `package` is what npx/uvx actually run, and a snapshot can
+            # reach here without one: trim_registry keeps an entry that has
+            # only `args`/`env`. Indexing it would raise out of
+            # `Atelier.__init__`, killing every command — including the
+            # `atelier harness sync` that would replace the bad snapshot.
+            package = entry.get("package")
+            if not package:
+                continue
+            prefix = ["npx", "-y"] if kind == "npx" else ["uvx"]
+            argv = [*prefix, package, *entry.get("args", [])]
         return LaunchSpec(
             id=agent["id"],
             name=agent.get("name", agent["id"]),
