@@ -123,8 +123,9 @@ app.add_typer(scheduler_app, name="scheduler")
 # Side-effect imports: each command module decorates its handler against
 # the appropriate Typer instance above. Order matches the original
 # decoration order in app/main.py so --help layout stays byte-identical.
-from flow_atelier.cli.commands import (  # noqa: E402, F401, I001
+from flow_atelier.cli.commands import (  # noqa: E402, F401
     add,
+    ask,
     check,
     create,
     harness,
@@ -134,7 +135,6 @@ from flow_atelier.cli.commands import (  # noqa: E402, F401, I001
     plan,
     rm,
     run,
-    ask,
     schedule,
     scheduler,
     serve,
