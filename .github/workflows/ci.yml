@@ -6,6 +6,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -20,10 +24,14 @@ jobs:
         run: uv run ruff check .
 
   test:
+    # Windows earns its slot here rather than only at release: the path handling
+    # (os.sep guards, flow-id joins) and the npx/uvx argv building are where this
+    # codebase actually breaks per-OS, and finding that at release time means it
+    # blocks the release. macOS is close enough to Linux to leave to release.yml.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
