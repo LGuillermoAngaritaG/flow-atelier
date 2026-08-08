@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { getApiToken, setApiToken } from "@/config/env";
-import { fetchJson } from "@/services/client";
+import { fetchJson, resetTokenPrompt } from "@/services/client";
 
 /**
  * The token is read at runtime, not compiled in: the SPA that ships in the
@@ -11,6 +11,7 @@ import { fetchJson } from "@/services/client";
 describe("runtime API token", () => {
   beforeEach(() => {
     sessionStorage.clear();
+    resetTokenPrompt();
     vi.restoreAllMocks();
   });
 
@@ -90,5 +91,58 @@ describe("runtime API token", () => {
       fetchJson("http://x/conduits", undefined, { method: "GET" }),
     ).rejects.toThrow("API error 401");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // The dashboard fires several fetches on mount (conduits, schedules, flows).
+  // With a token-protected server they all 401 together, and asking once per
+  // request means the user answers the same box three times.
+  it("asks once for a burst of concurrent 401s", async () => {
+    const promptMock = vi.fn().mockReturnValue("from-user");
+    vi.stubGlobal("prompt", promptMock);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init: RequestInit) => {
+        const auth = (init.headers as Record<string, string>).Authorization;
+        return Promise.resolve(
+          auth === "Bearer from-user"
+            ? new Response('{"ok":true}', {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              })
+            : new Response("nope", { status: 401 }),
+        );
+      }),
+    );
+
+    const results = await Promise.all([
+      fetchJson<{ ok: boolean }>("http://x/conduits", undefined, { method: "GET" }),
+      fetchJson<{ ok: boolean }>("http://x/schedules", undefined, { method: "GET" }),
+      fetchJson<{ ok: boolean }>("http://x/flows", undefined, { method: "GET" }),
+    ]);
+
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(promptMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-ask each request after the user dismisses once", async () => {
+    // A fresh Response per call: three callers each read the error body, and a
+    // body can only be consumed once.
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(new Response("nope", { status: 401 })),
+    );
+    const promptMock = vi.fn().mockReturnValue(null);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("prompt", promptMock);
+
+    const attempts = [
+      fetchJson("http://x/conduits", undefined, { method: "GET" }),
+      fetchJson("http://x/schedules", undefined, { method: "GET" }),
+      fetchJson("http://x/flows", undefined, { method: "GET" }),
+    ].map((p) => expect(p).rejects.toThrow("API error 401"));
+    await Promise.all(attempts);
+
+    // Declining leaves the tab unauthenticated until reload — but it only
+    // costs the user one dismissal, not one per in-flight request.
+    expect(promptMock).toHaveBeenCalledTimes(1);
   });
 });

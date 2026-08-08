@@ -12,14 +12,28 @@ import { toCamelCase, toSnakeCase } from "./transforms";
  * Returns "" when the user dismisses it, which lets the original 401 stand.
  */
 function promptForToken(): string {
-  if (typeof window.prompt !== "function") return "";
+  if (declined || typeof window.prompt !== "function") return "";
   const entered = window.prompt(
     "This flow-atelier server requires an API token (ATELIER_API_TOKEN):",
     "",
   );
-  if (!entered) return "";
+  if (!entered) {
+    declined = true;
+    return "";
+  }
   setApiToken(entered);
   return entered;
+}
+
+// Set once the user dismisses the dialog. Without it a dismissal is re-asked
+// per in-flight request, and the dashboard 401s several times on mount — the
+// user would cancel the same box three times. Declining leaves the tab
+// unauthenticated until it is reloaded, which is the point: they said no.
+let declined = false;
+
+/** Test seam: forget the dismissal so each case starts from a clean slate. */
+export function resetTokenPrompt(): void {
+  declined = false;
 }
 
 export async function fetchJson<TResponse>(
@@ -50,8 +64,9 @@ export async function fetchJson<TResponse>(
     });
 
   let res: Response;
+  const sent = getApiToken();
   try {
-    res = await send(getApiToken());
+    res = await send(sent);
   } catch {
     // A transport failure (server down, DNS, CORS) surfaces as a bare
     // "Failed to fetch", which tells the user nothing actionable.
@@ -60,7 +75,11 @@ export async function fetchJson<TResponse>(
   // Retried once, never in a loop: a second 401 means the entered token is
   // wrong, and re-prompting on every rejection traps the user in a dialog.
   if (res.status === 401) {
-    const token = promptForToken();
+    // A sibling request may have prompted while this one was in flight — the
+    // dashboard fires several fetches on mount and they all 401 together. Reuse
+    // whatever it stored instead of asking the same question once per request.
+    const stored = getApiToken();
+    const token = stored && stored !== sent ? stored : promptForToken();
     if (token) {
       try {
         res = await send(token);
