@@ -16,9 +16,10 @@ interface Props {
   onCancelRun?: (flowId: string) => void;
   onResumeRun?: (flowId: string, conduitName?: string) => void;
   onRespondToHitl?: (flowId: string, answers: Record<string, string>) => void;
+  onAnswerAgentInput?: (flowId: string, requestId: string, answer: string) => void;
 }
 
-export function TaskDrawer({ taskName, onClose, liveRuns = [], onCancelRun, onResumeRun, onRespondToHitl }: Props) {
+export function TaskDrawer({ taskName, onClose, liveRuns = [], onCancelRun, onResumeRun, onRespondToHitl, onAnswerAgentInput }: Props) {
   const { conduits } = useConduits();
   const task = useTaskStore((s) =>
     taskName ? s.tasks.find((t) => t.name === taskName) : undefined,
@@ -75,6 +76,17 @@ export function TaskDrawer({ taskName, onClose, liveRuns = [], onCancelRun, onRe
   // 3. Not live → prior flow, fetch from API
 
   const drawerHitl = liveRun?.hitlRequest ?? flow?.hitlRequest;
+
+  // Includes child-flow turns: a nested conduit's interactive task prompts under
+  // its own flow id, which never matches `liveRun`, so leaving them out means the
+  // reply box is never drawn and that agent stays parked until cancelled.
+  const agentInputs = useMemo(
+    () => [
+      ...(liveRun?.agentRequests ?? []),
+      ...liveChildRuns.flatMap((c) => c.agentRequests),
+    ],
+    [liveRun, liveChildRuns],
+  );
 
   const tasks = useMemo<FlowDrawerTask[] | undefined>(() => {
     // Real conduit live run
@@ -154,6 +166,13 @@ export function TaskDrawer({ taskName, onClose, liveRuns = [], onCancelRun, onRe
           : drawerHitl
             ? (answers) => resumeWithAnswers(task.name, answers)
             : undefined
+      }
+      agentInputs={agentInputs}
+      onAnswerAgentInput={
+        onAnswerAgentInput
+          ? (request, answer) =>
+              onAnswerAgentInput(request.flowId, request.requestId, answer)
+          : undefined
       }
       onRemove={
         task.column === "todo"

@@ -12,6 +12,24 @@ import type { HitlInput, HitlRequest, LogEntry, FlowTaskStatus } from "@/types/t
 
 export type LiveRunStatus = "running" | "done" | "cancelled" | "failed";
 
+/**
+ * An interactive harness task waiting on the next turn. Distinct from
+ * `hitlRequest`: this is an agent mid-ACP-session asking a question, answered
+ * by correlation id, not a `tool:hitl` gate collecting named inputs.
+ */
+export interface AgentInputRequest {
+  /**
+   * The flow that asked. Carried on the request rather than inferred from the
+   * run it is rendered under: a nested conduit's interactive task prompts
+   * under the *child* flow id, and the answer has to go back to that same id
+   * or the broker won't find the future to resolve.
+   */
+  flowId: string;
+  requestId: string;
+  prompt: string;
+  taskName?: string;
+}
+
 export interface LiveRun {
   flowId: string;
   conduitName: string;
@@ -21,6 +39,12 @@ export interface LiveRun {
   taskStatuses: Record<string, FlowTaskStatus>;
   hitlRequest?: HitlRequest;
   hitlAnswers?: Record<string, string>;
+  /**
+   * Every interactive turn still waiting on a reply. With max_concurrency > 1
+   * two tasks in one flow can be parked at once, and each is answered by its
+   * own request id — so this is a list, not a single slot.
+   */
+  agentRequests: AgentInputRequest[];
   runPath: string;
   inputs: Record<string, string>;
   parentFlowId?: string;
@@ -97,11 +121,14 @@ export type Action =
   | { type: "WS_LOG"; flowId: string; lines: LogEntry[] }
   | { type: "WS_STEP_STATUS"; flowId: string; step: string; status: FlowTaskStatus; marker?: LogEntry }
   | { type: "WS_HITL_REQUEST"; flowId: string; inputs: WsHitlRequestInput[] | undefined; taskName?: string }
+  | { type: "WS_AGENT_MESSAGE"; flowId: string; text: string; taskName?: string }
+  | { type: "WS_AGENT_INPUT_REQUEST"; flowId: string; requestId: string; prompt: string; taskName?: string }
   | { type: "WS_FLOW_COMPLETE"; flowId: string }
   | { type: "WS_FLOW_FAILED"; flowId: string; error: string }
   | { type: "CANCEL"; flowId: string }
   | { type: "RESUME"; flowId: string; conduitName?: string }
-  | { type: "ANSWER_HITL"; flowId: string; answers: Record<string, string> };
+  | { type: "ANSWER_HITL"; flowId: string; answers: Record<string, string> }
+  | { type: "ANSWER_AGENT_INPUT"; flowId: string; requestId: string; answer: string };
 
 export interface State {
   runs: Map<string, LiveRun>;
@@ -133,6 +160,7 @@ export function reducer(state: State, action: Action): State {
           status: "running",
           logLines: [{ t: Date.now(), text: "▸ flow started", level: "info" }],
           taskStatuses: {},
+          agentRequests: [],
           runPath: "",
           inputs: {},
           parentFlowId: action.parentFlowId,
@@ -160,6 +188,7 @@ export function reducer(state: State, action: Action): State {
           status: "running",
           logLines: [{ t: Date.now(), text: "▸ flow started", level: "info" }],
           taskStatuses: {},
+          agentRequests: [],
           runPath: action.runPath,
           inputs: action.inputs,
         });
@@ -213,9 +242,49 @@ export function reducer(state: State, action: Action): State {
       return { runs: next };
     }
 
+    case "WS_AGENT_MESSAGE": {
+      const run = next.get(action.flowId);
+      if (run) {
+        next.set(action.flowId, {
+          ...run,
+          logLines: [
+            ...run.logLines,
+            { t: Date.now(), text: action.text, level: "info", task: action.taskName },
+          ],
+        });
+      }
+      return { runs: next };
+    }
+
+    case "WS_AGENT_INPUT_REQUEST": {
+      // Deliberately does not touch hitlRequest: an interactive agent turn and
+      // a tool:hitl gate are separate states and can be pending at once.
+      const run = next.get(action.flowId);
+      if (run) {
+        // Append rather than replace — a second interactive task prompting
+        // does not mean the first one stopped waiting. Same id overwrites, so
+        // a re-sent request can't show up twice.
+        const others = run.agentRequests.filter((r) => r.requestId !== action.requestId);
+        next.set(action.flowId, {
+          ...run,
+          agentRequests: [
+            ...others,
+            {
+              flowId: action.flowId,
+              requestId: action.requestId,
+              prompt: action.prompt,
+              taskName: action.taskName,
+            },
+          ],
+        });
+      }
+      return { runs: next };
+    }
+
     case "WS_FLOW_COMPLETE": {
       updateRun(next, action.flowId, {
         status: "done",
+        agentRequests: [],
         logLines: [...(next.get(action.flowId)?.logLines ?? []), { t: Date.now(), text: "✓ flow complete", level: "ok" }],
       });
       return { runs: next };
@@ -229,6 +298,7 @@ export function reducer(state: State, action: Action): State {
         next.set(action.flowId, {
           ...run,
           status,
+          agentRequests: [],
           logLines: [...run.logLines, { t: Date.now(), text: `✗ ${action.error}`, level: "err" }],
         });
       }
@@ -238,7 +308,8 @@ export function reducer(state: State, action: Action): State {
     case "CANCEL": {
       const run = next.get(action.flowId);
       if (run && run.status === "running") {
-        next.set(action.flowId, { ...run, status: "cancelled" });
+        // The flow is going away, so nothing will consume these answers.
+        next.set(action.flowId, { ...run, status: "cancelled", agentRequests: [] });
       }
       return { runs: next };
     }
@@ -262,6 +333,7 @@ export function reducer(state: State, action: Action): State {
           status: "running",
           logLines: [],
           taskStatuses: {},
+          agentRequests: [],
           runPath: "",
           inputs: {},
         });
@@ -273,6 +345,29 @@ export function reducer(state: State, action: Action): State {
       const run = next.get(action.flowId);
       if (run) {
         next.set(action.flowId, { ...run, hitlAnswers: action.answers, hitlRequest: undefined });
+      }
+      return { runs: next };
+    }
+
+    case "ANSWER_AGENT_INPUT": {
+      const run = next.get(action.flowId);
+      // Only drop the request actually being answered — the other pending
+      // turns belong to different tasks and stay answerable.
+      const answered = run?.agentRequests.find((r) => r.requestId === action.requestId);
+      if (run && answered) {
+        next.set(action.flowId, {
+          ...run,
+          agentRequests: run.agentRequests.filter((r) => r.requestId !== action.requestId),
+          logLines: [
+            ...run.logLines,
+            {
+              t: Date.now(),
+              text: `› ${action.answer}`,
+              level: "acc",
+              task: answered.taskName,
+            },
+          ],
+        });
       }
       return { runs: next };
     }
@@ -385,6 +480,20 @@ export function useConduit(opts: UseConduitOptions = {}) {
       case "hitl_request":
         d({ type: "WS_HITL_REQUEST", flowId: msg.flowId, inputs: msg.inputs, taskName: msg.task });
         break;
+      case "agent_message":
+        if (msg.text.trim()) {
+          d({ type: "WS_AGENT_MESSAGE", flowId: msg.flowId, text: msg.text, taskName: msg.task });
+        }
+        break;
+      case "agent_input_request":
+        d({
+          type: "WS_AGENT_INPUT_REQUEST",
+          flowId: msg.flowId,
+          requestId: msg.requestId,
+          prompt: msg.prompt,
+          taskName: msg.task,
+        });
+        break;
       case "flow_complete":
         d({ type: "WS_FLOW_COMPLETE", flowId: msg.flowId });
         onFlowCompleteRef.current?.(msg.flowId);
@@ -488,5 +597,24 @@ export function useConduit(opts: UseConduitOptions = {}) {
     [],
   );
 
-  return { run, cancel, resume, answerHITL, liveRuns } as const;
+  const answerAgentInput = useCallback(
+    (flowId: string, requestId: string, answer: string) => {
+      // Send first: an agent parked on this turn only unblocks if the answer
+      // reaches it, so a failed send has to leave the prompt on screen.
+      try {
+        const sock = socketRef.current;
+        if (!sock) throw new Error("not connected — cannot send answer");
+        sock.send({ type: "agent_input_answer", flowId, requestId, answer });
+      } catch (err) {
+        onErrorRef.current?.(
+          err instanceof Error ? err.message : "failed to send answer",
+        );
+        return;
+      }
+      dispatch({ type: "ANSWER_AGENT_INPUT", flowId, requestId, answer });
+    },
+    [],
+  );
+
+  return { run, cancel, resume, answerHITL, answerAgentInput, liveRuns } as const;
 }

@@ -25,11 +25,20 @@ export interface WsResumeMessage {
   flowId: string;
 }
 
+/** Next turn for an interactive harness task, correlated by requestId. */
+export interface WsAgentInputAnswerMessage {
+  type: "agent_input_answer";
+  flowId: string;
+  requestId: string;
+  answer: string;
+}
+
 export type ClientWsMessage =
   | WsRunMessage
   | WsHitlAnswerMessage
   | WsCancelMessage
-  | WsResumeMessage;
+  | WsResumeMessage
+  | WsAgentInputAnswerMessage;
 
 // ── Server → Client ─────────────────────────────────────────────────────────
 
@@ -103,6 +112,23 @@ export interface WsHitlRequestMessage {
   inputs?: WsHitlRequestInput[];
 }
 
+/** One chunk of an interactive agent's prose, streamed as it speaks. */
+export interface WsAgentMessageMessage {
+  type: "agent_message";
+  flowId: string;
+  task?: string;
+  text: string;
+}
+
+/** The interactive agent handed the turn back and wants a reply. */
+export interface WsAgentInputRequestMessage {
+  type: "agent_input_request";
+  flowId: string;
+  task?: string;
+  requestId: string;
+  prompt: string;
+}
+
 export interface WsFlowCompleteMessage {
   type: "flow_complete";
   flowId: string;
@@ -126,6 +152,8 @@ export type ServerWsMessage =
   | WsTaskStatusMessage
   | WsTaskMessage
   | WsHitlRequestMessage
+  | WsAgentMessageMessage
+  | WsAgentInputRequestMessage
   | WsFlowCompleteMessage
   | WsFlowFailedMessage
   | WsErrorMessage;
