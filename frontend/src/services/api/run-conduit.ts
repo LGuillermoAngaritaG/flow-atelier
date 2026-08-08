@@ -1,12 +1,17 @@
-import { API_TOKEN, BASE_URL, USE_MOCK } from "@/config/env";
+import { BASE_URL, USE_MOCK, getApiToken } from "@/config/env";
 import { toCamelCase, toSnakeCase } from "@/services/transforms";
 import { MockWebSocket } from "@/services/mock/ws";
 import type { ClientWsMessage, ServerWsMessage } from "@/types/ws";
 
 const WS_URL = BASE_URL.replace(/^http/, "ws");
-const WS_TOKEN_PARAM = API_TOKEN
-  ? `?token=${encodeURIComponent(API_TOKEN)}`
-  : "";
+
+// Read when the socket opens, not at module load. The token usually arrives
+// after the first REST call prompted for it, which happens well before
+// anything opens a socket — captured at import, this would still be "".
+function wsTokenParam(): string {
+  const token = getApiToken();
+  return token ? `?token=${encodeURIComponent(token)}` : "";
+}
 
 export class RunConduitSocket {
   private ws: WebSocket;
@@ -18,7 +23,7 @@ export class RunConduitSocket {
     if (USE_MOCK) {
       this.ws = new MockWebSocket() as unknown as WebSocket;
     } else {
-      this.ws = new WebSocket(`${WS_URL}/ws/run-conduit${WS_TOKEN_PARAM}`);
+      this.ws = new WebSocket(`${WS_URL}/ws/run-conduit${wsTokenParam()}`);
     }
 
     this.ws.onmessage = (ev) => {
