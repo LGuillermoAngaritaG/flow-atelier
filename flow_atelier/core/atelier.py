@@ -596,6 +596,11 @@ class Atelier:
             """
             captured["id"] = fid
 
+        # A failing task is a result, not a transport error — the run happened,
+        # it just didn't succeed — so it stays a 200 and reports itself in the
+        # body. Swallowing it silently is what made a failure indistinguishable
+        # from a task that simply printed nothing.
+        error = ""
         try:
             flow_id = await self.engine.run(
                 conduit,
@@ -603,10 +608,13 @@ class Atelier:
                 on_flow_started=_on_started,
                 working_dir=Path(payload.run_path) if payload.run_path else None,
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             flow_id = captured["id"] or ""
+            error = f"{type(exc).__name__}: {exc}"
         logs = self.store.read_logs(flow_id) if flow_id else []
-        return RunTaskOutput(flow_id=flow_id, logs=logs)
+        return RunTaskOutput(
+            flow_id=flow_id, logs=logs, success=not error, error=error
+        )
 
     # ------------------------------------------------------------------ schedules
 
