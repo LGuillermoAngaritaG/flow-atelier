@@ -82,7 +82,7 @@ describe("useConduit agent input answers", () => {
       answer: "large",
     });
     expect(hook.result.current.liveRuns[0].agentRequests).toEqual([
-      { requestId: "r-1", prompt: "which colour?", taskName: "ask_colour" },
+      { flowId: "f1", requestId: "r-1", prompt: "which colour?", taskName: "ask_colour" },
     ]);
   });
 
