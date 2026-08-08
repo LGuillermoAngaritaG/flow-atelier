@@ -20,6 +20,7 @@ claude.md
 .opencode
 AGENTS.md
 .agents/
+.nodeterm/
 .atelier/
 
 # Frontend (React/Vite) — tooling & local build artifacts under frontend/.
