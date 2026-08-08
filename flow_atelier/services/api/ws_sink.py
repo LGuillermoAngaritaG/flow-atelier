@@ -33,10 +33,22 @@ class WsPromptSink:
         self._flow_id = flow_id
 
     async def display(self, text: str) -> None:
-        """No-op for WebSocket runs (agent text streaming is separate).
+        """Stream one agent prose chunk as an ``agent_message`` envelope.
 
-        :param text: text to display (ignored).
+        Only interactive tasks reach here (the harness mirrors chunks to the
+        sink when ``stream_messages`` is on), so this is the live view of the
+        question the agent is asking before it hands the turn back.
+
+        :param text: agent text chunk to forward.
         """
+        await self._broker.send(
+            {
+                "type": "agent_message",
+                "flow_id": current_flow_id(self._flow_id),
+                "task": current_task(""),
+                "text": text,
+            }
+        )
 
     async def start_agent_turn(self, label: str = "agent") -> None:
         """No-op for WebSocket runs.
@@ -45,12 +57,31 @@ class WsPromptSink:
         """
 
     async def request_input(self, prompt: str) -> str:
-        """Not supported over WebSocket — interactive input uses HITL.
+        """Ask the client for the next turn and wait for the matching answer.
 
-        :param prompt: prompt label (unused).
-        :raises NotImplementedError: always.
+        The request carries an opaque id so two interactive tasks prompting
+        at once can't consume each other's replies. The pending entry is
+        dropped on the way out whatever happens — answered, cancelled, or
+        failed — so a late answer can never satisfy a later prompt.
+
+        :param prompt: prompt label shown to the user.
+        :returns: the user's reply.
         """
-        raise NotImplementedError("WS sink does not support request_input")
+        flow_id = current_flow_id(self._flow_id)
+        request_id, future = self._broker.open_agent_input_request(flow_id)
+        try:
+            await self._broker.send(
+                {
+                    "type": "agent_input_request",
+                    "flow_id": flow_id,
+                    "task": current_task(""),
+                    "request_id": request_id,
+                    "prompt": prompt,
+                }
+            )
+            return await future
+        finally:
+            self._broker.close_agent_input_request(flow_id, request_id)
 
     async def display_step(self, step: IntermediateStep) -> None:
         """Forward an intermediate step as a ``step`` envelope over WebSocket.

@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from flow_atelier.core.atelier import Atelier
+from flow_atelier.core.settings import AtelierSettings
 from flow_atelier.services.api.app import FastApiServer
+
+FAKE_AGENT = Path(__file__).resolve().parents[1] / "fixtures" / "fake_acp_agent.py"
 
 HELLO_YAML = """name: hello
 description: Say hello
@@ -246,6 +251,137 @@ def test_ws_rejects_bad_token(env):
             with client.websocket_connect("/ws/run-conduit?token=wrong"):
                 pass
         assert wrong.value.code == 1008
+
+
+# ── interactive harness (agent_message / agent_input_request) ─────────────
+
+INTERACTIVE_YAML = """name: chat
+description: interactive harness
+tasks:
+  - ask:
+      description: ask the agent
+      task: "Pick a colour"
+      tool: harness:fake
+      depends_on: []
+      interactive: true
+"""
+
+
+@pytest.fixture
+def interactive_app(tmp_path, _isolate_global_atelier_dir):
+    """Build an app whose ``harness:fake`` agent asks one question.
+
+    The scripted agent ends its first turn without the done marker, which
+    is what drives the harness into ``PromptSink.request_input``. Its second
+    turn — only reachable in the same ACP session, since the turn list lives
+    in the spawned process — emits the marker and finishes the run.
+
+    :param tmp_path: pytest temp directory fixture.
+    :param _isolate_global_atelier_dir: isolated global atelier dir fixture.
+    """
+    script = json.dumps(
+        {
+            "turns": [
+                {"chunks": ["Which colour? "], "stop": "end_turn"},
+                {"chunks": ["Blue it is. [ATELIER_DONE]"], "stop": "end_turn"},
+            ]
+        }
+    )
+    atelier = Atelier(
+        settings=AtelierSettings(
+            atelier_dir=tmp_path / ".atelier",
+            global_atelier_dir=_isolate_global_atelier_dir,
+            harnesses={"fake": [sys.executable, str(FAKE_AGENT), "--script", script]},
+        )
+    )
+    conduit_dir = atelier.store.base_dir / "conduits" / "chat"
+    conduit_dir.mkdir(parents=True, exist_ok=True)
+    (conduit_dir / "conduit.yaml").write_text(INTERACTIVE_YAML)
+    return FastApiServer().create_app(atelier)
+
+
+def test_ws_interactive_harness_round_trip_completes(interactive_app, tmp_path):
+    """An interactive task asks over WS, gets an answer, and completes.
+
+    :param interactive_app: app fixture with a scripted interactive harness.
+    :param tmp_path: pytest temp directory fixture.
+    """
+    with TestClient(
+        interactive_app, base_url="http://127.0.0.1", headers={"host": "127.0.0.1"}
+    ) as client:
+        with client.websocket_connect("/ws/run-conduit") as ws:
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "run",
+                        "conduit_name": "chat",
+                        "inputs": {},
+                        "run_path": str(tmp_path),
+                    }
+                )
+            )
+            envelopes = _drain_until(
+                ws,
+                lambda e: e["type"] in ("agent_input_request", "flow_failed"),
+                max_messages=80,
+            )
+            request = envelopes[-1]
+            assert request["type"] == "agent_input_request", envelopes
+            assert request["task"] == "ask"
+            assert request["request_id"]
+            assert request["prompt"]
+
+            # The question itself reached the client as streamed prose.
+            messages = [e for e in envelopes if e["type"] == "agent_message"]
+            assert any("Which colour?" in e["text"] for e in messages), envelopes
+            assert all(e["task"] == "ask" for e in messages)
+
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "agent_input_answer",
+                        "flow_id": request["flow_id"],
+                        "request_id": request["request_id"],
+                        "answer": "blue",
+                    }
+                )
+            )
+            envelopes += _drain_until(
+                ws,
+                lambda e: e["type"] in ("flow_complete", "flow_failed"),
+                max_messages=80,
+            )
+
+    assert envelopes[-1]["type"] == "flow_complete", envelopes[-1]
+    logs = [e for e in envelopes if e["type"] == "log"]
+    output = "".join(e["entry"].get("output") or "" for e in logs)
+    # Both turns are in one buffer, so the session continued rather than restarting.
+    assert "Which colour?" in output
+    assert "Blue it is." in output
+    assert "[ATELIER_DONE]" not in output
+
+
+def test_ws_agent_input_answer_with_unknown_request_id_errors(env):
+    """An answer for a request nobody is waiting on gets an error envelope.
+
+    :param env: env fixture providing (atelier, app).
+    """
+    _, app = env
+    with TestClient(app, base_url="http://127.0.0.1", headers={"host": "127.0.0.1"}) as client:
+        with client.websocket_connect("/ws/run-conduit") as ws:
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "agent_input_answer",
+                        "flow_id": "T-ghost",
+                        "request_id": "nope",
+                        "answer": "blue",
+                    }
+                )
+            )
+            envelope = json.loads(ws.receive_text())
+    assert envelope["type"] == "error"
+    assert envelope["flow_id"] == "T-ghost"
 
 
 def test_ws_accepts_valid_token(env, tmp_path):

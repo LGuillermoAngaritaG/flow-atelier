@@ -19,6 +19,7 @@ from flow_atelier.schemas.flow import new_flow_id, parse_flow_id
 from flow_atelier.schemas.log import TaskEvent
 from flow_atelier.schemas.progress import FlowStatus, TaskStatus
 from flow_atelier.schemas.ws import (
+    AgentInputAnswerMessage,
     CancelMessage,
     ClientMessage,
     HitlAnswerMessage,
@@ -124,6 +125,23 @@ async def run_conduit_ws(websocket: WebSocket) -> None:
                             "type": "error",
                             "flow_id": message.flow_id,
                             "message": "no flow registered for hitl_answer",
+                        }
+                    )
+            elif isinstance(message, AgentInputAnswerMessage):
+                try:
+                    await broker.deliver_agent_input_answer(
+                        message.flow_id, message.request_id, message.answer
+                    )
+                except KeyError:
+                    # Unknown id, wrong flow, or a turn that already moved on.
+                    await _send(
+                        {
+                            "type": "error",
+                            "flow_id": message.flow_id,
+                            "message": (
+                                "no pending agent input request "
+                                f"{message.request_id!r} for this flow"
+                            ),
                         }
                     )
             elif isinstance(message, CancelMessage):

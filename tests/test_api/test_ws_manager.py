@@ -173,3 +173,101 @@ async def test_deliver_to_unregistered_flow_raises(broker):
     """
     with pytest.raises(KeyError):
         await broker.deliver_hitl_answer("T-x", {"q": "y"})
+
+
+# ── agent-input requests (interactive harness turns) ──────────────────────
+
+
+async def test_agent_input_request_id_is_opaque_and_unique(broker):
+    """Verify each opened request gets its own opaque id.
+
+    :param broker: broker fixture.
+    """
+    first, _ = broker.open_agent_input_request("T-1")
+    second, _ = broker.open_agent_input_request("T-1")
+    assert first != second
+    # Opaque: carries neither the flow id nor a guessable counter.
+    assert "T-1" not in first and first not in ("0", "1")
+
+
+async def test_agent_input_answer_resolves_the_matching_future(broker):
+    """Verify an answer resolves the future opened for that request.
+
+    :param broker: broker fixture.
+    """
+    request_id, future = broker.open_agent_input_request("T-1")
+    await broker.deliver_agent_input_answer("T-1", request_id, "blue")
+    assert await future == "blue"
+
+
+async def test_concurrent_requests_do_not_consume_each_others_answers(broker):
+    """Verify two simultaneous prompts in one flow stay independent.
+
+    :param broker: broker fixture.
+    """
+    id_a, future_a = broker.open_agent_input_request("T-1")
+    id_b, future_b = broker.open_agent_input_request("T-1")
+
+    await broker.deliver_agent_input_answer("T-1", id_b, "for-b")
+    assert await future_b == "for-b"
+    assert not future_a.done()
+
+    await broker.deliver_agent_input_answer("T-1", id_a, "for-a")
+    assert await future_a == "for-a"
+
+
+async def test_agent_input_answer_for_unknown_request_raises(broker):
+    """Verify an answer with an unknown request id raises KeyError.
+
+    :param broker: broker fixture.
+    """
+    broker.open_agent_input_request("T-1")
+    with pytest.raises(KeyError):
+        await broker.deliver_agent_input_answer("T-1", "not-a-request", "x")
+
+
+async def test_agent_input_answer_for_mismatched_flow_raises(broker):
+    """Verify a valid request id under the wrong flow is rejected.
+
+    :param broker: broker fixture.
+    """
+    request_id, future = broker.open_agent_input_request("T-1")
+    with pytest.raises(KeyError):
+        await broker.deliver_agent_input_answer("T-2", request_id, "x")
+    assert not future.done()
+
+
+async def test_answered_request_is_cleaned_up(broker):
+    """Verify a request cannot be answered twice.
+
+    :param broker: broker fixture.
+    """
+    request_id, _ = broker.open_agent_input_request("T-1")
+    await broker.deliver_agent_input_answer("T-1", request_id, "blue")
+    with pytest.raises(KeyError):
+        await broker.deliver_agent_input_answer("T-1", request_id, "again")
+
+
+async def test_close_agent_input_request_drops_pending_state(broker):
+    """Verify closing a request removes it, so a late answer is rejected.
+
+    :param broker: broker fixture.
+    """
+    request_id, _ = broker.open_agent_input_request("T-1")
+    broker.close_agent_input_request("T-1", request_id)
+    with pytest.raises(KeyError):
+        await broker.deliver_agent_input_answer("T-1", request_id, "late")
+    # Idempotent: closing again (e.g. from a finally after a failure) is a no-op.
+    broker.close_agent_input_request("T-1", request_id)
+
+
+async def test_unregister_flow_cancels_pending_agent_input(broker):
+    """Verify unregistering a flow unblocks and drops its pending requests.
+
+    :param broker: broker fixture.
+    """
+    request_id, future = broker.open_agent_input_request("T-1")
+    broker.unregister_flow("T-1")
+    assert future.cancelled() or future.done()
+    with pytest.raises(KeyError):
+        await broker.deliver_agent_input_answer("T-1", request_id, "late")
