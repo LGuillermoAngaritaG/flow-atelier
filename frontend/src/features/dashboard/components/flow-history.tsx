@@ -279,6 +279,17 @@ export function FlowHistory({
     : 0;
   const drawerHideCancel = !selectedLiveRun || selectedLiveRun.status !== "running";
 
+  // A nested conduit's interactive task prompts under its own child flow id, so
+  // its request never lands on the selected run. Without the child requests here
+  // the reply box is never drawn and that agent stays parked until cancelled.
+  const drawerAgentInputs = useMemo(
+    () => [
+      ...(selectedLiveRun?.agentRequests ?? []),
+      ...childRuns.flatMap((c) => c.agentRequests),
+    ],
+    [selectedLiveRun, childRuns],
+  );
+
   // ── Handlers ──────────────────────────────────────────────────────────────
 
   const handleRowClick = (row: Row) => {
@@ -405,11 +416,11 @@ export function FlowHistory({
             ? (answers) => onRespondToHitl(selectedLiveRun.flowId, answers)
             : undefined
         }
-        agentInputs={selectedLiveRun?.agentRequests}
+        agentInputs={drawerAgentInputs}
         onAnswerAgentInput={
-          onAnswerAgentInput && selectedLiveRun
-            ? (requestId, answer) =>
-                onAnswerAgentInput(selectedLiveRun.flowId, requestId, answer)
+          onAnswerAgentInput
+            ? (request, answer) =>
+                onAnswerAgentInput(request.flowId, request.requestId, answer)
             : undefined
         }
         inputCount={drawerInputCount}

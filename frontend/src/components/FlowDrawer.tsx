@@ -37,9 +37,13 @@ export interface FlowDrawerProps {
   hitl?: HitlRequest;
   hitlResponses?: string[];
   onRespondToHitl?: (answers: Record<string, string>) => void;
-  /** Interactive harness turns awaiting a reply — separate from `hitl`. */
+  /**
+   * Interactive harness turns awaiting a reply — separate from `hitl`. May
+   * include turns from nested child flows, so the handler is given the whole
+   * request: only it knows which flow to send the answer back to.
+   */
   agentInputs?: AgentInputRequest[];
-  onAnswerAgentInput?: (requestId: string, answer: string) => void;
+  onAnswerAgentInput?: (request: AgentInputRequest, answer: string) => void;
   onCancel?: () => void;
   onResume?: () => void;
   onRemove?: () => void;
@@ -242,7 +246,7 @@ export function FlowDrawer({
               agentInput={req}
               onAnswer={
                 onAnswerAgentInput
-                  ? (answer) => onAnswerAgentInput(req.requestId, answer)
+                  ? (answer) => onAnswerAgentInput(req, answer)
                   : undefined
               }
             />

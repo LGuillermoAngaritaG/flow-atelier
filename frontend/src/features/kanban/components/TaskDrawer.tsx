@@ -77,6 +77,17 @@ export function TaskDrawer({ taskName, onClose, liveRuns = [], onCancelRun, onRe
 
   const drawerHitl = liveRun?.hitlRequest ?? flow?.hitlRequest;
 
+  // Includes child-flow turns: a nested conduit's interactive task prompts under
+  // its own flow id, which never matches `liveRun`, so leaving them out means the
+  // reply box is never drawn and that agent stays parked until cancelled.
+  const agentInputs = useMemo(
+    () => [
+      ...(liveRun?.agentRequests ?? []),
+      ...liveChildRuns.flatMap((c) => c.agentRequests),
+    ],
+    [liveRun, liveChildRuns],
+  );
+
   const tasks = useMemo<FlowDrawerTask[] | undefined>(() => {
     // Real conduit live run
     if (liveRun) {
@@ -156,11 +167,11 @@ export function TaskDrawer({ taskName, onClose, liveRuns = [], onCancelRun, onRe
             ? (answers) => resumeWithAnswers(task.name, answers)
             : undefined
       }
-      agentInputs={liveRun?.agentRequests}
+      agentInputs={agentInputs}
       onAnswerAgentInput={
-        onAnswerAgentInput && liveRun
-          ? (requestId, answer) =>
-              onAnswerAgentInput(liveRun.flowId, requestId, answer)
+        onAnswerAgentInput
+          ? (request, answer) =>
+              onAnswerAgentInput(request.flowId, request.requestId, answer)
           : undefined
       }
       onRemove={

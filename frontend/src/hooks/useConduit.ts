@@ -18,6 +18,13 @@ export type LiveRunStatus = "running" | "done" | "cancelled" | "failed";
  * by correlation id, not a `tool:hitl` gate collecting named inputs.
  */
 export interface AgentInputRequest {
+  /**
+   * The flow that asked. Carried on the request rather than inferred from the
+   * run it is rendered under: a nested conduit's interactive task prompts
+   * under the *child* flow id, and the answer has to go back to that same id
+   * or the broker won't find the future to resolve.
+   */
+  flowId: string;
   requestId: string;
   prompt: string;
   taskName?: string;
@@ -263,6 +270,7 @@ export function reducer(state: State, action: Action): State {
           agentRequests: [
             ...others,
             {
+              flowId: action.flowId,
               requestId: action.requestId,
               prompt: action.prompt,
               taskName: action.taskName,

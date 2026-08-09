@@ -522,7 +522,7 @@ describe("reducer", () => {
       });
       const r = next.runs.get("f1")!;
       expect(r.agentRequests).toEqual([
-        { requestId: "r-1", prompt: "your reply:", taskName: "ask" },
+        { flowId: "f1", requestId: "r-1", prompt: "your reply:", taskName: "ask" },
       ]);
     });
 
@@ -558,8 +558,8 @@ describe("reducer", () => {
         taskName: "ask_size",
       });
       expect(next.runs.get("f1")!.agentRequests).toEqual([
-        { requestId: "r-1", prompt: "which colour?", taskName: "ask_colour" },
-        { requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
+        { flowId: "f1", requestId: "r-1", prompt: "which colour?", taskName: "ask_colour" },
+        { flowId: "f1", requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
       ]);
     });
 
@@ -567,7 +567,7 @@ describe("reducer", () => {
       const state = freshState();
       state.runs.set("f1", {
         ...run("f1"),
-        agentRequests: [{ requestId: "r-1", prompt: "old" }],
+        agentRequests: [{ flowId: "f1", requestId: "r-1", prompt: "old" }],
       });
       const next = reducer(state, {
         type: "WS_AGENT_INPUT_REQUEST",
@@ -576,7 +576,7 @@ describe("reducer", () => {
         prompt: "new",
       });
       expect(next.runs.get("f1")!.agentRequests).toEqual([
-        { requestId: "r-1", prompt: "new", taskName: undefined },
+        { flowId: "f1", requestId: "r-1", prompt: "new", taskName: undefined },
       ]);
     });
   });
@@ -587,8 +587,8 @@ describe("reducer", () => {
       state.runs.set("f1", {
         ...run("f1"),
         agentRequests: [
-          { requestId: "r-1", prompt: "which colour?", taskName: "ask_colour" },
-          { requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
+          { flowId: "f1", requestId: "r-1", prompt: "which colour?", taskName: "ask_colour" },
+          { flowId: "f1", requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
         ],
       });
       const next = reducer(state, {
@@ -598,7 +598,7 @@ describe("reducer", () => {
         answer: "blue",
       });
       expect(next.runs.get("f1")!.agentRequests).toEqual([
-        { requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
+        { flowId: "f1", requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
       ]);
     });
 
@@ -607,8 +607,8 @@ describe("reducer", () => {
       state.runs.set("f1", {
         ...run("f1"),
         agentRequests: [
-          { requestId: "r-1", prompt: "which colour?", taskName: "ask_colour" },
-          { requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
+          { flowId: "f1", requestId: "r-1", prompt: "which colour?", taskName: "ask_colour" },
+          { flowId: "f1", requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
         ],
       });
       const next = reducer(state, {
@@ -627,7 +627,7 @@ describe("reducer", () => {
       const state = freshState();
       state.runs.set("f1", {
         ...run("f1"),
-        agentRequests: [{ requestId: "r-1", prompt: "your reply:" }],
+        agentRequests: [{ flowId: "f1", requestId: "r-1", prompt: "your reply:" }],
         hitlAnswers: { approve: "yes" },
         hitlRequest: { fromTool: "tool:hitl", comment: "gate" },
       });
@@ -647,7 +647,7 @@ describe("reducer", () => {
       const state = freshState();
       state.runs.set("f1", {
         ...run("f1"),
-        agentRequests: [{ requestId: "r-2", prompt: "current" }],
+        agentRequests: [{ flowId: "f1", requestId: "r-2", prompt: "current" }],
       });
       const next = reducer(state, {
         type: "ANSWER_AGENT_INPUT",
@@ -656,7 +656,7 @@ describe("reducer", () => {
         answer: "stale",
       });
       const r = next.runs.get("f1")!;
-      expect(r.agentRequests).toEqual([{ requestId: "r-2", prompt: "current" }]);
+      expect(r.agentRequests).toEqual([{ flowId: "f1", requestId: "r-2", prompt: "current" }]);
       expect(r.logLines).toHaveLength(0);
     });
   });
@@ -667,8 +667,8 @@ describe("reducer", () => {
       state.runs.set("f1", {
         ...run("f1"),
         agentRequests: [
-          { requestId: "r-1", prompt: "which colour?" },
-          { requestId: "r-2", prompt: "which size?" },
+          { flowId: "f1", requestId: "r-1", prompt: "which colour?" },
+          { flowId: "f1", requestId: "r-2", prompt: "which size?" },
         ],
       });
       return state;

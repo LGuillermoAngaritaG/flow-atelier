@@ -20,7 +20,7 @@ if (!globalThis.ResizeObserver) {
 describe("AgentInputSection", () => {
   afterEach(cleanup);
 
-  const request = { requestId: "r-1", prompt: "agent is waiting for your reply:", taskName: "ask" };
+  const request = { flowId: "f1", requestId: "r-1", prompt: "agent is waiting for your reply:", taskName: "ask" };
 
   it("shows the prompt and the owning task", () => {
     render(<AgentInputSection agentInput={request} onAnswer={() => {}} />);
@@ -65,7 +65,7 @@ describe("AgentInputSection", () => {
     rerender(
       <AgentInputSection
         key="r-2"
-        agentInput={{ requestId: "r-2", prompt: "anything else?" }}
+        agentInput={{ flowId: "f1", requestId: "r-2", prompt: "anything else?" }}
         onAnswer={() => {}}
       />,
     );
@@ -82,13 +82,13 @@ describe("FlowDrawer agent inputs", () => {
   afterEach(cleanup);
 
   const two: AgentInputRequest[] = [
-    { requestId: "r-1", prompt: "which colour?", taskName: "ask_colour" },
-    { requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
+    { flowId: "f1", requestId: "r-1", prompt: "which colour?", taskName: "ask_colour" },
+    { flowId: "f1", requestId: "r-2", prompt: "which size?", taskName: "ask_size" },
   ];
 
   const drawer = (
     agentInputs: AgentInputRequest[],
-    onAnswerAgentInput?: (requestId: string, answer: string) => void,
+    onAnswerAgentInput?: (request: AgentInputRequest, answer: string) => void,
   ) => (
     <FlowDrawer
       open
@@ -115,13 +115,36 @@ describe("FlowDrawer agent inputs", () => {
       target: { value: "blue" },
     });
     fireEvent.click(within(first).getByTestId("agent-input-submit"));
-    expect(onAnswer).toHaveBeenCalledWith("r-1", "blue");
+    expect(onAnswer).toHaveBeenCalledWith(two[0], "blue");
 
     fireEvent.change(within(second).getByTestId("agent-input-field"), {
       target: { value: "large" },
     });
     fireEvent.click(within(second).getByTestId("agent-input-submit"));
-    expect(onAnswer).toHaveBeenCalledWith("r-2", "large");
+    expect(onAnswer).toHaveBeenCalledWith(two[1], "large");
+  });
+
+  it("hands back the asking flow's id, not the drawer's own run", () => {
+    // A nested conduit's interactive task prompts under the child flow id. The
+    // answer has to be addressed to that id or the broker has no future to
+    // resolve, so the drawer passes the request through rather than a bare id.
+    const child: AgentInputRequest = {
+      flowId: "f1-child",
+      requestId: "r-9",
+      prompt: "child asks?",
+      taskName: "nested",
+    };
+    const onAnswer = vi.fn();
+    render(drawer([child], onAnswer));
+
+    fireEvent.change(screen.getByTestId("agent-input-field"), {
+      target: { value: "yes" },
+    });
+    fireEvent.click(screen.getByTestId("agent-input-submit"));
+    expect(onAnswer).toHaveBeenCalledWith(
+      expect.objectContaining({ flowId: "f1-child", requestId: "r-9" }),
+      "yes",
+    );
   });
 
   it("leaves the other request answerable once one is removed", () => {
@@ -138,7 +161,7 @@ describe("FlowDrawer agent inputs", () => {
       target: { value: "large" },
     });
     fireEvent.click(screen.getByTestId("agent-input-submit"));
-    expect(onAnswer).toHaveBeenCalledWith("r-2", "large");
+    expect(onAnswer).toHaveBeenCalledWith(two[1], "large");
   });
 
   it("renders no reply box when nothing is pending", () => {
