@@ -5,6 +5,7 @@ route all display and input calls through a :class:`PromptSink`.
 The terminal implementation writes to a stream and reads stdin. Future
 transports (websocket, queue-based API) implement the same protocol.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -111,11 +112,7 @@ class TerminalPromptSink:
             console writing to ``out``.
         """
         self._out = out if out is not None else sys.stdout
-        self._console = (
-            console
-            if console is not None
-            else Console(file=self._out, soft_wrap=True)
-        )
+        self._console = console if console is not None else Console(file=self._out, soft_wrap=True)
         # Widest task name seen so far, so the step lines keep a straight
         # tool column. A running max rather than a precomputed width: the
         # sink is handed steps, never the conduit.
@@ -172,9 +169,7 @@ class TerminalPromptSink:
         """
         self._out.write("\n")
         self._out.flush()
-        self._console.rule(
-            "[bold green]👤 you[/bold green]", align="left", style="green"
-        )
+        self._console.rule("[bold green]👤 you[/bold green]", align="left", style="green")
         if prompt and prompt.strip():
             self._console.print(f"[dim]{escape(prompt.strip())}[/dim]")
         if sys.stdin.isatty():
@@ -186,9 +181,7 @@ class TerminalPromptSink:
             self._console.print(f"[green]›[/green] {escape(answer)}")
         return answer
 
-    def _tag(
-        self, timestamp: str | None = None, task: str | None = None
-    ) -> tuple[Text, str]:
+    def _tag(self, timestamp: str | None = None, task: str | None = None) -> tuple[Text, str]:
         """Return the timestamp prefix and padded task tag for one line.
 
         :param timestamp: ISO timestamp to stamp, or ``None`` for now.
@@ -312,3 +305,192 @@ class TerminalPromptSink:
         prefix.append(_render_step(step, task=task))
         self._console.print(prefix)
 
+
+class StreamPromptSink:
+    """:class:`PromptSink` that emits one JSON object per line on stdout.
+
+    Selected by ``atelier ask --json`` so a programmatic caller (another
+    agent, a script) can drive an interactive session over stdio: agent
+    chunks, the agent's questions, intermediate steps, and the terminal
+    flow result all arrive as parseable NDJSON, and each question is
+    answered with one line on stdin.
+
+    The vocabulary mirrors :class:`flow_atelier.services.api.ws_sink.WsPromptSink`
+    (``agent_message`` / ``agent_input_request`` / ``step``) so a caller
+    uses one mental model whether it connects to the server or shells out
+    to the CLI.
+
+    The done marker can arrive **split across token chunks** (e.g. ``"["``,
+    ``"ATELIER_"``, ``"DONE]"``) because LLM tokenizers don't respect the
+    marker's boundaries. A per-chunk ``.replace()`` therefore can't catch it.
+    This sink buffers a small tail that could be the start of the marker,
+    strips the complete marker when it forms, and flushes the held tail at
+    turn boundaries (via :meth:`flush_steps`) so no real text is lost.
+
+    :param out: stream for NDJSON output; defaults to :data:`sys.stdout`.
+    :param inp: stream for replies; defaults to :data:`sys.stdin`.
+    :param done_marker: sentinel whose presence ends an interactive loop.
+        Stripped from emitted ``agent_message`` text so it never leaks to a
+        programmatic caller.
+    """
+
+    def __init__(
+        self,
+        out: TextIO | None = None,
+        inp: TextIO | None = None,
+        done_marker: str = "[ATELIER_DONE]",
+    ) -> None:
+        """Initialize the streaming sink.
+
+        :param out: stream for NDJSON output; defaults to :data:`sys.stdout`.
+        :param inp: stream for replies; defaults to :data:`sys.stdin`.
+        :param done_marker: sentinel stripped from streamed agent text.
+        """
+        self._out = out if out is not None else sys.stdout
+        self._inp = inp if inp is not None else sys.stdin
+        self._done_marker = done_marker
+        # Monotonic per-flow request id. A CLI flow is strictly ordered —
+        # the harness awaits each request_input() before issuing the next —
+        # so a simple counter is a safe correlation id.
+        self._next_request_id = 1
+        # Held tail that might be the prefix of a marker arriving across
+        # chunk boundaries. At most ``len(marker) - 1`` chars.
+        self._pending = ""
+
+    def _emit(self, obj: dict[str, object]) -> None:
+        """Write one envelope as a JSON line and flush.
+
+        :param obj: envelope to serialize.
+        """
+        import json
+
+        self._out.write(json.dumps(obj, ensure_ascii=False))
+        self._out.write("\n")
+        self._out.flush()
+
+    def _split_marker(self, text: str) -> tuple[str, str]:
+        """Return ``(emit_text, held_tail)`` with any marker tail held back.
+
+        Joins ``text`` onto any previously held tail, strips a complete
+        marker if present, then holds back a suffix that could be the start
+        of a marker arriving across chunks.
+
+        :param text: the incoming chunk to filter.
+        :returns: the text safe to emit now and the tail to hold back.
+        """
+        buf = self._pending + text
+        self._pending = ""
+        # Strip a complete marker if it has formed.
+        buf = buf.replace(self._done_marker, "")
+        # Hold back a tail that could be the *start* of a marker. The
+        # longest such tail is one char shorter than the marker: anything
+        # that length or longer would already match the full marker.
+        n = len(self._done_marker)
+        hold = min(len(buf), n - 1)
+        # Pick the longest suffix that is a prefix of the marker.
+        emit_end = len(buf)
+        for length in range(hold, 0, -1):
+            if self._done_marker.startswith(buf[-length:]):
+                emit_end = len(buf) - length
+                break
+        emit_text = buf[:emit_end]
+        held = buf[emit_end:]
+        self._pending = held
+        return emit_text, held
+
+    async def display(self, text: str) -> None:
+        """Stream one agent-prose chunk as an ``agent_message`` envelope.
+
+        Marker fragments are held back so a split ``[ATELIER_DONE]`` never
+        reaches the caller; the held tail is flushed at the next turn
+        boundary by :meth:`flush_steps`.
+
+        :param text: agent text chunk to filter and forward.
+        """
+        from flow_atelier.modules.engine import current_task
+
+        emit_text, _ = self._split_marker(text)
+        if emit_text:
+            self._emit(
+                {
+                    "type": "agent_message",
+                    "task": current_task(""),
+                    "text": emit_text,
+                }
+            )
+
+    async def start_agent_turn(self, label: str = "agent") -> None:
+        """No-op for the streaming sink.
+
+        :param label: turn label (ignored).
+        """
+
+    async def request_input(self, prompt: str) -> str:
+        """Emit an ``agent_input_request`` and read one reply line from stdin.
+
+        The next line of stdin (trailing newline stripped) is the caller's
+        reply. EOF raises :class:`EOFError`, which the harness surfaces as
+        ``"interactive input unavailable: ..."``.
+
+        :param prompt: prompt label shown to the user.
+        :returns: the caller's reply.
+        :raises EOFError: if stdin is closed before a line is available.
+        """
+        from flow_atelier.modules.engine import current_task
+
+        request_id = str(self._next_request_id)
+        self._next_request_id += 1
+        self._emit(
+            {
+                "type": "agent_input_request",
+                "task": current_task(""),
+                "request_id": request_id,
+                "prompt": prompt,
+            }
+        )
+        answer = await asyncio.to_thread(self._inp.readline)
+        if answer == "":  # EOF before any content
+            raise EOFError("stdin closed while waiting for agent input")
+        return answer.rstrip("\n")
+
+    async def display_step(self, step: IntermediateStep) -> None:
+        """Forward an intermediate step as a ``step`` envelope.
+
+        :param step: the :class:`IntermediateStep` to forward.
+        """
+        from flow_atelier.modules.engine import current_task
+
+        self._emit(
+            {
+                "type": "step",
+                "task": current_task(""),
+                "step": step.model_dump(mode="json"),
+            }
+        )
+
+    async def display_message(self, text: str) -> None:
+        """Forward a batched agent message as an ``agent_message`` envelope.
+
+        :param text: agent message text.
+        """
+        if text.strip():
+            await self.display(text)
+
+    async def flush_steps(self) -> None:
+        """Emit any marker-tail held back at a turn boundary.
+
+        Whatever was retained as a possible marker prefix but did not grow
+        into the full marker is real text; flush it now so it isn't lost.
+        """
+        if self._pending:
+            from flow_atelier.modules.engine import current_task
+
+            held = self._pending
+            self._pending = ""
+            self._emit(
+                {
+                    "type": "agent_message",
+                    "task": current_task(""),
+                    "text": held,
+                }
+            )

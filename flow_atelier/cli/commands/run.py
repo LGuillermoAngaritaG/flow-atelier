@@ -82,7 +82,7 @@ class _RunningTasks:
         return {name: now - started for name, started in self._started.items()}
 
 
-async def _with_heartbeat(coro, running: _RunningTasks):
+async def _with_heartbeat(coro, running: _RunningTasks, beat_console=None):
     """Await ``coro`` while emitting a periodic "still working" line.
 
     The heartbeat only prints during genuine silence, so an actively
@@ -93,15 +93,21 @@ async def _with_heartbeat(coro, running: _RunningTasks):
 
     :param coro: the engine coroutine to run.
     :param running: tracker naming the in-flight tasks.
+    :param beat_console: optional Rich console to render the heartbeat to.
+        When provided, the heartbeat line goes there instead of the default
+        shared console — used by ``--json`` modes to keep stdout pure NDJSON
+        by routing the human-only heartbeat to a console constructed with
+        ``stderr=True``.
     :returns: whatever ``coro`` returns.
     """
 
     async def _beat() -> None:
         """Print a status line whenever the stream has been quiet too long."""
+        sink = beat_console if beat_console is not None else console
         while True:
             await asyncio.sleep(_HEARTBEAT_TICK_SECONDS)
             if seconds_since_activity() >= HEARTBEAT_SECONDS:
-                console.print(render_heartbeat(running.elapsed()))
+                sink.print(render_heartbeat(running.elapsed()))
                 mark_activity()
 
     beat = asyncio.create_task(_beat())
